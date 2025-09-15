@@ -1,5 +1,7 @@
 # :camera: Hologram
 
+[![Binaries: Nightly](https://img.shields.io/badge/binaries-nightly-blueviolet)](https://nightly.link/ThatXliner/Hologram/workflows/build/main)
+
 > [!NOTE]
 > Hologram is currently in active development. Consider it not ready for use
 

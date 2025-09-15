@@ -72,11 +72,11 @@
 </script>
 
 <aside
-    class="w-80 bg-gray-500 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 overflow-y-auto"
+    class="w-80 bg-amber-50 border-r border-amber-200 overflow-y-auto"
     style="height: 100vh;"
 >
     <!-- Import Section -->
-    <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+    <div class="p-4 border-b border-amber-200">
         <button
             class="w-full flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-4 rounded-lg transition-colors"
             onclick={importFolder}
@@ -88,11 +88,11 @@
 
     <!-- Stats Section -->
     {#if $stats}
-        <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+        <div class="p-4 border-b border-amber-200">
             <div class="flex items-center gap-2 mb-3">
                 <BarChart3 size={16} />
                 <h3
-                    class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex-1"
+                    class="text-sm font-semibold text-amber-900 flex-1"
                     style="margin: 0;"
                 >
                     Library Stats
@@ -102,50 +102,50 @@
                 style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;"
             >
                 <div
-                    class="text-center p-3 bg-white dark:bg-gray-800 rounded-lg"
+                    class="text-center p-3 bg-white rounded-lg shadow-sm"
                 >
                     <span
-                        class="block text-lg font-bold text-blue-600 dark:text-blue-400"
+                        class="block text-lg font-bold text-amber-800"
                         >{formatNumber($stats.total_photos)}</span
                     >
                     <span
-                        class="block text-xs text-gray-600 dark:text-gray-400 mt-1"
+                        class="block text-xs text-amber-600 mt-1"
                         >Total Photos</span
                     >
                 </div>
                 <div
-                    class="text-center p-3 bg-white dark:bg-gray-800 rounded-lg"
+                    class="text-center p-3 bg-white rounded-lg shadow-sm"
                 >
                     <span
-                        class="block text-lg font-bold text-blue-600 dark:text-blue-400"
+                        class="block text-lg font-bold text-amber-800"
                         >{formatNumber($stats.raw_count)}</span
                     >
                     <span
-                        class="block text-xs text-gray-600 dark:text-gray-400 mt-1"
+                        class="block text-xs text-amber-600 mt-1"
                         >RAW Files</span
                     >
                 </div>
                 <div
-                    class="text-center p-3 bg-white dark:bg-gray-800 rounded-lg"
+                    class="text-center p-3 bg-white rounded-lg shadow-sm"
                 >
                     <span
-                        class="block text-lg font-bold text-blue-600 dark:text-blue-400"
+                        class="block text-lg font-bold text-amber-800"
                         >{formatNumber($stats.jpeg_count)}</span
                     >
                     <span
-                        class="block text-xs text-gray-600 dark:text-gray-400 mt-1"
+                        class="block text-xs text-amber-600 mt-1"
                         >JPEG Files</span
                     >
                 </div>
                 <div
-                    class="text-center p-3 bg-white dark:bg-gray-800 rounded-lg"
+                    class="text-center p-3 bg-white rounded-lg shadow-sm"
                 >
                     <span
-                        class="block text-lg font-bold text-blue-600 dark:text-blue-400"
+                        class="block text-lg font-bold text-amber-800"
                         >{formatNumber($stats.paired_count)}</span
                     >
                     <span
-                        class="block text-xs text-gray-600 dark:text-gray-400 mt-1"
+                        class="block text-xs text-amber-600 mt-1"
                         >Paired Sets</span
                     >
                 </div>
@@ -155,7 +155,7 @@
             {#if Object.keys($stats.cameras).length > 0}
                 <div style="margin-top: 1rem;">
                     <h4
-                        class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2"
+                        class="text-xs font-semibold text-amber-800 mb-2"
                         style="margin: 0;"
                     >
                         Top Cameras
@@ -167,11 +167,11 @@
                             class="flex justify-between items-center py-1 text-sm"
                         >
                             <span
-                                class="text-gray-700 dark:text-gray-300 truncate mr-2"
+                                class="text-amber-700 truncate mr-2"
                                 >{camera}</span
                             >
                             <span
-                                class="text-gray-500 dark:text-gray-400 font-medium"
+                                class="text-amber-600 font-medium"
                                 >{count}</span
                             >
                         </div>
@@ -182,19 +182,19 @@
     {/if}
 
     <!-- Filters Section -->
-    <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+    <div class="p-4 border-b border-amber-200">
         <div class="flex items-center gap-2 mb-3">
             <Filter size={16} />
             <h3
-                class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex-1"
+                class="text-sm font-semibold text-amber-900 flex-1"
                 style="margin: 0;"
             >
                 Filters
             </h3>
             <button
-                class="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-xs font-bold flex items-center justify-center hover:bg-gray-300 dark:hover:bg-gray-600"
+                class="w-6 h-6 rounded-full bg-amber-200 text-amber-700 text-xs font-bold flex items-center justify-center hover:bg-amber-300"
                 onclick={() => (showFilters = !showFilters)}
-                class:bg-blue-500={showFilters}
+                class:bg-amber-700={showFilters}
                 class:text-white={showFilters}
             >
                 {showFilters ? "−" : "+"}
@@ -208,13 +208,13 @@
                     <div class="space-y-2">
                         <label
                             for="camera-filter"
-                            class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                            class="flex items-center gap-2 text-sm font-medium text-amber-800"
                         >
                             <Camera size={14} />
                             Camera Model
                         </label>
                         <select
-                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            class="w-full px-3 py-2 text-sm border border-amber-300 rounded-md bg-white text-amber-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                             id="camera-filter"
                             bind:value={activeFilter.camera_model}
                             onchange={applyFilter}
@@ -232,13 +232,13 @@
                     <div class="space-y-2">
                         <label
                             for="lens-filter"
-                            class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                            class="flex items-center gap-2 text-sm font-medium text-amber-800"
                         >
                             <Aperture size={14} />
                             Lens Model
                         </label>
                         <select
-                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            class="w-full px-3 py-2 text-sm border border-amber-300 rounded-md bg-white text-amber-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                             id="lens-filter"
                             bind:value={activeFilter.lens_model}
                             onchange={applyFilter}
@@ -256,13 +256,13 @@
                     <div class="space-y-2">
                         <label
                             for="filetype-filter"
-                            class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                            class="flex items-center gap-2 text-sm font-medium text-amber-800"
                         >
                             <Image size={14} />
                             File Type
                         </label>
                         <select
-                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            class="w-full px-3 py-2 text-sm border border-amber-300 rounded-md bg-white text-amber-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                             id="filetype-filter"
                             bind:value={activeFilter.file_type}
                             onchange={applyFilter}
@@ -278,12 +278,12 @@
                 <!-- ISO Range Filter -->
                 <div class="filter-group">
                     <label
-                        class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                        class="flex items-center gap-2 text-sm font-medium text-amber-800"
                         >ISO Range</label
                     >
                     <div class="grid grid-cols-2 gap-2">
                         <input
-                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            class="w-full px-3 py-2 text-sm border border-amber-300 rounded-md bg-white text-amber-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                             type="number"
                             placeholder="Min ISO"
                             onchange={(e) => {
@@ -296,7 +296,7 @@
                             }}
                         />
                         <input
-                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            class="w-full px-3 py-2 text-sm border border-amber-300 rounded-md bg-white text-amber-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                             type="number"
                             placeholder="Max ISO"
                             onchange={(e) => {
@@ -314,12 +314,12 @@
                 <!-- Aperture Range Filter -->
                 <div class="filter-group">
                     <label
-                        class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                        class="flex items-center gap-2 text-sm font-medium text-amber-800"
                         >Aperture Range</label
                     >
                     <div class="grid grid-cols-2 gap-2">
                         <input
-                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            class="w-full px-3 py-2 text-sm border border-amber-300 rounded-md bg-white text-amber-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                             type="number"
                             step="0.1"
                             placeholder="Min f/"
@@ -333,7 +333,7 @@
                             }}
                         />
                         <input
-                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+                            class="w-full px-3 py-2 text-sm border border-amber-300 rounded-md bg-white text-amber-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500"
                             type="number"
                             step="0.1"
                             placeholder="Max f/"
@@ -351,7 +351,7 @@
 
                 <div class="pt-2">
                     <button
-                        class="w-full px-3 py-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+                        class="w-full px-3 py-2 text-sm text-amber-700 bg-amber-100 hover:bg-amber-200 rounded-md transition-colors"
                         onclick={clearFilter}>Clear Filters</button
                     >
                 </div>

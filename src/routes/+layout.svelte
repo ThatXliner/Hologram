@@ -3,6 +3,6 @@
   import "../app.css";
 </script>
 
-<div class="h-screen bg-gray-500 dark:bg-gray-900 text-gray-900 dark:text-gray-100">
+<div class="h-screen text-gray-900">
   {@render children()}
 </div>

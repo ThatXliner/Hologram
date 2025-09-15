@@ -66,14 +66,14 @@
                     <div class="flex flex-col items-center mb-6">
                         <div class="text-6xl mb-4">📸</div>
                         <h1
-                            class="text-4xl font-bold text-gray-900 dark:text-gray-100"
+                            class="text-4xl font-bold text-amber-900"
                             style="margin: 0;"
                         >
                             Hologram
                         </h1>
                     </div>
                     <p
-                        class="text-xl text-gray-600 dark:text-gray-400 max-w-2xl"
+                        class="text-xl text-amber-700 max-w-2xl"
                     >
                         Pro-grade photo management for photographers who want
                         total control over their files
@@ -85,43 +85,43 @@
                 >
                     <div class="text-center">
                         <h3
-                            class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2"
+                            class="text-lg font-semibold text-amber-900 mb-2"
                             style="margin: 0;"
                         >
                             RAW+JPEG Workflows
                         </h3>
-                        <p class="text-gray-600 dark:text-gray-400">
+                        <p class="text-amber-700">
                             Automatically pair RAW and JPEG files for seamless
                             comparison and organization
                         </p>
                     </div>
                     <div class="text-center">
                         <h3
-                            class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2"
+                            class="text-lg font-semibold text-amber-900 mb-2"
                             style="margin: 0;"
                         >
                             EXIF-Based Filtering
                         </h3>
-                        <p class="text-gray-600 dark:text-gray-400">
+                        <p class="text-amber-700">
                             Filter by camera, lens, exposure settings, and more
                             with professional precision
                         </p>
                     </div>
                     <div class="text-center">
                         <h3
-                            class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2"
+                            class="text-lg font-semibold text-amber-900 mb-2"
                             style="margin: 0;"
                         >
                             Local Processing
                         </h3>
-                        <p class="text-gray-600 dark:text-gray-400">
+                        <p class="text-amber-700">
                             Your files stay on your machine. No cloud, no
                             subscriptions, just pure control
                         </p>
                     </div>
                 </div>
 
-                <div class="text-gray-500 dark:text-gray-400">
+                <div class="text-amber-600">
                     <p>
                         Get started by importing your first photo folder using
                         the sidebar.
@@ -140,7 +140,7 @@
             <div class="flex-1 flex flex-col">
                 {#if $isLoading}
                     <div
-                        class="flex-1 flex flex-col items-center justify-center text-gray-500 dark:text-gray-400"
+                        class="flex-1 flex flex-col items-center justify-center text-amber-600"
                     >
                         <Loader2 size={32} class="animate-spin" />
                         <p class="mt-4 text-lg">Processing photos...</p>
@@ -151,23 +151,23 @@
                     >
                         <div class="text-6xl mb-4">📁</div>
                         <h3
-                            class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2"
+                            class="text-xl font-semibold text-amber-900 mb-2"
                             style="margin: 0;"
                         >
                             No photos found
                         </h3>
-                        <p class="text-gray-600 dark:text-gray-400">
+                        <p class="text-amber-700">
                             Try adjusting your filters or import a new folder
                         </p>
                     </div>
                 {:else}
                     <!-- Toolbar -->
                     <div
-                        class="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700"
+                        class="flex items-center justify-between p-4 bg-stone-50 border-b border-amber-200"
                     >
                         <div>
                             <h2
-                                class="text-lg font-semibold text-gray-900 dark:text-gray-100"
+                                class="text-lg font-semibold text-amber-900"
                                 style="margin: 0;"
                             >
                                 Photos ({$filteredPhotos.length})
@@ -175,7 +175,7 @@
                         </div>
                         <div>
                             <button
-                                class="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
+                                class="p-2 text-amber-600 hover:text-amber-800 hover:bg-amber-100 rounded-md transition-colors"
                                 onclick={toggleViewMode}
                             >
                                 {#if $viewMode === "grid"}

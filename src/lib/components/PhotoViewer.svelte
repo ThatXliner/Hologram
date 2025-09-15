@@ -147,11 +147,11 @@
 
         <!-- Metadata Panel -->
         <div
-            class="w-80 bg-gray-500 dark:bg-gray-900 border-l border-gray-200 dark:border-gray-700 overflow-y-auto p-4 space-y-6"
+            class="w-80 bg-amber-50 border-l border-amber-200 overflow-y-auto p-4 space-y-6"
         >
             <div class="space-y-3">
                 <h3
-                    class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3"
+                    class="text-sm font-semibold text-amber-900 mb-3"
                     style="margin: 0;"
                 >
                     File Information
@@ -161,12 +161,12 @@
                         <FileImage size={16} />
                         <div>
                             <div
-                                class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                class="text-xs text-amber-600 font-medium"
                             >
                                 File Type
                             </div>
                             <div
-                                class="text-sm text-gray-900 dark:text-gray-100"
+                                class="text-sm text-amber-900"
                             >
                                 {photo.file_type}
                             </div>
@@ -176,12 +176,12 @@
                         <Monitor size={16} />
                         <div>
                             <div
-                                class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                class="text-xs text-amber-600 font-medium"
                             >
                                 File Size
                             </div>
                             <div
-                                class="text-sm text-gray-900 dark:text-gray-100"
+                                class="text-sm text-amber-900"
                             >
                                 {formatFileSize(photo.file_size)}
                             </div>
@@ -191,12 +191,12 @@
                         <Calendar size={16} />
                         <div>
                             <div
-                                class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                class="text-xs text-amber-600 font-medium"
                             >
                                 Modified
                             </div>
                             <div
-                                class="text-sm text-gray-900 dark:text-gray-100"
+                                class="text-sm text-amber-900"
                             >
                                 {formatDate(photo.modified_at)}
                             </div>
@@ -208,7 +208,7 @@
             {#if photo.exif.camera_model || photo.exif.camera_make}
                 <div class="space-y-3">
                     <h3
-                        class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3"
+                        class="text-sm font-semibold text-amber-900 mb-3"
                         style="margin: 0;"
                     >
                         Camera Information
@@ -219,12 +219,12 @@
                                 <Camera size={16} />
                                 <div>
                                     <div
-                                        class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                        class="text-xs text-amber-600 font-medium"
                                     >
                                         Camera Make
                                     </div>
                                     <div
-                                        class="text-sm text-gray-900 dark:text-gray-100"
+                                        class="text-sm text-amber-900"
                                     >
                                         {photo.exif.camera_make}
                                     </div>
@@ -236,12 +236,12 @@
                                 <Camera size={16} />
                                 <div>
                                     <div
-                                        class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                        class="text-xs text-amber-600 font-medium"
                                     >
                                         Camera Model
                                     </div>
                                     <div
-                                        class="text-sm text-gray-900 dark:text-gray-100"
+                                        class="text-sm text-amber-900"
                                     >
                                         {photo.exif.camera_model}
                                     </div>
@@ -253,12 +253,12 @@
                                 <Aperture size={16} />
                                 <div>
                                     <div
-                                        class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                        class="text-xs text-amber-600 font-medium"
                                     >
                                         Lens
                                     </div>
                                     <div
-                                        class="text-sm text-gray-900 dark:text-gray-100"
+                                        class="text-sm text-amber-900"
                                     >
                                         {photo.exif.lens_model}
                                     </div>
@@ -272,7 +272,7 @@
             {#if photo.exif.aperture || photo.exif.shutter_speed || photo.exif.iso || photo.exif.focal_length}
                 <div class="space-y-3">
                     <h3
-                        class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3"
+                        class="text-sm font-semibold text-amber-900 mb-3"
                         style="margin: 0;"
                     >
                         Exposure Settings
@@ -283,12 +283,12 @@
                                 <Aperture size={16} />
                                 <div>
                                     <div
-                                        class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                        class="text-xs text-amber-600 font-medium"
                                     >
                                         Aperture
                                     </div>
                                     <div
-                                        class="text-sm text-gray-900 dark:text-gray-100"
+                                        class="text-sm text-amber-900"
                                     >
                                         f/{photo.exif.aperture}
                                     </div>
@@ -300,12 +300,12 @@
                                 <Clock size={16} />
                                 <div>
                                     <div
-                                        class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                        class="text-xs text-amber-600 font-medium"
                                     >
                                         Shutter Speed
                                     </div>
                                     <div
-                                        class="text-sm text-gray-900 dark:text-gray-100"
+                                        class="text-sm text-amber-900"
                                     >
                                         {photo.exif.shutter_speed}
                                     </div>
@@ -317,12 +317,12 @@
                                 <Image size={16} />
                                 <div>
                                     <div
-                                        class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                        class="text-xs text-amber-600 font-medium"
                                     >
                                         ISO
                                     </div>
                                     <div
-                                        class="text-sm text-gray-900 dark:text-gray-100"
+                                        class="text-sm text-amber-900"
                                     >
                                         {photo.exif.iso}
                                     </div>
@@ -334,12 +334,12 @@
                                 <Aperture size={16} />
                                 <div>
                                     <div
-                                        class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                        class="text-xs text-amber-600 font-medium"
                                     >
                                         Focal Length
                                     </div>
                                     <div
-                                        class="text-sm text-gray-900 dark:text-gray-100"
+                                        class="text-sm text-amber-900"
                                     >
                                         {photo.exif.focal_length}mm
                                     </div>
@@ -353,7 +353,7 @@
             {#if photo.exif.width || photo.exif.height}
                 <div class="space-y-3">
                     <h3
-                        class="text-sm font-semibold text-gray-900 dark:text-gray-100 mb-3"
+                        class="text-sm font-semibold text-amber-900 mb-3"
                         style="margin: 0;"
                     >
                         Image Properties
@@ -364,12 +364,12 @@
                                 <Monitor size={16} />
                                 <div>
                                     <div
-                                        class="text-xs text-gray-500 dark:text-gray-400 font-medium"
+                                        class="text-xs text-amber-600 font-medium"
                                     >
                                         Dimensions
                                     </div>
                                     <div
-                                        class="text-sm text-gray-900 dark:text-gray-100"
+                                        class="text-sm text-amber-900"
                                     >
                                         {photo.exif.width} × {photo.exif.height}
                                     </div>

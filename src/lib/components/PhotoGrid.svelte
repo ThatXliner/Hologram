@@ -44,7 +44,7 @@
     {#each photos as photo (photo.id)}
         <button
             type="button"
-            class="bg-white dark:bg-gray-800 rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-gray-200 dark:border-gray-700 text-left w-full p-0"
+            class="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-amber-200 text-left w-full p-0"
             onclick={() => selectPhoto(photo)}
             onkeydown={(e) => e.key === "Enter" && selectPhoto(photo)}
         >
@@ -54,13 +54,13 @@
                 <img
                     src={getThumbnailSrc(photo)}
                     alt={photo.file_name}
-                    class="bg-gray-100 dark:bg-gray-700"
+                    class="bg-amber-50"
                     style="width: 100%; height: 100%; object-fit: cover;"
                     loading="lazy"
                 />
                 {#if photo.paired_with}
                     <div
-                        class="bg-blue-500 text-white text-xs px-2 py-1 rounded-full"
+                        class="bg-amber-600 text-white text-xs px-2 py-1 rounded-full"
                         style="position: absolute; top: 0.5rem; right: 0.5rem;"
                     >
                         <span style="font-weight: 500;">RAW+JPEG</span>
@@ -73,13 +73,13 @@
                     style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;"
                 >
                     <h3
-                        class="text-sm font-medium text-gray-900 dark:text-gray-100 truncate"
+                        class="text-sm font-medium text-amber-900 truncate"
                         style="margin: 0; flex: 1; margin-right: 0.5rem;"
                     >
                         {photo.file_name}
                     </h3>
                     <span
-                        class="text-xs text-gray-500 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 px-2 py-1 rounded"
+                        class="text-xs text-amber-600 bg-amber-100 px-2 py-1 rounded"
                         style="font-weight: 500;">{photo.file_type}</span
                     >
                 </div>
@@ -89,7 +89,7 @@
                 >
                     {#if photo.exif.camera_model}
                         <div
-                            class="text-xs text-gray-600 dark:text-gray-300"
+                            class="text-xs text-amber-700"
                             style="display: flex; align-items: center; gap: 0.375rem;"
                         >
                             <Camera size={14} />
@@ -101,7 +101,7 @@
 
                     {#if photo.exif.aperture && photo.exif.focal_length}
                         <div
-                            class="text-xs text-gray-600 dark:text-gray-300"
+                            class="text-xs text-amber-700"
                             style="display: flex; align-items: center; gap: 0.375rem;"
                         >
                             <Aperture size={14} />
@@ -115,7 +115,7 @@
 
                     {#if photo.exif.iso}
                         <div
-                            class="text-xs text-gray-600 dark:text-gray-300"
+                            class="text-xs text-amber-700"
                             style="display: flex; align-items: center; gap: 0.375rem;"
                         >
                             <Image size={14} />

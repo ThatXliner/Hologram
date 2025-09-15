@@ -1,7 +1,7 @@
 <script lang="ts">
-    import { photoStore, stats, currentFilter } from "../stores/photoStore.js";
-    import { HologramAPI } from "../api.js";
-    import type { PhotoFilter, Photo } from "../types.js";
+    import { photoStore, stats, currentFilter } from "../stores/photoStore.ts";
+    import { HologramAPI } from "../api.ts";
+    import type { PhotoFilter, Photo } from "../types.ts";
     import {
         Camera,
         Aperture,
@@ -71,10 +71,16 @@
     }
 </script>
 
-<aside class="sidebar">
+<aside
+    class="w-80 bg-gray-500 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 overflow-y-auto"
+    style="height: 100vh;"
+>
     <!-- Import Section -->
-    <div class="sidebar-section">
-        <button class="import-button" onclick={importFolder}>
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+        <button
+            class="w-full flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-4 rounded-lg transition-colors"
+            onclick={importFolder}
+        >
             <FolderOpen size={20} />
             Import Photos
         </button>
@@ -82,48 +88,92 @@
 
     <!-- Stats Section -->
     {#if $stats}
-        <div class="sidebar-section">
-            <div class="section-header">
+        <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+            <div class="flex items-center gap-2 mb-3">
                 <BarChart3 size={16} />
-                <h3>Library Stats</h3>
+                <h3
+                    class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex-1"
+                    style="margin: 0;"
+                >
+                    Library Stats
+                </h3>
             </div>
-            <div class="stats-grid">
-                <div class="stat-item">
-                    <span class="stat-value"
+            <div
+                style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;"
+            >
+                <div
+                    class="text-center p-3 bg-white dark:bg-gray-800 rounded-lg"
+                >
+                    <span
+                        class="block text-lg font-bold text-blue-600 dark:text-blue-400"
                         >{formatNumber($stats.total_photos)}</span
                     >
-                    <span class="stat-label">Total Photos</span>
+                    <span
+                        class="block text-xs text-gray-600 dark:text-gray-400 mt-1"
+                        >Total Photos</span
+                    >
                 </div>
-                <div class="stat-item">
-                    <span class="stat-value"
+                <div
+                    class="text-center p-3 bg-white dark:bg-gray-800 rounded-lg"
+                >
+                    <span
+                        class="block text-lg font-bold text-blue-600 dark:text-blue-400"
                         >{formatNumber($stats.raw_count)}</span
                     >
-                    <span class="stat-label">RAW Files</span>
+                    <span
+                        class="block text-xs text-gray-600 dark:text-gray-400 mt-1"
+                        >RAW Files</span
+                    >
                 </div>
-                <div class="stat-item">
-                    <span class="stat-value"
+                <div
+                    class="text-center p-3 bg-white dark:bg-gray-800 rounded-lg"
+                >
+                    <span
+                        class="block text-lg font-bold text-blue-600 dark:text-blue-400"
                         >{formatNumber($stats.jpeg_count)}</span
                     >
-                    <span class="stat-label">JPEG Files</span>
+                    <span
+                        class="block text-xs text-gray-600 dark:text-gray-400 mt-1"
+                        >JPEG Files</span
+                    >
                 </div>
-                <div class="stat-item">
-                    <span class="stat-value"
+                <div
+                    class="text-center p-3 bg-white dark:bg-gray-800 rounded-lg"
+                >
+                    <span
+                        class="block text-lg font-bold text-blue-600 dark:text-blue-400"
                         >{formatNumber($stats.paired_count)}</span
                     >
-                    <span class="stat-label">Paired Sets</span>
+                    <span
+                        class="block text-xs text-gray-600 dark:text-gray-400 mt-1"
+                        >Paired Sets</span
+                    >
                 </div>
             </div>
 
             <!-- Top Cameras -->
             {#if Object.keys($stats.cameras).length > 0}
-                <div class="top-items">
-                    <h4>Top Cameras</h4>
+                <div style="margin-top: 1rem;">
+                    <h4
+                        class="text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2"
+                        style="margin: 0;"
+                    >
+                        Top Cameras
+                    </h4>
                     {#each Object.entries($stats.cameras)
                         .sort(([, a], [, b]) => b - a)
                         .slice(0, 3) as [camera, count]}
-                        <div class="top-item">
-                            <span class="item-name">{camera}</span>
-                            <span class="item-count">{count}</span>
+                        <div
+                            class="flex justify-between items-center py-1 text-sm"
+                        >
+                            <span
+                                class="text-gray-700 dark:text-gray-300 truncate mr-2"
+                                >{camera}</span
+                            >
+                            <span
+                                class="text-gray-500 dark:text-gray-400 font-medium"
+                                >{count}</span
+                            >
                         </div>
                     {/each}
                 </div>
@@ -132,29 +182,39 @@
     {/if}
 
     <!-- Filters Section -->
-    <div class="sidebar-section">
-        <div class="section-header">
+    <div class="p-4 border-b border-gray-200 dark:border-gray-700">
+        <div class="flex items-center gap-2 mb-3">
             <Filter size={16} />
-            <h3>Filters</h3>
+            <h3
+                class="text-sm font-semibold text-gray-900 dark:text-gray-100 flex-1"
+                style="margin: 0;"
+            >
+                Filters
+            </h3>
             <button
-                class="toggle-button"
+                class="w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-xs font-bold flex items-center justify-center hover:bg-gray-300 dark:hover:bg-gray-600"
                 onclick={() => (showFilters = !showFilters)}
-                class:active={showFilters}
+                class:bg-blue-500={showFilters}
+                class:text-white={showFilters}
             >
                 {showFilters ? "−" : "+"}
             </button>
         </div>
 
         {#if showFilters}
-            <div class="filters-content">
+            <div class="space-y-4">
                 <!-- Camera Model Filter -->
                 {#if cameraModels.length > 0}
-                    <div class="filter-group">
-                        <label for="camera-filter">
+                    <div class="space-y-2">
+                        <label
+                            for="camera-filter"
+                            class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >
                             <Camera size={14} />
                             Camera Model
                         </label>
                         <select
+                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             id="camera-filter"
                             bind:value={activeFilter.camera_model}
                             onchange={applyFilter}
@@ -169,12 +229,16 @@
 
                 <!-- Lens Model Filter -->
                 {#if lensModels.length > 0}
-                    <div class="filter-group">
-                        <label for="lens-filter">
+                    <div class="space-y-2">
+                        <label
+                            for="lens-filter"
+                            class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >
                             <Aperture size={14} />
                             Lens Model
                         </label>
                         <select
+                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             id="lens-filter"
                             bind:value={activeFilter.lens_model}
                             onchange={applyFilter}
@@ -189,12 +253,16 @@
 
                 <!-- File Type Filter -->
                 {#if fileTypes.length > 0}
-                    <div class="filter-group">
-                        <label for="filetype-filter">
+                    <div class="space-y-2">
+                        <label
+                            for="filetype-filter"
+                            class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >
                             <Image size={14} />
                             File Type
                         </label>
                         <select
+                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             id="filetype-filter"
                             bind:value={activeFilter.file_type}
                             onchange={applyFilter}
@@ -209,9 +277,13 @@
 
                 <!-- ISO Range Filter -->
                 <div class="filter-group">
-                    <label>ISO Range</label>
-                    <div class="range-inputs">
+                    <label
+                        class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >ISO Range</label
+                    >
+                    <div class="grid grid-cols-2 gap-2">
                         <input
+                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             type="number"
                             placeholder="Min ISO"
                             onchange={(e) => {
@@ -224,6 +296,7 @@
                             }}
                         />
                         <input
+                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             type="number"
                             placeholder="Max ISO"
                             onchange={(e) => {
@@ -240,9 +313,13 @@
 
                 <!-- Aperture Range Filter -->
                 <div class="filter-group">
-                    <label>Aperture Range</label>
-                    <div class="range-inputs">
+                    <label
+                        class="flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300"
+                        >Aperture Range</label
+                    >
+                    <div class="grid grid-cols-2 gap-2">
                         <input
+                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             type="number"
                             step="0.1"
                             placeholder="Min f/"
@@ -256,6 +333,7 @@
                             }}
                         />
                         <input
+                            class="w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
                             type="number"
                             step="0.1"
                             placeholder="Max f/"
@@ -271,114 +349,13 @@
                     </div>
                 </div>
 
-                <div class="filter-actions">
-                    <button class="clear-button" onclick={clearFilter}
-                        >Clear Filters</button
+                <div class="pt-2">
+                    <button
+                        class="w-full px-3 py-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors"
+                        onclick={clearFilter}>Clear Filters</button
                     >
                 </div>
             </div>
         {/if}
     </div>
 </aside>
-
-<style>
-    @reference "../../app.css";
-    .sidebar {
-        @apply w-80 bg-gray-500 dark:bg-gray-900 border-r border-gray-200 dark:border-gray-700 overflow-y-auto;
-        height: 100vh;
-    }
-
-    .sidebar-section {
-        @apply p-4 border-b border-gray-200 dark:border-gray-700;
-    }
-
-    .section-header {
-        @apply flex items-center gap-2 mb-3;
-    }
-
-    .section-header h3 {
-        @apply text-sm font-semibold text-gray-900 dark:text-gray-100 flex-1;
-        margin: 0;
-    }
-
-    .toggle-button {
-        @apply w-6 h-6 rounded-full bg-gray-200 dark:bg-gray-700 text-gray-600 dark:text-gray-300 text-xs font-bold flex items-center justify-center hover:bg-gray-300 dark:hover:bg-gray-600;
-    }
-
-    .toggle-button.active {
-        @apply bg-blue-500 text-white;
-    }
-
-    .import-button {
-        @apply w-full flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-4 rounded-lg transition-colors;
-    }
-
-    .stats-grid {
-        display: grid;
-        grid-template-columns: 1fr 1fr;
-        gap: 0.75rem;
-        margin-bottom: 1rem;
-    }
-
-    .stat-item {
-        @apply text-center p-3 bg-white dark:bg-gray-800 rounded-lg;
-    }
-
-    .stat-value {
-        @apply block text-lg font-bold text-blue-600 dark:text-blue-400;
-    }
-
-    .stat-label {
-        @apply block text-xs text-gray-600 dark:text-gray-400 mt-1;
-    }
-
-    .top-items {
-        margin-top: 1rem;
-    }
-
-    .top-items h4 {
-        @apply text-xs font-semibold text-gray-700 dark:text-gray-300 mb-2;
-        margin: 0;
-    }
-
-    .top-item {
-        @apply flex justify-between items-center py-1 text-sm;
-    }
-
-    .item-name {
-        @apply text-gray-700 dark:text-gray-300 truncate mr-2;
-    }
-
-    .item-count {
-        @apply text-gray-500 dark:text-gray-400 font-medium;
-    }
-
-    .filters-content {
-        @apply space-y-4;
-    }
-
-    .filter-group {
-        @apply space-y-2;
-    }
-
-    .filter-group label {
-        @apply flex items-center gap-2 text-sm font-medium text-gray-700 dark:text-gray-300;
-    }
-
-    .filter-group select,
-    .filter-group input {
-        @apply w-full px-3 py-2 text-sm border border-gray-300 dark:border-gray-600 rounded-md bg-white dark:bg-gray-800 text-gray-900 dark:text-gray-100 focus:ring-2 focus:ring-blue-500 focus:border-blue-500;
-    }
-
-    .range-inputs {
-        @apply grid grid-cols-2 gap-2;
-    }
-
-    .filter-actions {
-        @apply pt-2;
-    }
-
-    .clear-button {
-        @apply w-full px-3 py-2 text-sm text-gray-600 dark:text-gray-400 bg-gray-100 dark:bg-gray-700 hover:bg-gray-200 dark:hover:bg-gray-600 rounded-md transition-colors;
-    }
-</style>

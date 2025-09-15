@@ -6,12 +6,12 @@
         selectedPhoto,
         viewMode,
         isLoading,
-    } from "../lib/stores/photoStore.js";
-    import { HologramAPI } from "../lib/api.js";
+    } from "../lib/stores/photoStore.ts";
+    import { HologramAPI } from "../lib/api.ts";
     import PhotoGrid from "../lib/components/PhotoGrid.svelte";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import PhotoViewer from "../lib/components/PhotoViewer.svelte";
-    import type { PhotoFilter } from "../lib/types.js";
+    import type { PhotoFilter } from "../lib/types.ts";
     import { Loader2, Grid, List } from "@lucide/svelte";
 
     let showWelcome = $state(true);
@@ -55,47 +55,73 @@
     <title>Hologram - Professional Photo Management</title>
 </svelte:head>
 
-<div class="app">
+<div class="h-screen flex">
     {#if showWelcome && $filteredPhotos.length === 0}
         <!-- Welcome Screen -->
-        <div class="welcome-screen">
-            <div class="welcome-content">
-                <div class="welcome-header">
-                    <div class="logo">
-                        <div class="logo-icon">📸</div>
-                        <h1>Hologram</h1>
+        <div class="flex-1 flex">
+            <div
+                class="flex-1 flex flex-col items-center justify-center p-8 text-center"
+            >
+                <div class="mb-12">
+                    <div class="flex flex-col items-center mb-6">
+                        <div class="text-6xl mb-4">📸</div>
+                        <h1
+                            class="text-4xl font-bold text-gray-900 dark:text-gray-100"
+                            style="margin: 0;"
+                        >
+                            Hologram
+                        </h1>
                     </div>
-                    <p class="tagline">
+                    <p
+                        class="text-xl text-gray-600 dark:text-gray-400 max-w-2xl"
+                    >
                         Pro-grade photo management for photographers who want
                         total control over their files
                     </p>
                 </div>
 
-                <div class="welcome-features">
-                    <div class="feature">
-                        <h3>RAW+JPEG Workflows</h3>
-                        <p>
+                <div
+                    class="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-4xl mb-12"
+                >
+                    <div class="text-center">
+                        <h3
+                            class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2"
+                            style="margin: 0;"
+                        >
+                            RAW+JPEG Workflows
+                        </h3>
+                        <p class="text-gray-600 dark:text-gray-400">
                             Automatically pair RAW and JPEG files for seamless
                             comparison and organization
                         </p>
                     </div>
-                    <div class="feature">
-                        <h3>EXIF-Based Filtering</h3>
-                        <p>
+                    <div class="text-center">
+                        <h3
+                            class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2"
+                            style="margin: 0;"
+                        >
+                            EXIF-Based Filtering
+                        </h3>
+                        <p class="text-gray-600 dark:text-gray-400">
                             Filter by camera, lens, exposure settings, and more
                             with professional precision
                         </p>
                     </div>
-                    <div class="feature">
-                        <h3>Local Processing</h3>
-                        <p>
+                    <div class="text-center">
+                        <h3
+                            class="text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2"
+                            style="margin: 0;"
+                        >
+                            Local Processing
+                        </h3>
+                        <p class="text-gray-600 dark:text-gray-400">
                             Your files stay on your machine. No cloud, no
                             subscriptions, just pure control
                         </p>
                     </div>
                 </div>
 
-                <div class="welcome-cta">
+                <div class="text-gray-500 dark:text-gray-400">
                     <p>
                         Get started by importing your first photo folder using
                         the sidebar.
@@ -108,30 +134,48 @@
         </div>
     {:else}
         <!-- Main Application -->
-        <div class="main-layout">
+        <div class="flex flex-1">
             <Sidebar photos={$filteredPhotos} onFilter={handleFilter} />
 
-            <div class="content-area">
+            <div class="flex-1 flex flex-col">
                 {#if $isLoading}
-                    <div class="loading-screen">
+                    <div
+                        class="flex-1 flex flex-col items-center justify-center text-gray-500 dark:text-gray-400"
+                    >
                         <Loader2 size={32} class="animate-spin" />
-                        <p>Processing photos...</p>
+                        <p class="mt-4 text-lg">Processing photos...</p>
                     </div>
                 {:else if $filteredPhotos.length === 0}
-                    <div class="empty-state">
-                        <div class="empty-icon">📁</div>
-                        <h3>No photos found</h3>
-                        <p>Try adjusting your filters or import a new folder</p>
+                    <div
+                        class="flex-1 flex flex-col items-center justify-center text-center"
+                    >
+                        <div class="text-6xl mb-4">📁</div>
+                        <h3
+                            class="text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2"
+                            style="margin: 0;"
+                        >
+                            No photos found
+                        </h3>
+                        <p class="text-gray-600 dark:text-gray-400">
+                            Try adjusting your filters or import a new folder
+                        </p>
                     </div>
                 {:else}
                     <!-- Toolbar -->
-                    <div class="toolbar">
-                        <div class="toolbar-left">
-                            <h2>Photos ({$filteredPhotos.length})</h2>
+                    <div
+                        class="flex items-center justify-between p-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700"
+                    >
+                        <div>
+                            <h2
+                                class="text-lg font-semibold text-gray-900 dark:text-gray-100"
+                                style="margin: 0;"
+                            >
+                                Photos ({$filteredPhotos.length})
+                            </h2>
                         </div>
-                        <div class="toolbar-right">
+                        <div>
                             <button
-                                class="view-toggle"
+                                class="p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors"
                                 onclick={toggleViewMode}
                             >
                                 {#if $viewMode === "grid"}
@@ -144,7 +188,7 @@
                     </div>
 
                     <!-- Photo Grid -->
-                    <div class="photo-content">
+                    <div class="flex-1 overflow-y-auto">
                         <PhotoGrid photos={$filteredPhotos} />
                     </div>
                 {/if}
@@ -157,111 +201,3 @@
         <PhotoViewer photo={$selectedPhoto} photos={$filteredPhotos} />
     {/if}
 </div>
-
-<style>
-    @reference "../app.css";
-
-    .app {
-        @apply h-screen flex;
-    }
-
-    .welcome-screen {
-        @apply flex-1 flex;
-    }
-
-    .welcome-content {
-        @apply flex-1 flex flex-col items-center justify-center p-8 text-center;
-    }
-
-    .welcome-header {
-        @apply mb-12;
-    }
-
-    .logo {
-        @apply flex flex-col items-center mb-6;
-    }
-
-    .logo-icon {
-        @apply text-6xl mb-4;
-    }
-
-    .logo h1 {
-        @apply text-4xl font-bold text-gray-900 dark:text-gray-100;
-        margin: 0;
-    }
-
-    .tagline {
-        @apply text-xl text-gray-600 dark:text-gray-400 max-w-2xl;
-    }
-
-    .welcome-features {
-        @apply grid grid-cols-1 md:grid-cols-3 gap-8 max-w-4xl mb-12;
-    }
-
-    .feature {
-        @apply text-center;
-    }
-
-    .feature h3 {
-        @apply text-lg font-semibold text-gray-900 dark:text-gray-100 mb-2;
-        margin: 0;
-    }
-
-    .feature p {
-        @apply text-gray-600 dark:text-gray-400;
-    }
-
-    .welcome-cta {
-        @apply text-gray-500 dark:text-gray-400;
-    }
-
-    .main-layout {
-        @apply flex flex-1;
-    }
-
-    .content-area {
-        @apply flex-1 flex flex-col;
-    }
-
-    .loading-screen {
-        @apply flex-1 flex flex-col items-center justify-center text-gray-500 dark:text-gray-400;
-    }
-
-    .loading-screen p {
-        @apply mt-4 text-lg;
-    }
-
-    .empty-state {
-        @apply flex-1 flex flex-col items-center justify-center text-center;
-    }
-
-    .empty-icon {
-        @apply text-6xl mb-4;
-    }
-
-    .empty-state h3 {
-        @apply text-xl font-semibold text-gray-900 dark:text-gray-100 mb-2;
-        margin: 0;
-    }
-
-    .empty-state p {
-        @apply text-gray-600 dark:text-gray-400;
-    }
-
-    .toolbar {
-        @apply flex items-center justify-between p-4 bg-white dark:bg-gray-800 border-b border-gray-200 dark:border-gray-700;
-    }
-
-    .toolbar h2 {
-        @apply text-lg font-semibold text-gray-900 dark:text-gray-100;
-        margin: 0;
-    }
-
-    .view-toggle {
-        @apply p-2 text-gray-500 dark:text-gray-400 hover:text-gray-700 dark:hover:text-gray-200 hover:bg-gray-100 dark:hover:bg-gray-700 rounded-md transition-colors;
-    }
-
-    .photo-content {
-        @apply flex-1 overflow-y-auto;
-    }
-</style>

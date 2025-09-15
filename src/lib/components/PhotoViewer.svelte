@@ -90,10 +90,8 @@
     }
 
     function getImageSrc(photo: Photo): string {
-        console.log("full res", photo);
         // Use full resolution if available, otherwise fall back to thumbnail
-        if (fullResolutionImage && photo.file_type === "image/jpeg") {
-            console.log(fullResolutionImage);
+        if (fullResolutionImage && photo.file_type === "JPG") {
             const uint8Array = new Uint8Array(fullResolutionImage);
             const blob = new Blob([uint8Array], { type: "image/jpeg" });
             const url = URL.createObjectURL(blob);
@@ -189,14 +187,15 @@
                         {loadError}
                     </div>
                 {/if}
-
-                <!-- Main image -->
-                <img
-                    src={getImageSrc(photo)}
-                    alt={photo.file_name}
-                    class="max-w-full max-h-full object-contain transition-opacity duration-300"
-                    class:opacity-75={isLoadingFullRes}
-                />
+                {#key photo.id}
+                    <!-- Main image -->
+                    <img
+                        src={getImageSrc(photo)}
+                        alt={photo.file_name}
+                        class="max-w-full max-h-full object-contain transition-opacity duration-300"
+                        class:opacity-75={isLoadingFullRes}
+                    />
+                {/key}
 
                 <!-- Badges -->
                 <div class="absolute top-4 right-4 flex flex-col gap-2">

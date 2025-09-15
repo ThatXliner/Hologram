@@ -9,20 +9,21 @@ Eventually I plan to expand it to normies, directly competing with Google Photos
 ## Roadmap
 
 ### MVP (Weeks 1–6)
-- [ ] Local file scanning and ingestion
-- [ ] Support for standard file formats (CR2, CR3, ARW, NEF, DNG, JPEG)
+- [X] Local file scanning and ingestion
+- [X] Support for standard file formats (~~CR2, CR3, ARW, NEF, DNG~~, JPEG)
 - [ ] Folder watching & structured import by date/camera
-- [ ] EXIF parsing and display
-- [ ] Basic filtering by camera model, lens, exposure mode, aperture, etc.
+- [X] EXIF parsing and display
+- [ ] Basic filtering by camera model, lens, exposure mode, aperture, etc. ⁉️ - kind of broken honestly
 - [ ] RAW+JPEG pairing
 - [ ] Unified view of RAW+JPEG sets
 - [ ] Quick toggle between in-camera JPEG and RAW previews
 - [ ] LUT/Preview Comparison
 - [ ] Load LUTs and compare to in-camera JPEG render
 - [ ] Render previews (via embedded thumbnails or Apple’s preview engine)
-- [ ] Lightweight UI
+- [X] Lightweight UI[^1]
 - [ ] Grid view, timeline, EXIF sidebar, diff mode
 
+[^1]: if you can call what we have right now "lightweight"
 ### Milestone 2 (Weeks 6–12)
 - [ ] Smart collections
 - [ ] Saved searches like “Manual vs Av Priority,” “High ISO,” or “Telephoto shots”

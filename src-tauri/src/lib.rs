@@ -2,13 +2,16 @@ use anyhow::Result;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use exif as kamadak_exif;
+use futures::future::join_all;
 use image::GenericImageView;
 use image::ImageFormat;
 use kamadak_exif::{In, Reader};
+use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 use tauri::ipc::Response;
 use uuid::Uuid;
 use walkdir::WalkDir;
@@ -145,12 +148,19 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
                 }
             }
         }
-
         if let Some(field) = exif.get_field(kamadak_exif::Tag::ImageLength, In::PRIMARY) {
             if let kamadak_exif::Value::Long(ref vec) = field.value {
                 if let Some(height) = vec.first() {
                     exif_data.height = Some(*height);
                 }
+            }
+        }
+
+        if exif_data.width.is_none() || exif_data.height.is_none() {
+            if let Ok(img) = image::open(file_path) {
+                let (width, height) = img.dimensions();
+                exif_data.width = Some(width);
+                exif_data.height = Some(height);
             }
         }
     }
@@ -167,6 +177,53 @@ fn generate_thumbnail(file_path: &Path) -> Result<String> {
     thumbnail.write_to(&mut cursor, ImageFormat::Jpeg)?;
 
     Ok(base64::engine::general_purpose::STANDARD.encode(buffer))
+}
+
+async fn process_photo_parallel(path: &Path) -> Option<Photo> {
+    if !is_supported_file(path) {
+        return None;
+    }
+
+    let metadata = fs::metadata(path).ok()?;
+    let file_size = metadata.len();
+    let modified_at = metadata
+        .modified()
+        .map(|time| DateTime::<Utc>::from(time))
+        .unwrap_or_else(|_| Utc::now());
+
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("unknown")
+        .to_string();
+
+    let file_type = path
+        .extension()
+        .and_then(|ext| ext.to_str())
+        .unwrap_or("unknown")
+        .to_uppercase();
+
+    let path_clone = path.to_path_buf();
+    let (exif_data, thumbnail) = tokio::task::spawn_blocking(move || {
+        let exif = extract_exif_data(&path_clone).unwrap_or_default();
+        let thumb = generate_thumbnail(&path_clone).ok();
+        (exif, thumb)
+    })
+    .await
+    .ok()?;
+
+    Some(Photo {
+        id: Uuid::new_v4().to_string(),
+        file_path: path.to_string_lossy().to_string(),
+        file_name,
+        file_size,
+        file_type,
+        thumbnail,
+        exif: exif_data,
+        created_at: Utc::now(),
+        modified_at,
+        paired_with: None,
+    })
 }
 
 fn load_full_resolution_image(file_path: &Path) -> Response {
@@ -238,6 +295,39 @@ fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
 
 #[tauri::command]
 async fn scan_folder(folder_path: String) -> Result<Vec<Photo>, String> {
+    scan_folder_parallel(folder_path).await
+}
+
+#[tauri::command]
+async fn scan_folder_parallel(folder_path: String) -> Result<Vec<Photo>, String> {
+    let paths: Vec<std::path::PathBuf> = WalkDir::new(&folder_path)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .map(|entry| entry.path().to_path_buf())
+        .filter(|path| is_supported_file(path))
+        .collect();
+
+    const CHUNK_SIZE: usize = 50;
+    let mut all_photos = Vec::new();
+
+    for chunk in paths.chunks(CHUNK_SIZE) {
+        let chunk_futures: Vec<_> = chunk
+            .iter()
+            .map(|path| process_photo_parallel(path))
+            .collect();
+
+        let chunk_results = join_all(chunk_futures).await;
+        let chunk_photos: Vec<Photo> = chunk_results.into_iter().filter_map(|p| p).collect();
+        all_photos.extend(chunk_photos);
+    }
+
+    pair_raw_jpeg(&mut all_photos);
+    Ok(all_photos)
+}
+
+#[tauri::command]
+async fn scan_folder_sequential(folder_path: String) -> Result<Vec<Photo>, String> {
     let mut photos = Vec::new();
 
     for entry in WalkDir::new(&folder_path)
@@ -301,9 +391,21 @@ async fn scan_folder(folder_path: String) -> Result<Vec<Photo>, String> {
 
 #[tauri::command]
 async fn filter_photos(photos: Vec<Photo>, filter: PhotoFilter) -> Result<Vec<Photo>, String> {
+    filter_photos_parallel(photos, filter).await
+}
+
+#[tauri::command]
+async fn filter_photos_parallel(
+    photos: Vec<Photo>,
+    filter: PhotoFilter,
+) -> Result<Vec<Photo>, String> {
+    let filter = Arc::new(filter);
+
     let filtered: Vec<Photo> = photos
-        .into_iter()
+        .into_par_iter()
         .filter(|photo| {
+            let filter = Arc::clone(&filter);
+
             // Camera make filter
             if let Some(ref make) = filter.camera_make {
                 if photo
@@ -460,7 +562,10 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scan_folder,
+            scan_folder_parallel,
+            scan_folder_sequential,
             filter_photos,
+            filter_photos_parallel,
             get_photo_stats,
             load_full_resolution_image_command
         ])

@@ -1,6 +1,6 @@
 # :camera: Hologram
 
-> [!info] Hologram is currently in active development. Consider it not ready for use
+> ![NOTE] Hologram is currently in active development. Consider it not ready for use
 
 **Hologram** is a pro-grade photo management application tailored for photographers who want total control over their files without being forced into bloated editing environments. Designed from the ground up to handle RAW+JPEG workflows, advanced EXIF-based filtering, and intelligent organization strategies, Hologram empowers users to manage and analyze their photography with precision.
 

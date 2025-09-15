@@ -12,42 +12,7 @@ Eventually I plan to expand it to normies, directly competing with Google Photos
 
 ## Roadmap
 
-### MVP
-- [X] Local file scanning and ingestion
-- [X] Support for standard file formats (~~CR2, CR3, ARW, NEF, DNG~~, JPEG)
-- [ ] Folder watching & structured import by date/camera
-- [X] EXIF parsing and display
-- [ ] Basic filtering by camera model, lens, exposure mode, aperture, etc. ⁉️ - kind of broken honestly
-- [ ] RAW+JPEG pairing
-- [ ] Unified view of RAW+JPEG sets
-- [ ] Quick toggle between in-camera JPEG and RAW previews
-- [ ] LUT/Preview Comparison
-- [ ] Load LUTs and compare to in-camera JPEG render
-- [ ] Render previews (via embedded thumbnails or Apple’s preview engine)
-- [X] Lightweight UI[^1]
-- [ ] Grid view, timeline, EXIF sidebar, diff mode
-
-[^1]: if you can call what we have right now "lightweight"
-### Milestone 2
-- [ ] Smart collections
-- [ ] Saved searches like “Manual vs Av Priority,” “High ISO,” or “Telephoto shots”
-- [ ] Custom tagging & notes
-- [ ] Add tags/comments to individual photos or sets
-- [ ] Performance improvements
-- [ ] Thumbnail caching, progressive loading, faster file parsing
-- [ ] Export/Sharing tools
-- [ ] Export filtered sets to folders, zip, or Lightroom
-
-### Long-Term
-- [ ] Plugin system
-- [ ] Scriptable import/export or EXIF rules
-- [ ] Semantic search (experimental)
-- [ ] Detect visual content (e.g. “sunset with shallow DOF”) with ML
-- [ ] Versioned storage
-- [ ] Keep alternate versions of RAWs (e.g. LUT A, LUT B, In-Camera)
-- [ ] Mobile viewer/companion app
-- [ ] View and filter photos from desktop library on mobile
-- [ ] Server side hosting and sync?
+See [here](https://github.com/ThatXliner/Hologram/issues/6)
 
 ## Long Description
 

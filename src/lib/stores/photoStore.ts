@@ -1,5 +1,5 @@
 import { writable, derived } from "svelte/store";
-import type { Photo, PhotoFilter, PhotoStats, AppState } from "../types.ts";
+import type { Photo, PhotoFilter, PhotoStats, AppState, ScanProgress } from "../types.ts";
 
 function createPhotoStore() {
   const initialState: AppState = {
@@ -7,6 +7,7 @@ function createPhotoStore() {
     filteredPhotos: [],
     currentFilter: {},
     isLoading: false,
+    scanProgress: undefined,
     stats: undefined,
     viewMode: "grid",
   };
@@ -35,6 +36,8 @@ function createPhotoStore() {
       update((state) => ({ ...state, currentFilter: filter })),
     setLoading: (isLoading: boolean) =>
       update((state) => ({ ...state, isLoading })),
+    setScanProgress: (scanProgress: ScanProgress | undefined) =>
+      update((state) => ({ ...state, scanProgress })),
     setStats: (stats: PhotoStats) => update((state) => ({ ...state, stats })),
     setViewMode: (viewMode: "grid" | "list" | "viewer") =>
       update((state) => ({ ...state, viewMode })),
@@ -55,5 +58,6 @@ export const currentFilter = derived(
   ($store) => $store.currentFilter,
 );
 export const isLoading = derived(photoStore, ($store) => $store.isLoading);
+export const scanProgress = derived(photoStore, ($store) => $store.scanProgress);
 export const stats = derived(photoStore, ($store) => $store.stats);
 export const viewMode = derived(photoStore, ($store) => $store.viewMode);

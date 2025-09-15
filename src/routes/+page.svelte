@@ -5,6 +5,7 @@
         filteredPhotos,
         viewMode,
         isLoading,
+        scanProgress,
     } from "../lib/stores/photoStore.ts";
     import { HologramAPI } from "../lib/api.ts";
     import PhotoGrid from "../lib/components/PhotoGrid.svelte";
@@ -139,7 +140,34 @@
                         class="flex-1 flex flex-col items-center justify-center text-amber-600"
                     >
                         <Loader2 size={32} class="animate-spin" />
-                        <p class="mt-4 text-lg">Processing photos...</p>
+                        {#if $scanProgress}
+                            <div class="mt-4 text-center max-w-md">
+                                <p class="text-lg mb-4">Scanning photos...</p>
+
+                                <!-- Main progress bar -->
+                                <div class="w-full bg-amber-200 rounded-full h-3 mb-3">
+                                    <div
+                                        class="bg-blue-500 h-3 rounded-full transition-all duration-300"
+                                        style="width: {$scanProgress.percentage}%"
+                                    ></div>
+                                </div>
+
+                                <!-- Progress details -->
+                                <div class="text-sm text-amber-700 space-y-2">
+                                    <div class="flex justify-between">
+                                        <span>{$scanProgress.current} of {$scanProgress.total} files</span>
+                                        <span>{Math.round($scanProgress.percentage)}%</span>
+                                    </div>
+                                    {#if $scanProgress.current_file}
+                                        <div class="text-amber-600">
+                                            Processing: <span class="font-mono text-xs">{$scanProgress.current_file}</span>
+                                        </div>
+                                    {/if}
+                                </div>
+                            </div>
+                        {:else}
+                            <p class="mt-4 text-lg">Processing photos...</p>
+                        {/if}
                     </div>
                 {:else if $filteredPhotos.length === 0}
                     <div

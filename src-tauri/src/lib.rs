@@ -11,8 +11,10 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
+use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::ipc::Response;
+use tauri::{AppHandle, Emitter};
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -58,6 +60,14 @@ pub struct PhotoFilter {
     pub iso_range: Option<(u32, u32)>,
     pub date_range: Option<(DateTime<Utc>, DateTime<Utc>)>,
     pub file_type: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanProgress {
+    pub current: usize,
+    pub total: usize,
+    pub percentage: f64,
+    pub current_file: Option<String>,
 }
 
 static SUPPORTED_EXTENSIONS: &[&str] = &[
@@ -327,6 +337,75 @@ async fn scan_folder_parallel(folder_path: String) -> Result<Vec<Photo>, String>
 }
 
 #[tauri::command]
+async fn scan_folder_with_progress(folder_path: String, app: AppHandle) -> Result<Vec<Photo>, String> {
+    let paths: Vec<std::path::PathBuf> = WalkDir::new(&folder_path)
+        .follow_links(true)
+        .into_iter()
+        .filter_map(|e| e.ok())
+        .map(|entry| entry.path().to_path_buf())
+        .filter(|path| is_supported_file(path))
+        .collect();
+
+    let total_files = paths.len();
+    let processed_count = Arc::new(AtomicUsize::new(0));
+
+    const CHUNK_SIZE: usize = 50;
+    let mut all_photos = Vec::new();
+
+    for chunk in paths.chunks(CHUNK_SIZE) {
+        let chunk_futures: Vec<_> = chunk
+            .iter()
+            .map(|path| {
+                let processed_count = Arc::clone(&processed_count);
+                let app = app.clone();
+                let path = path.clone();
+                async move {
+                    let result = process_photo_parallel(&path).await;
+
+                    let current = processed_count.fetch_add(1, Ordering::SeqCst) + 1;
+                    let percentage = (current as f64 / total_files as f64) * 100.0;
+
+                    let progress = ScanProgress {
+                        current,
+                        total: total_files,
+                        percentage,
+                        current_file: Some(path.file_name()
+                            .and_then(|n| n.to_str())
+                            .unwrap_or("unknown")
+                            .to_string()),
+                    };
+
+                    if let Err(e) = app.emit("scan-progress", &progress) {
+                        eprintln!("Failed to emit progress: {}", e);
+                    }
+
+                    result
+                }
+            })
+            .collect();
+
+        let chunk_results = join_all(chunk_futures).await;
+        let chunk_photos: Vec<Photo> = chunk_results.into_iter().filter_map(|p| p).collect();
+        all_photos.extend(chunk_photos);
+    }
+
+    pair_raw_jpeg(&mut all_photos);
+
+    let final_progress = ScanProgress {
+        current: total_files,
+        total: total_files,
+        percentage: 100.0,
+        current_file: None,
+    };
+
+    if let Err(e) = app.emit("scan-complete", &final_progress) {
+        eprintln!("Failed to emit completion: {}", e);
+    }
+
+    Ok(all_photos)
+}
+
+#[tauri::command]
 async fn scan_folder_sequential(folder_path: String) -> Result<Vec<Photo>, String> {
     let mut photos = Vec::new();
 
@@ -563,6 +642,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_folder,
             scan_folder_parallel,
+            scan_folder_with_progress,
             scan_folder_sequential,
             filter_photos,
             filter_photos_parallel,

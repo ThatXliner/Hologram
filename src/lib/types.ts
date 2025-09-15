@@ -48,11 +48,19 @@ export interface PhotoStats {
   lenses: Record<string, number>;
 }
 
+export interface ScanProgress {
+  current: number;
+  total: number;
+  percentage: number;
+  current_file?: string;
+}
+
 export interface AppState {
   photos: Photo[];
   filteredPhotos: Photo[];
   currentFilter: PhotoFilter;
   isLoading: boolean;
+  scanProgress?: ScanProgress;
   stats?: PhotoStats;
   viewMode: "grid" | "list" | "viewer";
 }

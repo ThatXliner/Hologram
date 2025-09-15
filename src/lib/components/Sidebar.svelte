@@ -1,7 +1,7 @@
 <script lang="ts">
-    import { photoStore, stats, currentFilter } from "../stores/photoStore.ts";
+    import { photoStore, stats, currentFilter, scanProgress } from "../stores/photoStore.ts";
     import { HologramAPI } from "../api.ts";
-    import type { PhotoFilter, Photo } from "../types.ts";
+    import type { PhotoFilter, Photo, ScanProgress } from "../types.ts";
     import {
         Camera,
         Aperture,
@@ -44,15 +44,26 @@
         if (folderPath) {
             try {
                 photoStore.setLoading(true);
-                const scannedPhotos = await HologramAPI.scanFolder(folderPath);
+                photoStore.setScanProgress(undefined);
+
+                const scannedPhotos = await HologramAPI.scanFolderWithProgress(
+                    folderPath,
+                    (progress: ScanProgress) => {
+                        photoStore.setScanProgress(progress);
+                    },
+                    () => {
+                        photoStore.setScanProgress(undefined);
+                    }
+                );
+
                 photoStore.setPhotos(scannedPhotos);
-                const photoStats =
-                    await HologramAPI.getPhotoStats(scannedPhotos);
+                const photoStats = await HologramAPI.getPhotoStats(scannedPhotos);
                 photoStore.setStats(photoStats);
             } catch (error) {
                 console.error("Failed to import folder:", error);
             } finally {
                 photoStore.setLoading(false);
+                photoStore.setScanProgress(undefined);
             }
         }
     }
@@ -78,12 +89,38 @@
     <!-- Import Section -->
     <div class="p-4 border-b border-amber-200">
         <button
-            class="w-full flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-4 rounded-lg transition-colors"
+            class="w-full flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
             onclick={importFolder}
+            disabled={$scanProgress !== undefined}
         >
             <FolderOpen size={20} />
-            Import Photos
+            {$scanProgress ? 'Scanning...' : 'Import Photos'}
         </button>
+
+        {#if $scanProgress}
+            <div class="mt-3 space-y-2">
+                <!-- Progress Bar -->
+                <div class="w-full bg-amber-200 rounded-full h-2">
+                    <div
+                        class="bg-blue-500 h-2 rounded-full transition-all duration-300"
+                        style="width: {$scanProgress.percentage}%"
+                    ></div>
+                </div>
+
+                <!-- Progress Text -->
+                <div class="text-xs text-amber-700 space-y-1">
+                    <div class="flex justify-between">
+                        <span>{$scanProgress.current} of {$scanProgress.total} files</span>
+                        <span>{Math.round($scanProgress.percentage)}%</span>
+                    </div>
+                    {#if $scanProgress.current_file}
+                        <div class="truncate text-amber-600">
+                            Processing: {$scanProgress.current_file}
+                        </div>
+                    {/if}
+                </div>
+            </div>
+        {/if}
     </div>
 
     <!-- Stats Section -->

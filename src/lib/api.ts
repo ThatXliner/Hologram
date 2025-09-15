@@ -1,6 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
+import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { Photo, PhotoFilter, PhotoStats } from "./types.ts";
+import type { Photo, PhotoFilter, PhotoStats, ScanProgress } from "./types.ts";
 
 export class HologramAPI {
   static async selectFolder(): Promise<string | null> {
@@ -26,6 +27,43 @@ export class HologramAPI {
     } catch (error) {
       console.error("Error scanning folder:", error);
       throw new Error(`Failed to scan folder: ${error}`);
+    }
+  }
+
+  static async scanFolderWithProgress(
+    folderPath: string,
+    onProgress?: (progress: ScanProgress) => void,
+    onComplete?: () => void,
+  ): Promise<Photo[]> {
+    let unlistenProgress: (() => void) | null = null;
+    let unlistenComplete: (() => void) | null = null;
+
+    try {
+      // Set up progress listeners
+      if (onProgress) {
+        unlistenProgress = await listen<ScanProgress>("scan-progress", (event) => {
+          onProgress(event.payload);
+        });
+      }
+
+      if (onComplete) {
+        unlistenComplete = await listen("scan-complete", () => {
+          onComplete();
+        });
+      }
+
+      const photos = await invoke<Photo[]>("scan_folder_with_progress", {
+        folderPath,
+      });
+
+      return photos;
+    } catch (error) {
+      console.error("Error scanning folder with progress:", error);
+      throw new Error(`Failed to scan folder: ${error}`);
+    } finally {
+      // Clean up listeners
+      if (unlistenProgress) unlistenProgress();
+      if (unlistenComplete) unlistenComplete();
     }
   }
 

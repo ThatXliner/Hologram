@@ -305,11 +305,6 @@ fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
 
 #[tauri::command]
 async fn scan_folder(folder_path: String) -> Result<Vec<Photo>, String> {
-    scan_folder_parallel(folder_path).await
-}
-
-#[tauri::command]
-async fn scan_folder_parallel(folder_path: String) -> Result<Vec<Photo>, String> {
     let paths: Vec<std::path::PathBuf> = WalkDir::new(&folder_path)
         .follow_links(true)
         .into_iter()
@@ -337,7 +332,10 @@ async fn scan_folder_parallel(folder_path: String) -> Result<Vec<Photo>, String>
 }
 
 #[tauri::command]
-async fn scan_folder_with_progress(folder_path: String, app: AppHandle) -> Result<Vec<Photo>, String> {
+async fn scan_folder_with_progress(
+    folder_path: String,
+    app: AppHandle,
+) -> Result<Vec<Photo>, String> {
     let paths: Vec<std::path::PathBuf> = WalkDir::new(&folder_path)
         .follow_links(true)
         .into_iter()
@@ -369,10 +367,12 @@ async fn scan_folder_with_progress(folder_path: String, app: AppHandle) -> Resul
                         current,
                         total: total_files,
                         percentage,
-                        current_file: Some(path.file_name()
-                            .and_then(|n| n.to_str())
-                            .unwrap_or("unknown")
-                            .to_string()),
+                        current_file: Some(
+                            path.file_name()
+                                .and_then(|n| n.to_str())
+                                .unwrap_or("unknown")
+                                .to_string(),
+                        ),
                     };
 
                     if let Err(e) = app.emit("scan-progress", &progress) {
@@ -406,78 +406,7 @@ async fn scan_folder_with_progress(folder_path: String, app: AppHandle) -> Resul
 }
 
 #[tauri::command]
-async fn scan_folder_sequential(folder_path: String) -> Result<Vec<Photo>, String> {
-    let mut photos = Vec::new();
-
-    for entry in WalkDir::new(&folder_path)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-    {
-        let path = entry.path();
-
-        if !is_supported_file(path) {
-            continue;
-        }
-
-        let metadata = match fs::metadata(path) {
-            Ok(meta) => meta,
-            Err(_) => continue,
-        };
-
-        let file_size = metadata.len();
-        let modified_at = metadata
-            .modified()
-            .map(|time| DateTime::<Utc>::from(time))
-            .unwrap_or_else(|_| Utc::now());
-
-        let file_name = path
-            .file_name()
-            .and_then(|name| name.to_str())
-            .unwrap_or("unknown")
-            .to_string();
-
-        let file_type = path
-            .extension()
-            .and_then(|ext| ext.to_str())
-            .unwrap_or("unknown")
-            .to_uppercase();
-
-        let exif_data = extract_exif_data(path).unwrap_or_default();
-
-        let thumbnail = generate_thumbnail(path).ok();
-
-        let photo = Photo {
-            id: Uuid::new_v4().to_string(),
-            file_path: path.to_string_lossy().to_string(),
-            file_name,
-            file_size,
-            file_type,
-            thumbnail,
-            exif: exif_data,
-            created_at: Utc::now(),
-            modified_at,
-            paired_with: None,
-        };
-
-        photos.push(photo);
-    }
-
-    pair_raw_jpeg(&mut photos);
-
-    Ok(photos)
-}
-
-#[tauri::command]
 async fn filter_photos(photos: Vec<Photo>, filter: PhotoFilter) -> Result<Vec<Photo>, String> {
-    filter_photos_parallel(photos, filter).await
-}
-
-#[tauri::command]
-async fn filter_photos_parallel(
-    photos: Vec<Photo>,
-    filter: PhotoFilter,
-) -> Result<Vec<Photo>, String> {
     let filter = Arc::new(filter);
 
     let filtered: Vec<Photo> = photos
@@ -641,11 +570,8 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
             scan_folder,
-            scan_folder_parallel,
             scan_folder_with_progress,
-            scan_folder_sequential,
             filter_photos,
-            filter_photos_parallel,
             get_photo_stats,
             load_full_resolution_image_command
         ])

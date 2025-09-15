@@ -41,7 +41,7 @@ jobs:
           workspaces: './src-tauri -> target'
 
       - name: Build the app
-        run: bunx tauri build
+        run: bunx tauri build || bun run tauri build
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4

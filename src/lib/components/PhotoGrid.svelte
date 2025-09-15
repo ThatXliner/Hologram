@@ -10,7 +10,7 @@
     let { photos }: Props = $props();
 
     function selectPhoto(photo: Photo) {
-        photoStore.setSelectedPhoto(photo);
+        // photoStore.setSelectedPhoto(photo);
         photoStore.setViewMode("viewer");
     }
 

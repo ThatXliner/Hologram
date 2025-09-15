@@ -3,7 +3,6 @@
     import {
         photoStore,
         filteredPhotos,
-        selectedPhoto,
         viewMode,
         isLoading,
     } from "../lib/stores/photoStore.ts";
@@ -42,8 +41,7 @@
     }
 
     function toggleViewMode() {
-        const currentMode = $viewMode;
-        if (currentMode === "grid") {
+        if ($viewMode === "grid") {
             photoStore.setViewMode("list");
         } else {
             photoStore.setViewMode("grid");
@@ -72,9 +70,7 @@
                             Hologram
                         </h1>
                     </div>
-                    <p
-                        class="text-xl text-amber-700 max-w-2xl"
-                    >
+                    <p class="text-xl text-amber-700 max-w-2xl">
                         Pro-grade photo management for photographers who want
                         total control over their files
                     </p>
@@ -197,7 +193,7 @@
     {/if}
 
     <!-- Photo Viewer Modal -->
-    {#if $selectedPhoto && $viewMode === "viewer"}
-        <PhotoViewer photo={$selectedPhoto} photos={$filteredPhotos} />
+    {#if $viewMode === "viewer"}
+        <PhotoViewer photos={$filteredPhotos} />
     {/if}
 </div>

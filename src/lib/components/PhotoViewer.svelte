@@ -1,5 +1,6 @@
 <script lang="ts">
     import { photoStore } from "../stores/photoStore.ts";
+    import { HologramAPI } from "../api.ts";
     import type { Photo } from "../types.ts";
     import {
         X,
@@ -12,34 +13,43 @@
         Calendar,
         FileImage,
         Monitor,
+        Loader2,
     } from "@lucide/svelte";
+    import { onMount } from "svelte";
+    // import { onMount } from "svelte";
 
     interface Props {
-        photo: Photo;
         photos: Photo[];
     }
 
-    let { photo, photos }: Props = $props();
+    let { photos }: Props = $props();
 
-    const currentIndex = $derived(photos.findIndex((p) => p.id === photo.id));
+    let currentIndex = $state<number>(0); //(photos.findIndex((p) => p.id === photo.id));
+    const photo = $derived(photos[currentIndex]);
     const hasPrevious = $derived(currentIndex > 0);
     const hasNext = $derived(currentIndex < photos.length - 1);
 
+    let fullResolutionImage = $state<ArrayBuffer | null>(null);
+    let isLoadingFullRes = $state(false);
+    let loadError = $state<string | null>(null);
+
     function closeViewer() {
         photoStore.setViewMode("grid");
-        photoStore.setSelectedPhoto(undefined);
+        // photoStore.setSelectedPhoto(undefined);
     }
 
     function navigatePrevious() {
         if (hasPrevious) {
-            photoStore.setSelectedPhoto(photos[currentIndex - 1]);
+            currentIndex--;
         }
+        loadFullResolutionImage(photo);
     }
 
     function navigateNext() {
         if (hasNext) {
-            photoStore.setSelectedPhoto(photos[currentIndex + 1]);
+            currentIndex++;
         }
+        loadFullResolutionImage(photo);
     }
 
     function handleKeydown(event: KeyboardEvent) {
@@ -72,14 +82,51 @@
         }
     }
 
-    function getImageSrc(photo: Photo): string {
-        // In a real app, this would load the full-resolution image
-        // For now, we'll use the thumbnail as a placeholder
+    function getThumbnailSrc(photo: Photo): string {
         if (photo.thumbnail) {
             return `data:image/jpeg;base64,${photo.thumbnail}`;
         }
         return "/placeholder-image.svg";
     }
+
+    function getImageSrc(photo: Photo): string {
+        console.log("full res", photo);
+        // Use full resolution if available, otherwise fall back to thumbnail
+        if (fullResolutionImage && photo.file_type === "image/jpeg") {
+            console.log(fullResolutionImage);
+            const uint8Array = new Uint8Array(fullResolutionImage);
+            const blob = new Blob([uint8Array], { type: "image/jpeg" });
+            const url = URL.createObjectURL(blob);
+
+            return url;
+        }
+        return getThumbnailSrc(photo);
+    }
+
+    async function loadFullResolutionImage(photo: Photo) {
+        if (isLoadingFullRes) return;
+
+        isLoadingFullRes = true;
+        loadError = null;
+        fullResolutionImage = null;
+
+        try {
+            const imageData = await HologramAPI.loadFullResolutionImage(
+                photo.file_path,
+            );
+            fullResolutionImage = imageData;
+        } catch (error) {
+            console.error("Failed to load full resolution image:", error);
+            loadError = "Failed to load high-quality image";
+        } finally {
+            isLoadingFullRes = false;
+        }
+    }
+
+    // Load full resolution image when photo changes
+    onMount(() => {
+        loadFullResolutionImage(photo);
+    });
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -120,19 +167,56 @@
             {/if}
 
             <div class="relative max-w-full max-h-full">
+                <!-- Loading overlay -->
+                {#if isLoadingFullRes}
+                    <div
+                        class="absolute inset-0 bg-black/20 flex items-center justify-center z-20"
+                    >
+                        <div
+                            class="bg-black/60 text-white px-4 py-2 rounded-lg flex items-center gap-2"
+                        >
+                            <Loader2 size={16} class="animate-spin" />
+                            Loading high-quality image...
+                        </div>
+                    </div>
+                {/if}
+
+                <!-- Error overlay -->
+                {#if loadError}
+                    <div
+                        class="absolute top-4 left-4 bg-red-500 text-white text-sm px-3 py-1 rounded-lg z-20"
+                    >
+                        {loadError}
+                    </div>
+                {/if}
+
+                <!-- Main image -->
                 <img
                     src={getImageSrc(photo)}
                     alt={photo.file_name}
-                    class="max-w-full max-h-full object-contain"
+                    class="max-w-full max-h-full object-contain transition-opacity duration-300"
+                    class:opacity-75={isLoadingFullRes}
                 />
-                {#if photo.paired_with}
-                    <div
-                        class="absolute top-4 right-4 bg-blue-500 text-white text-sm px-3 py-1 rounded-full flex items-center gap-2"
-                    >
-                        <FileImage size={16} />
-                        RAW+JPEG Pair
-                    </div>
-                {/if}
+
+                <!-- Badges -->
+                <div class="absolute top-4 right-4 flex flex-col gap-2">
+                    {#if photo.paired_with}
+                        <div
+                            class="bg-amber-600 text-white text-sm px-3 py-1 rounded-full flex items-center gap-2"
+                        >
+                            <FileImage size={16} />
+                            RAW+JPEG Pair
+                        </div>
+                    {/if}
+
+                    {#if fullResolutionImage}
+                        <div
+                            class="bg-green-600 text-white text-xs px-2 py-1 rounded-full"
+                        >
+                            High Quality
+                        </div>
+                    {/if}
+                </div>
             </div>
 
             {#if hasNext}
@@ -160,14 +244,10 @@
                     <div class="flex items-start gap-3">
                         <FileImage size={16} />
                         <div>
-                            <div
-                                class="text-xs text-amber-600 font-medium"
-                            >
+                            <div class="text-xs text-amber-600 font-medium">
                                 File Type
                             </div>
-                            <div
-                                class="text-sm text-amber-900"
-                            >
+                            <div class="text-sm text-amber-900">
                                 {photo.file_type}
                             </div>
                         </div>
@@ -175,14 +255,10 @@
                     <div class="flex items-start gap-3">
                         <Monitor size={16} />
                         <div>
-                            <div
-                                class="text-xs text-amber-600 font-medium"
-                            >
+                            <div class="text-xs text-amber-600 font-medium">
                                 File Size
                             </div>
-                            <div
-                                class="text-sm text-amber-900"
-                            >
+                            <div class="text-sm text-amber-900">
                                 {formatFileSize(photo.file_size)}
                             </div>
                         </div>
@@ -190,14 +266,10 @@
                     <div class="flex items-start gap-3">
                         <Calendar size={16} />
                         <div>
-                            <div
-                                class="text-xs text-amber-600 font-medium"
-                            >
+                            <div class="text-xs text-amber-600 font-medium">
                                 Modified
                             </div>
-                            <div
-                                class="text-sm text-amber-900"
-                            >
+                            <div class="text-sm text-amber-900">
                                 {formatDate(photo.modified_at)}
                             </div>
                         </div>
@@ -223,9 +295,7 @@
                                     >
                                         Camera Make
                                     </div>
-                                    <div
-                                        class="text-sm text-amber-900"
-                                    >
+                                    <div class="text-sm text-amber-900">
                                         {photo.exif.camera_make}
                                     </div>
                                 </div>
@@ -240,9 +310,7 @@
                                     >
                                         Camera Model
                                     </div>
-                                    <div
-                                        class="text-sm text-amber-900"
-                                    >
+                                    <div class="text-sm text-amber-900">
                                         {photo.exif.camera_model}
                                     </div>
                                 </div>
@@ -257,9 +325,7 @@
                                     >
                                         Lens
                                     </div>
-                                    <div
-                                        class="text-sm text-amber-900"
-                                    >
+                                    <div class="text-sm text-amber-900">
                                         {photo.exif.lens_model}
                                     </div>
                                 </div>
@@ -287,9 +353,7 @@
                                     >
                                         Aperture
                                     </div>
-                                    <div
-                                        class="text-sm text-amber-900"
-                                    >
+                                    <div class="text-sm text-amber-900">
                                         f/{photo.exif.aperture}
                                     </div>
                                 </div>
@@ -304,9 +368,7 @@
                                     >
                                         Shutter Speed
                                     </div>
-                                    <div
-                                        class="text-sm text-amber-900"
-                                    >
+                                    <div class="text-sm text-amber-900">
                                         {photo.exif.shutter_speed}
                                     </div>
                                 </div>
@@ -321,9 +383,7 @@
                                     >
                                         ISO
                                     </div>
-                                    <div
-                                        class="text-sm text-amber-900"
-                                    >
+                                    <div class="text-sm text-amber-900">
                                         {photo.exif.iso}
                                     </div>
                                 </div>
@@ -338,9 +398,7 @@
                                     >
                                         Focal Length
                                     </div>
-                                    <div
-                                        class="text-sm text-amber-900"
-                                    >
+                                    <div class="text-sm text-amber-900">
                                         {photo.exif.focal_length}mm
                                     </div>
                                 </div>
@@ -368,9 +426,7 @@
                                     >
                                         Dimensions
                                     </div>
-                                    <div
-                                        class="text-sm text-amber-900"
-                                    >
+                                    <div class="text-sm text-amber-900">
                                         {photo.exif.width} × {photo.exif.height}
                                     </div>
                                 </div>

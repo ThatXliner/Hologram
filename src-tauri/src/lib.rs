@@ -2,12 +2,14 @@ use anyhow::Result;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use exif as kamadak_exif;
+use image::GenericImageView;
 use image::ImageFormat;
 use kamadak_exif::{In, Reader};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::Path;
+use tauri::ipc::Response;
 use uuid::Uuid;
 use walkdir::WalkDir;
 
@@ -165,6 +167,31 @@ fn generate_thumbnail(file_path: &Path) -> Result<String> {
     thumbnail.write_to(&mut cursor, ImageFormat::Jpeg)?;
 
     Ok(base64::engine::general_purpose::STANDARD.encode(buffer))
+}
+
+fn load_full_resolution_image(file_path: &Path) -> Response {
+    let img = fs::read(file_path).unwrap();
+    tauri::ipc::Response::new(img)
+    // let img = image::open(file_path)?;
+
+    // // Resize if image is too large (max 2048px on longest side)
+    // let (width, height) = img.dimensions();
+    // let max_dimension = width.max(height);
+
+    // let processed_img = if max_dimension > 2048 {
+    //     let scale = 2048.0 / max_dimension as f32;
+    //     let new_width = (width as f32 * scale) as u32;
+    //     let new_height = (height as f32 * scale) as u32;
+    //     img.resize(new_width, new_height, image::imageops::FilterType::Lanczos3)
+    // } else {
+    //     img
+    // };
+
+    // let mut buffer = Vec::new();
+    // let mut cursor = std::io::Cursor::new(&mut buffer);
+    // processed_img.write_to(&mut cursor, ImageFormat::Jpeg)?;
+
+    // Ok(base64::engine::general_purpose::STANDARD.encode(buffer))
 }
 
 fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
@@ -409,6 +436,22 @@ async fn get_photo_stats(photos: Vec<Photo>) -> Result<HashMap<String, serde_jso
     Ok(stats)
 }
 
+#[tauri::command]
+async fn load_full_resolution_image_command(file_path: String) -> Response {
+    let path = Path::new(&file_path);
+
+    if !path.exists() {
+        return Response::new("File does not exist".to_string());
+    }
+
+    if !is_supported_file(path) {
+        return Response::new("Unsupported file format".to_string());
+    }
+
+    load_full_resolution_image(path)
+    // load_full_resolution_image(path).map_err(|e| format!("Failed to load image: {}", e))
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -418,7 +461,8 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_folder,
             filter_photos,
-            get_photo_stats
+            get_photo_stats,
+            load_full_resolution_image_command
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

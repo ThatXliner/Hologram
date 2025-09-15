@@ -56,4 +56,17 @@ export class HologramAPI {
       throw new Error(`Failed to get photo stats: ${error}`);
     }
   }
+
+  static async loadFullResolutionImage(filePath: string): Promise<ArrayBuffer> {
+    const imageData = await invoke<ArrayBuffer | string>(
+      "load_full_resolution_image_command",
+      {
+        filePath,
+      },
+    );
+    if (typeof imageData === "string") {
+      throw new Error(`Failed to load full resolution image: ${imageData}`);
+    }
+    return imageData; // base64 encoded full resolution image
+  }
 }

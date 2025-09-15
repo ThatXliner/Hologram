@@ -42,8 +42,8 @@
     async function importFolder() {
         const folderPath = await HologramAPI.selectFolder();
         if (folderPath) {
-            photoStore.setLoading(true);
             try {
+                photoStore.setLoading(true);
                 const scannedPhotos = await HologramAPI.scanFolder(folderPath);
                 photoStore.setPhotos(scannedPhotos);
                 const photoStats =
@@ -101,51 +101,35 @@
             <div
                 style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;"
             >
-                <div
-                    class="text-center p-3 bg-white rounded-lg shadow-sm"
-                >
-                    <span
-                        class="block text-lg font-bold text-amber-800"
+                <div class="text-center p-3 bg-white rounded-lg shadow-sm">
+                    <span class="block text-lg font-bold text-amber-800"
                         >{formatNumber($stats.total_photos)}</span
                     >
-                    <span
-                        class="block text-xs text-amber-600 mt-1"
+                    <span class="block text-xs text-amber-600 mt-1"
                         >Total Photos</span
                     >
                 </div>
-                <div
-                    class="text-center p-3 bg-white rounded-lg shadow-sm"
-                >
-                    <span
-                        class="block text-lg font-bold text-amber-800"
+                <div class="text-center p-3 bg-white rounded-lg shadow-sm">
+                    <span class="block text-lg font-bold text-amber-800"
                         >{formatNumber($stats.raw_count)}</span
                     >
-                    <span
-                        class="block text-xs text-amber-600 mt-1"
+                    <span class="block text-xs text-amber-600 mt-1"
                         >RAW Files</span
                     >
                 </div>
-                <div
-                    class="text-center p-3 bg-white rounded-lg shadow-sm"
-                >
-                    <span
-                        class="block text-lg font-bold text-amber-800"
+                <div class="text-center p-3 bg-white rounded-lg shadow-sm">
+                    <span class="block text-lg font-bold text-amber-800"
                         >{formatNumber($stats.jpeg_count)}</span
                     >
-                    <span
-                        class="block text-xs text-amber-600 mt-1"
+                    <span class="block text-xs text-amber-600 mt-1"
                         >JPEG Files</span
                     >
                 </div>
-                <div
-                    class="text-center p-3 bg-white rounded-lg shadow-sm"
-                >
-                    <span
-                        class="block text-lg font-bold text-amber-800"
+                <div class="text-center p-3 bg-white rounded-lg shadow-sm">
+                    <span class="block text-lg font-bold text-amber-800"
                         >{formatNumber($stats.paired_count)}</span
                     >
-                    <span
-                        class="block text-xs text-amber-600 mt-1"
+                    <span class="block text-xs text-amber-600 mt-1"
                         >Paired Sets</span
                     >
                 </div>
@@ -166,12 +150,10 @@
                         <div
                             class="flex justify-between items-center py-1 text-sm"
                         >
-                            <span
-                                class="text-amber-700 truncate mr-2"
+                            <span class="text-amber-700 truncate mr-2"
                                 >{camera}</span
                             >
-                            <span
-                                class="text-amber-600 font-medium"
+                            <span class="text-amber-600 font-medium"
                                 >{count}</span
                             >
                         </div>

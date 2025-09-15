@@ -5,7 +5,6 @@ function createPhotoStore() {
   const initialState: AppState = {
     photos: [],
     filteredPhotos: [],
-    selectedPhoto: undefined,
     currentFilter: {},
     isLoading: false,
     stats: undefined,
@@ -32,8 +31,6 @@ function createPhotoStore() {
       })),
     setFilteredPhotos: (filteredPhotos: Photo[]) =>
       update((state) => ({ ...state, filteredPhotos })),
-    setSelectedPhoto: (photo: Photo | undefined) =>
-      update((state) => ({ ...state, selectedPhoto: photo })),
     setFilter: (filter: PhotoFilter) =>
       update((state) => ({ ...state, currentFilter: filter })),
     setLoading: (isLoading: boolean) =>
@@ -52,10 +49,6 @@ export const photos = derived(photoStore, ($store) => $store.photos);
 export const filteredPhotos = derived(
   photoStore,
   ($store) => $store.filteredPhotos,
-);
-export const selectedPhoto = derived(
-  photoStore,
-  ($store) => $store.selectedPhoto,
 );
 export const currentFilter = derived(
   photoStore,

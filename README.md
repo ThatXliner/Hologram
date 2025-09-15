@@ -1,4 +1,6 @@
-# Hologram
+# :camera: Hologram
+
+> [!info] Hologram is currently in active development. Consider it not ready for use
 
 **Hologram** is a pro-grade photo management application tailored for photographers who want total control over their files without being forced into bloated editing environments. Designed from the ground up to handle RAW+JPEG workflows, advanced EXIF-based filtering, and intelligent organization strategies, Hologram empowers users to manage and analyze their photography with precision.
 
@@ -6,9 +8,10 @@ No cloud lock-in. No black-box automations. Just clean, local photo organization
 Easy filtering for duplicates. Easily select for editing. Easily learn from your past photos.
 
 Eventually I plan to expand it to normies, directly competing with Google Photos.
+
 ## Roadmap
 
-### MVP (Weeks 1–6)
+### MVP
 - [X] Local file scanning and ingestion
 - [X] Support for standard file formats (~~CR2, CR3, ARW, NEF, DNG~~, JPEG)
 - [ ] Folder watching & structured import by date/camera
@@ -24,7 +27,7 @@ Eventually I plan to expand it to normies, directly competing with Google Photos
 - [ ] Grid view, timeline, EXIF sidebar, diff mode
 
 [^1]: if you can call what we have right now "lightweight"
-### Milestone 2 (Weeks 6–12)
+### Milestone 2
 - [ ] Smart collections
 - [ ] Saved searches like “Manual vs Av Priority,” “High ISO,” or “Telephoto shots”
 - [ ] Custom tagging & notes
@@ -34,7 +37,7 @@ Eventually I plan to expand it to normies, directly competing with Google Photos
 - [ ] Export/Sharing tools
 - [ ] Export filtered sets to folders, zip, or Lightroom
 
-### Long-Term (3–6 months)
+### Long-Term
 - [ ] Plugin system
 - [ ] Scriptable import/export or EXIF rules
 - [ ] Semantic search (experimental)
@@ -44,6 +47,7 @@ Eventually I plan to expand it to normies, directly competing with Google Photos
 - [ ] Mobile viewer/companion app
 - [ ] View and filter photos from desktop library on mobile
 - [ ] Server side hosting and sync?
+
 ## Long Description
 
 Hologram is for photographers who want clarity and control—who shoot in full manual, wrestle with dynamic range, and compare in-camera JPEGs to flat RAWs with clinical curiosity. Built for those who reject the Apple Photos “let the algorithm do it” model (and also want easy access to their RAWs), Hologram provides a professional file-first view of your work.
@@ -52,7 +56,7 @@ Organize by folder, EXIF, camera, or custom rules. Compare your technique over t
 
 And most importantly: it never touches your files. Never. It's not an editing program and it never will be.
 
-## Next Steps (For Kickoff Next Weekend)
+<!-- ## Next Steps (For Kickoff Next Weekend)
 
 Prep (Before the Weekend)
 - Define core file structure conventions (RAW+JPEG pair logic, import heuristics)
@@ -64,7 +68,7 @@ Build Weekend 1
 - Build base import scanner (read folder tree, load metadata)
 - Parse EXIF from JPEG and RAW (use exiftool or native lib)
 - Create grid view with metadata overlay
-- Implement RAW+JPEG pairing logic
+- Implement RAW+JPEG pairing logic -->
 
 ## Manifesto
 

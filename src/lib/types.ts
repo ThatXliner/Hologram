@@ -48,6 +48,16 @@ export interface PhotoStats {
   lenses: Record<string, number>;
 }
 
+export interface ScanResult {
+  photos: Photo[];
+  stats: PhotoStats;
+}
+
+export interface ThumbnailReady {
+  id: string;
+  thumbnail: string;
+}
+
 export interface ScanProgress {
   current: number;
   total: number;

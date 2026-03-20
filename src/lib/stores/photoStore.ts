@@ -14,6 +14,47 @@ function createPhotoStore() {
 
   const { subscribe, set, update } = writable<AppState>(initialState);
 
+  // Index for O(1) thumbnail patching
+  let photoIndex = new Map<string, number>();
+  let filteredIndex = new Map<string, number>();
+
+  function rebuildIndex(state: AppState) {
+    photoIndex = new Map(state.photos.map((p, i) => [p.id, i]));
+    filteredIndex = new Map(state.filteredPhotos.map((p, i) => [p.id, i]));
+  }
+
+  // Batch thumbnail updates: accumulate then flush in one store update
+  let pendingThumbnails = new Map<string, string>();
+  let flushScheduled = false;
+
+  function flushThumbnails() {
+    flushScheduled = false;
+    if (pendingThumbnails.size === 0) return;
+
+    const batch = pendingThumbnails;
+    pendingThumbnails = new Map();
+
+    update((state) => {
+      // Mutate in place for performance (these arrays are owned by the store)
+      for (const [id, thumbnail] of batch) {
+        const pi = photoIndex.get(id);
+        if (pi !== undefined) {
+          state.photos[pi] = { ...state.photos[pi], thumbnail };
+        }
+        const fi = filteredIndex.get(id);
+        if (fi !== undefined) {
+          state.filteredPhotos[fi] = { ...state.filteredPhotos[fi], thumbnail };
+        }
+      }
+      // Return new refs so Svelte detects the change
+      return {
+        ...state,
+        photos: [...state.photos],
+        filteredPhotos: [...state.filteredPhotos],
+      };
+    });
+  }
+
   return {
     subscribe,
     get photos() {
@@ -25,13 +66,24 @@ function createPhotoStore() {
       return currentState!.photos;
     },
     setPhotos: (photos: Photo[]) =>
-      update((state) => ({
-        ...state,
-        photos,
-        filteredPhotos: photos,
-      })),
+      update((state) => {
+        const newState = { ...state, photos, filteredPhotos: photos };
+        rebuildIndex(newState);
+        return newState;
+      }),
+    setThumbnail: (id: string, thumbnail: string) => {
+      pendingThumbnails.set(id, thumbnail);
+      if (!flushScheduled) {
+        flushScheduled = true;
+        requestAnimationFrame(flushThumbnails);
+      }
+    },
     setFilteredPhotos: (filteredPhotos: Photo[]) =>
-      update((state) => ({ ...state, filteredPhotos })),
+      update((state) => {
+        const newState = { ...state, filteredPhotos };
+        filteredIndex = new Map(filteredPhotos.map((p, i) => [p.id, i]));
+        return newState;
+      }),
     setFilter: (filter: PhotoFilter) =>
       update((state) => ({ ...state, currentFilter: filter })),
     setLoading: (isLoading: boolean) =>

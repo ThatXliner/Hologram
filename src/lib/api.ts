@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { Photo, PhotoFilter, PhotoStats, ScanProgress } from "./types.ts";
+import type { Photo, PhotoFilter, PhotoStats, ScanResult, ThumbnailReady } from "./types.ts";
 
 export class HologramAPI {
   static async selectFolder(): Promise<string | null> {
@@ -18,54 +18,44 @@ export class HologramAPI {
     }
   }
 
-  static async scanFolder(folderPath: string): Promise<Photo[]> {
+  /**
+   * Two-phase scan:
+   * 1. scan_folder_fast — returns metadata + EXIF instantly (no image decoding)
+   * 2. generate_thumbnails — generates thumbnails in background, streaming
+   *    each one to onThumbnail as it completes
+   */
+  static async scanFolder(
+    folderPath: string,
+    onThumbnail?: (data: ThumbnailReady) => void,
+  ): Promise<ScanResult> {
+    let unlistenThumbnail: (() => void) | null = null;
+
     try {
-      const photos = await invoke<Photo[]>("scan_folder", {
+      // Set up thumbnail listener before starting generation
+      if (onThumbnail) {
+        unlistenThumbnail = await listen<ThumbnailReady>("thumbnail-ready", (event) => {
+          onThumbnail(event.payload);
+        });
+      }
+
+      // Phase 1: Fast metadata scan (no image decoding)
+      const result = await invoke<ScanResult>("scan_folder_fast", {
         folderPath,
       });
-      return photos;
+
+      // Phase 2: Kick off thumbnail generation in background (fire-and-forget)
+      invoke("generate_thumbnails", { photos: result.photos }).catch((err) => {
+        console.error("Thumbnail generation error:", err);
+      });
+
+      return result;
     } catch (error) {
       console.error("Error scanning folder:", error);
       throw new Error(`Failed to scan folder: ${error}`);
     }
   }
 
-  static async scanFolderWithProgress(
-    folderPath: string,
-    onProgress?: (progress: ScanProgress) => void,
-    onComplete?: () => void,
-  ): Promise<Photo[]> {
-    let unlistenProgress: (() => void) | null = null;
-    let unlistenComplete: (() => void) | null = null;
-
-    try {
-      // Set up progress listeners
-      if (onProgress) {
-        unlistenProgress = await listen<ScanProgress>("scan-progress", (event) => {
-          onProgress(event.payload);
-        });
-      }
-
-      if (onComplete) {
-        unlistenComplete = await listen("scan-complete", () => {
-          onComplete();
-        });
-      }
-
-      const photos = await invoke<Photo[]>("scan_folder_with_progress", {
-        folderPath,
-      });
-
-      return photos;
-    } catch (error) {
-      console.error("Error scanning folder with progress:", error);
-      throw new Error(`Failed to scan folder: ${error}`);
-    } finally {
-      // Clean up listeners
-      if (unlistenProgress) unlistenProgress();
-      if (unlistenComplete) unlistenComplete();
-    }
-  }
+  static stopThumbnailListener: (() => void) | null = null;
 
   static async filterPhotos(
     photos: Photo[],
@@ -105,6 +95,6 @@ export class HologramAPI {
     if (typeof imageData === "string") {
       throw new Error(`Failed to load full resolution image: ${imageData}`);
     }
-    return imageData; // base64 encoded full resolution image
+    return imageData;
   }
 }

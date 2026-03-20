@@ -105,6 +105,21 @@ export class HologramAPI {
     return savedPath;
   }
 
+  static async denoiseImage(
+    imageBytes: Uint8Array,
+    width: number,
+    height: number,
+    strength: number,
+  ): Promise<Uint8Array> {
+    const result = await invoke<number[]>("denoise_image", {
+      imageBytes: Array.from(imageBytes),
+      width,
+      height,
+      strength,
+    });
+    return new Uint8Array(result);
+  }
+
   static async loadFullResolutionImage(filePath: string): Promise<ArrayBuffer> {
     const imageData = await invoke<ArrayBuffer | string>(
       "load_full_resolution_image_command",

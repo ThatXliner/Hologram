@@ -11,6 +11,7 @@
         Loader2,
         Trash2,
         Diamond,
+        Sparkles,
     } from "@lucide/svelte";
 
     interface Props {
@@ -29,6 +30,10 @@
     let highlights = $state(0);
     let shadows = $state(0);
     let sharpen = $state(0);
+    let denoise = $state(0);
+    let isDenoising = $state(false);
+    let denoisedImageData: ImageData | null = null;
+    let lastDenoiseStrength = 0;
 
     // --- Tone curve state ---
     // Points are {x, y} in 0-255 space. Always includes anchors at (0,0) and (255,255).
@@ -90,6 +95,41 @@
             renderPreview();
         };
         img.src = src;
+    });
+
+    // Run AI denoise when strength changes (async backend call)
+    $effect(() => {
+        const strength = denoise;
+        if (!isSourceLoaded || !sourceImageData) return;
+
+        if (strength <= 0) {
+            denoisedImageData = null;
+            lastDenoiseStrength = 0;
+            renderPreview();
+            return;
+        }
+
+        // Only re-run if strength actually changed
+        if (strength === lastDenoiseStrength && denoisedImageData) return;
+
+        isDenoising = true;
+        const rgba = new Uint8Array(sourceImageData.data);
+        const w = sourceWidth;
+        const h = sourceHeight;
+
+        HologramAPI.denoiseImage(rgba, w, h, strength)
+            .then((result) => {
+                denoisedImageData = new ImageData(new Uint8ClampedArray(result), w, h);
+                lastDenoiseStrength = strength;
+                renderPreview();
+            })
+            .catch((err) => {
+                console.error("Denoise failed:", err);
+                denoisedImageData = null;
+            })
+            .finally(() => {
+                isDenoising = false;
+            });
     });
 
     // Re-render preview whenever any adjustment changes
@@ -243,7 +283,8 @@
     function renderPreview() {
         if (!sourceImageData || !previewCtx || !previewCanvas) return;
 
-        const src = sourceImageData.data;
+        // Use denoised source if available, otherwise original
+        const src = (denoisedImageData ?? sourceImageData).data;
         const out = previewCtx.createImageData(sourceWidth, sourceHeight);
         const dst = out.data;
         const curveLUT = buildCurveLUT();
@@ -491,6 +532,9 @@
         highlights = 0;
         shadows = 0;
         sharpen = 0;
+        denoise = 0;
+        denoisedImageData = null;
+        lastDenoiseStrength = 0;
         curvePoints = [
             { x: 0, y: 0 },
             { x: 255, y: 255 },
@@ -538,6 +582,7 @@
         { label: "Highlights", icon: Sun, value: () => highlights, set: (v) => (highlights = v), min: -100, max: 100 },
         { label: "Shadows", icon: CircleDot, value: () => shadows, set: (v) => (shadows = v), min: -100, max: 100 },
         { label: "Sharpen", icon: Diamond, value: () => sharpen, set: (v) => (sharpen = v), min: 0, max: 100 },
+        { label: "Denoise (AI)", icon: Sparkles, value: () => denoise, set: (v) => (denoise = v), min: 0, max: 100 },
     ];
 </script>
 

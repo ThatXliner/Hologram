@@ -19,7 +19,7 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 /// Managed state holding the DnCNN ONNX session for AI denoising.
-pub struct DenoiseModel(Mutex<Option<Session>>);
+pub struct DenoiseModel(Arc<Mutex<Option<Session>>>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Photo {
@@ -756,7 +756,7 @@ async fn denoise_image(
     height: u32,
     strength: f64,
 ) -> Result<Vec<u8>, String> {
-    let state = app.state::<DenoiseModel>();
+    let model = app.state::<DenoiseModel>().0.clone();
 
     let result = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
         let w = width as usize;
@@ -785,19 +785,22 @@ async fn denoise_image(
             .map_err(|e| format!("Shape error: {}", e))?;
 
         // Run inference
-        let mut guard = state.0.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let mut guard = model.lock().map_err(|e| format!("Lock error: {}", e))?;
         let session = guard.as_mut().ok_or_else(|| "Denoise model not loaded".to_string())?;
 
+        let input_value = ort::value::Tensor::from_array(input)
+            .map_err(|e| format!("Input error: {}", e))?;
         let outputs = session.run(
-            ort::inputs!["input" => input.view()].map_err(|e| format!("Input error: {}", e))?
+            ort::inputs!["input" => input_value]
         ).map_err(|e| format!("Inference error: {}", e))?;
 
         let output_tensor = outputs["output"]
+            .downcast_ref::<ort::value::TensorValueType<f32>>()
+            .map_err(|e| format!("Downcast error: {}", e))?;
+        let (_shape, raw_data) = output_tensor
             .try_extract_tensor::<f32>()
             .map_err(|e| format!("Output error: {}", e))?;
-        let denoised_y: Vec<f32> = output_tensor.as_slice()
-            .ok_or_else(|| "Failed to extract output slice".to_string())?
-            .to_vec();
+        let denoised_y: Vec<f32> = raw_data.to_vec();
 
         // Blend denoised Y back into RGB pixels
         let mut result = image_bytes.clone();
@@ -952,7 +955,7 @@ pub fn run() {
 
             let session = if model_path.exists() {
                 match Session::builder()
-                    .and_then(|b| b.commit_from_file(&model_path))
+                    .and_then(|mut b| b.commit_from_file(&model_path))
                 {
                     Ok(s) => {
                         eprintln!("DnCNN model loaded from {:?}", model_path);
@@ -968,7 +971,7 @@ pub fn run() {
                 None
             };
 
-            app.manage(DenoiseModel(Mutex::new(session)));
+            app.manage(DenoiseModel(Arc::new(Mutex::new(session))));
             Ok(())
         })
         .invoke_handler(tauri::generate_handler![

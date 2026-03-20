@@ -14,30 +14,110 @@
         FileImage,
         Monitor,
         Loader2,
+        ZoomIn,
+        ZoomOut,
+        Maximize2,
     } from "@lucide/svelte";
     import { onMount, onDestroy } from "svelte";
 
     interface Props {
         photos: Photo[];
+        startIndex?: number;
     }
 
-    let { photos }: Props = $props();
+    let { photos, startIndex = 0 }: Props = $props();
 
-    let currentIndex = $state<number>(0);
+    let currentIndex = $state<number>(startIndex);
     const photo = $derived(photos[currentIndex]);
     const hasPrevious = $derived(currentIndex > 0);
     const hasNext = $derived(currentIndex < photos.length - 1);
+    const isPaired = $derived(photo?.paired_with != null);
+
+    // For paired RAW+JPEG, track which version we're viewing
+    let viewingRaw = $state(false);
+    const pairedPhoto = $derived(
+        isPaired ? photos.find((p) => p.id === photo.paired_with) : null,
+    );
+    const activePhoto = $derived(
+        viewingRaw && pairedPhoto ? pairedPhoto : photo,
+    );
 
     let fullResolutionImage = $state<ArrayBuffer | null>(null);
     let isLoadingFullRes = $state(false);
     let loadError = $state<string | null>(null);
 
-    // Cache blob URLs to avoid recreating them + enable cleanup
     let currentBlobUrl = $state<string | null>(null);
-    // Preload cache: index -> blob URL
-    const preloadCache = new Map<number, string>();
-    // Track in-flight preloads to avoid duplicates
-    const preloadingSet = new Set<number>();
+    const preloadCache = new Map<string, string>();
+    const preloadingSet = new Set<string>();
+
+    // Zoom and pan state
+    let zoomLevel = $state(1);
+    let panX = $state(0);
+    let panY = $state(0);
+    let isPanning = $state(false);
+    let panStartX = 0;
+    let panStartY = 0;
+    let imageContainer: HTMLDivElement | undefined = $state();
+
+    const ZOOM_STEPS = [0.5, 0.75, 1, 1.5, 2, 3, 4, 6];
+    const zoomPercent = $derived(Math.round(zoomLevel * 100));
+
+    function resetZoom() {
+        zoomLevel = 1;
+        panX = 0;
+        panY = 0;
+    }
+
+    function zoomIn() {
+        const nextIdx = ZOOM_STEPS.findIndex((z) => z > zoomLevel);
+        if (nextIdx !== -1) {
+            zoomLevel = ZOOM_STEPS[nextIdx];
+        }
+        if (zoomLevel <= 1) { panX = 0; panY = 0; }
+    }
+
+    function zoomOut() {
+        const prevIdx = ZOOM_STEPS.slice().reverse().findIndex((z) => z < zoomLevel);
+        if (prevIdx !== -1) {
+            zoomLevel = ZOOM_STEPS[ZOOM_STEPS.length - 1 - prevIdx];
+        }
+        if (zoomLevel <= 1) { panX = 0; panY = 0; }
+    }
+
+    function handleWheel(e: WheelEvent) {
+        e.preventDefault();
+        if (e.deltaY < 0) {
+            zoomIn();
+        } else {
+            zoomOut();
+        }
+    }
+
+    function handlePointerDown(e: PointerEvent) {
+        if (zoomLevel <= 1) return;
+        isPanning = true;
+        panStartX = e.clientX - panX;
+        panStartY = e.clientY - panY;
+        (e.target as HTMLElement)?.setPointerCapture?.(e.pointerId);
+    }
+
+    function handlePointerMove(e: PointerEvent) {
+        if (!isPanning) return;
+        panX = e.clientX - panStartX;
+        panY = e.clientY - panStartY;
+    }
+
+    function handlePointerUp() {
+        isPanning = false;
+    }
+
+    function handleDoubleClick() {
+        if (zoomLevel === 1) {
+            zoomLevel = 3;
+        } else {
+            resetZoom();
+        }
+    }
 
     function revokeBlobUrl(url: string | null) {
         if (url) URL.revokeObjectURL(url);
@@ -57,6 +137,8 @@
 
     function navigatePrevious() {
         if (hasPrevious) {
+            viewingRaw = false;
+            resetZoom();
             currentIndex--;
             loadCurrentPhoto();
         }
@@ -64,21 +146,47 @@
 
     function navigateNext() {
         if (hasNext) {
+            viewingRaw = false;
+            resetZoom();
             currentIndex++;
             loadCurrentPhoto();
         }
     }
 
+    function toggleRawJpeg() {
+        if (!isPaired) return;
+        viewingRaw = !viewingRaw;
+        loadPhotoByRef(activePhoto);
+    }
+
     function handleKeydown(event: KeyboardEvent) {
         switch (event.key) {
             case "Escape":
-                closeViewer();
+                if (zoomLevel > 1) {
+                    resetZoom();
+                } else {
+                    closeViewer();
+                }
                 break;
             case "ArrowLeft":
                 navigatePrevious();
                 break;
             case "ArrowRight":
                 navigateNext();
+                break;
+            case "r":
+            case "R":
+                toggleRawJpeg();
+                break;
+            case "+":
+            case "=":
+                zoomIn();
+                break;
+            case "-":
+                zoomOut();
+                break;
+            case "0":
+                resetZoom();
                 break;
         }
     }
@@ -103,21 +211,24 @@
         if (photo.thumbnail) {
             return `data:image/jpeg;base64,${photo.thumbnail}`;
         }
-        return "/placeholder-image.svg";
+        return "";
     }
 
-    function getImageSrc(photo: Photo): string {
-        if (currentBlobUrl && photo.file_type === "JPG") {
+    function getImageSrc(): string {
+        if (currentBlobUrl) {
             return currentBlobUrl;
         }
-        return getThumbnailSrc(photo);
+        return getThumbnailSrc(activePhoto);
     }
 
-    async function loadImageForIndex(index: number): Promise<string | null> {
-        const p = photos[index];
+    async function loadImageForPhoto(
+        p: Photo,
+    ): Promise<string | null> {
         if (!p) return null;
         try {
-            const imageData = await HologramAPI.loadFullResolutionImage(p.file_path);
+            const imageData = await HologramAPI.loadFullResolutionImage(
+                p.file_path,
+            );
             const uint8Array = new Uint8Array(imageData);
             const blob = new Blob([uint8Array], { type: "image/jpeg" });
             return URL.createObjectURL(blob);
@@ -126,63 +237,79 @@
         }
     }
 
-    async function loadCurrentPhoto() {
-        // Check preload cache first
-        const cached = preloadCache.get(currentIndex);
+    async function loadPhotoByRef(p: Photo) {
+        const cacheKey = p.id;
+        const cached = preloadCache.get(cacheKey);
         if (cached) {
             revokeBlobUrl(currentBlobUrl);
             currentBlobUrl = cached;
-            preloadCache.delete(currentIndex);
-            fullResolutionImage = new ArrayBuffer(0); // truthy marker
+            preloadCache.delete(cacheKey);
+            fullResolutionImage = new ArrayBuffer(0);
             isLoadingFullRes = false;
             loadError = null;
-            preloadAdjacent();
             return;
         }
 
         isLoadingFullRes = true;
         loadError = null;
 
-        const blobUrl = await loadImageForIndex(currentIndex);
+        const blobUrl = await loadImageForPhoto(p);
+        // Guard: user may have navigated away during load
+        if (p.id !== activePhoto.id) {
+            if (blobUrl) URL.revokeObjectURL(blobUrl);
+            return;
+        }
         if (blobUrl) {
             revokeBlobUrl(currentBlobUrl);
             currentBlobUrl = blobUrl;
             fullResolutionImage = new ArrayBuffer(0);
         } else {
-            loadError = "Failed to load high-quality image";
+            loadError = "Failed to load image";
             fullResolutionImage = null;
         }
         isLoadingFullRes = false;
+    }
 
+    async function loadCurrentPhoto() {
+        await loadPhotoByRef(activePhoto);
         preloadAdjacent();
     }
 
     function preloadAdjacent() {
         // Evict distant cache entries
-        for (const [idx, url] of preloadCache) {
-            if (Math.abs(idx - currentIndex) > 2) {
+        for (const [key, url] of preloadCache) {
+            const idx = photos.findIndex((p) => p.id === key);
+            if (idx === -1 || Math.abs(idx - currentIndex) > 2) {
                 URL.revokeObjectURL(url);
-                preloadCache.delete(idx);
+                preloadCache.delete(key);
             }
         }
 
-        const toPreload = [currentIndex + 1, currentIndex - 1].filter(
-            (i) => i >= 0 && i < photos.length && !preloadCache.has(i) && !preloadingSet.has(i),
+        const adjacentIndices = [currentIndex + 1, currentIndex - 1].filter(
+            (i) => i >= 0 && i < photos.length,
         );
 
-        for (const idx of toPreload) {
-            preloadingSet.add(idx);
-            loadImageForIndex(idx).then((url) => {
-                preloadingSet.delete(idx);
-                if (url) {
-                    // Only cache if still relevant
-                    if (Math.abs(idx - currentIndex) <= 2) {
-                        preloadCache.set(idx, url);
-                    } else {
-                        URL.revokeObjectURL(url);
+        for (const idx of adjacentIndices) {
+            const p = photos[idx];
+            if (
+                !preloadCache.has(p.id) &&
+                !preloadingSet.has(p.id)
+            ) {
+                preloadingSet.add(p.id);
+                loadImageForPhoto(p).then((url) => {
+                    preloadingSet.delete(p.id);
+                    if (url) {
+                        const currentIdx = photos.findIndex(
+                            (pp) => pp.id === p.id,
+                        );
+                        if (Math.abs(currentIdx - currentIndex) <= 2) {
+                            preloadCache.set(p.id, url);
+                        } else {
+                            URL.revokeObjectURL(url);
+                        }
                     }
-                }
-            });
+                });
+            }
         }
     }
 
@@ -193,86 +320,145 @@
 
 <svelte:window onkeydown={handleKeydown} />
 
+<!-- svelte-ignore a11y_click_events_have_key_events -->
 <div
-    class="fixed top-0 left-0 right-0 bottom-0 bg-black/95 z-50 flex flex-col"
+    class="fixed inset-0 bg-black z-[100] flex flex-col"
+    role="dialog"
     onclick={closeViewer}
 >
     <!-- Header -->
-    <div class="flex items-center justify-between p-4 bg-black/50">
+    <div
+        class="flex items-center justify-between px-4 py-2 bg-black/80 border-b border-white/10 shrink-0"
+    >
         <div class="flex items-center gap-4">
             <h2 class="text-white text-lg font-medium" style="margin: 0;">
-                {photo.file_name}
+                {activePhoto.file_name}
             </h2>
-            <span class="text-gray-300 text-sm"
-                >{currentIndex + 1} of {photos.length}</span
+            <span class="text-gray-400 text-sm"
+                >{currentIndex + 1} / {photos.length}</span
             >
+            {#if isPaired}
+                <button
+                    class="text-xs px-3 py-1 rounded-full font-medium transition-colors {viewingRaw
+                        ? 'bg-orange-600 text-white'
+                        : 'bg-blue-600 text-white'}"
+                    onclick={(e) => {
+                        e.stopPropagation();
+                        toggleRawJpeg();
+                    }}
+                >
+                    {viewingRaw ? "RAW" : "JPEG"} — press R to toggle
+                </button>
+            {/if}
         </div>
         <button
-            class="text-white hover:text-gray-300 transition-colors"
+            class="text-white/70 hover:text-white transition-colors p-1"
             onclick={closeViewer}
         >
-            <X size={24} />
+            <X size={20} />
         </button>
     </div>
 
     <!-- Main Content -->
-    <div class="flex-1 flex" onclick={(e) => e.stopPropagation()}>
+    <!-- svelte-ignore a11y_click_events_have_key_events -->
+    <div class="flex-1 flex min-h-0" onclick={(e) => e.stopPropagation()}>
         <!-- Image Display -->
-        <div class="flex-1 flex items-center justify-center relative">
+        <div class="flex-1 flex items-center justify-center relative min-w-0 bg-black">
             {#if hasPrevious}
                 <button
-                    class="absolute top-1/2 transform -translate-y-1/2 text-white hover:text-gray-300 transition-colors z-10 bg-black/20 hover:bg-black/40 rounded-full p-2 left-4"
+                    class="absolute left-4 top-1/2 -translate-y-1/2 text-white/60 hover:text-white transition-colors z-10 bg-black/40 hover:bg-black/60 rounded-full p-2"
                     onclick={navigatePrevious}
                 >
-                    <ChevronLeft size={32} />
+                    <ChevronLeft size={28} />
                 </button>
             {/if}
 
-            <div class="relative max-w-full max-h-full">
+            <!-- svelte-ignore a11y_no_static_element_interactions -->
+            <div
+                class="w-full h-full flex items-center justify-center relative overflow-hidden"
+                bind:this={imageContainer}
+                onwheel={handleWheel}
+                onpointerdown={handlePointerDown}
+                onpointermove={handlePointerMove}
+                onpointerup={handlePointerUp}
+                ondblclick={handleDoubleClick}
+                style="cursor: {zoomLevel > 1 ? (isPanning ? 'grabbing' : 'grab') : 'default'};"
+            >
                 {#if isLoadingFullRes}
                     <div
-                        class="absolute inset-0 bg-black/20 flex items-center justify-center z-20"
+                        class="absolute inset-0 flex items-center justify-center z-20 pointer-events-none"
                     >
                         <div
-                            class="bg-black/60 text-white px-4 py-2 rounded-lg flex items-center gap-2"
+                            class="bg-black/70 text-white/90 px-4 py-2 rounded-lg flex items-center gap-2 text-sm"
                         >
                             <Loader2 size={16} class="animate-spin" />
-                            Loading high-quality image...
+                            Loading...
                         </div>
                     </div>
                 {/if}
 
-                {#if loadError}
-                    <div
-                        class="absolute top-4 left-4 bg-red-500 text-white text-sm px-3 py-1 rounded-lg z-20"
-                    >
-                        {loadError}
+                {#if loadError && !currentBlobUrl}
+                    <div class="text-white/50 text-center">
+                        <div class="text-4xl mb-2">⚠️</div>
+                        <p>{loadError}</p>
                     </div>
+                {:else}
+                    {#key activePhoto.id}
+                        <img
+                            src={getImageSrc()}
+                            alt={activePhoto.file_name}
+                            class="max-w-full max-h-full object-contain select-none"
+                            class:opacity-50={isLoadingFullRes && !currentBlobUrl}
+                            draggable="false"
+                            style="transform: scale({zoomLevel}) translate({panX / zoomLevel}px, {panY / zoomLevel}px); transform-origin: center center; transition: {isPanning ? 'none' : 'transform 0.15s ease-out'};"
+                        />
+                    {/key}
                 {/if}
-                {#key photo.id}
-                    <img
-                        src={getImageSrc(photo)}
-                        alt={photo.file_name}
-                        class="max-w-full max-h-full object-contain transition-opacity duration-300"
-                        class:opacity-75={isLoadingFullRes}
-                    />
-                {/key}
 
-                <div class="absolute top-4 right-4 flex flex-col gap-2">
-                    {#if photo.paired_with}
+                <!-- Zoom controls -->
+                <div class="absolute bottom-4 left-1/2 -translate-x-1/2 flex items-center gap-1 bg-black/60 rounded-full px-2 py-1 z-20">
+                    <button
+                        class="text-white/70 hover:text-white p-1 transition-colors"
+                        onclick={(e) => { e.stopPropagation(); zoomOut(); }}
+                    >
+                        <ZoomOut size={16} />
+                    </button>
+                    <button
+                        class="text-white/80 text-xs font-mono min-w-[3rem] text-center px-1 hover:text-white transition-colors"
+                        onclick={(e) => { e.stopPropagation(); resetZoom(); }}
+                    >
+                        {zoomPercent}%
+                    </button>
+                    <button
+                        class="text-white/70 hover:text-white p-1 transition-colors"
+                        onclick={(e) => { e.stopPropagation(); zoomIn(); }}
+                    >
+                        <ZoomIn size={16} />
+                    </button>
+                    <button
+                        class="text-white/70 hover:text-white p-1 transition-colors"
+                        onclick={(e) => { e.stopPropagation(); resetZoom(); }}
+                        title="Fit to screen (0)"
+                    >
+                        <Maximize2 size={16} />
+                    </button>
+                </div>
+
+                <!-- Badges -->
+                <div class="absolute top-4 right-4 flex flex-col gap-2 z-20">
+                    {#if isPaired}
                         <div
-                            class="bg-amber-600 text-white text-sm px-3 py-1 rounded-full flex items-center gap-2"
+                            class="bg-amber-600/90 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1"
                         >
-                            <FileImage size={16} />
-                            RAW+JPEG Pair
+                            <FileImage size={12} />
+                            RAW+JPEG
                         </div>
                     {/if}
-
                     {#if fullResolutionImage}
                         <div
-                            class="bg-green-600 text-white text-xs px-2 py-1 rounded-full"
+                            class="bg-green-600/90 text-white text-xs px-2 py-1 rounded-full"
                         >
-                            High Quality
+                            Full Res
                         </div>
                     {/if}
                 </div>
@@ -280,217 +466,109 @@
 
             {#if hasNext}
                 <button
-                    class="absolute top-1/2 transform -translate-y-1/2 text-white hover:text-gray-300 transition-colors z-10 bg-black/20 hover:bg-black/40 rounded-full p-2 right-4"
+                    class="absolute right-4 top-1/2 -translate-y-1/2 text-white/60 hover:text-white transition-colors z-10 bg-black/40 hover:bg-black/60 rounded-full p-2"
                     onclick={navigateNext}
                 >
-                    <ChevronRight size={32} />
+                    <ChevronRight size={28} />
                 </button>
             {/if}
         </div>
 
         <!-- Metadata Panel -->
         <div
-            class="w-80 bg-amber-50 border-l border-amber-200 overflow-y-auto p-4 space-y-6"
+            class="w-72 bg-amber-50 border-l border-amber-200 overflow-y-auto p-4 space-y-5 shrink-0"
         >
-            <div class="space-y-3">
+            <div class="space-y-2">
                 <h3
-                    class="text-sm font-semibold text-amber-900 mb-3"
+                    class="text-xs font-semibold text-amber-800 uppercase tracking-wide"
                     style="margin: 0;"
                 >
-                    File Information
+                    File Info
                 </h3>
-                <div class="space-y-3">
-                    <div class="flex items-start gap-3">
-                        <FileImage size={16} />
-                        <div>
-                            <div class="text-xs text-amber-600 font-medium">
-                                File Type
-                            </div>
-                            <div class="text-sm text-amber-900">
-                                {photo.file_type}
-                            </div>
-                        </div>
+                <div class="space-y-2 text-sm">
+                    <div class="flex items-center gap-2 text-amber-700">
+                        <FileImage size={14} class="shrink-0" />
+                        <span>{activePhoto.file_type} — {formatFileSize(activePhoto.file_size)}</span>
                     </div>
-                    <div class="flex items-start gap-3">
-                        <Monitor size={16} />
-                        <div>
-                            <div class="text-xs text-amber-600 font-medium">
-                                File Size
-                            </div>
-                            <div class="text-sm text-amber-900">
-                                {formatFileSize(photo.file_size)}
-                            </div>
-                        </div>
-                    </div>
-                    <div class="flex items-start gap-3">
-                        <Calendar size={16} />
-                        <div>
-                            <div class="text-xs text-amber-600 font-medium">
-                                Modified
-                            </div>
-                            <div class="text-sm text-amber-900">
-                                {formatDate(photo.modified_at)}
-                            </div>
-                        </div>
+                    <div class="flex items-center gap-2 text-amber-700">
+                        <Calendar size={14} class="shrink-0" />
+                        <span>{formatDate(activePhoto.modified_at)}</span>
                     </div>
                 </div>
             </div>
 
-            {#if photo.exif.camera_model || photo.exif.camera_make}
-                <div class="space-y-3">
+            {#if activePhoto.exif.camera_model || activePhoto.exif.camera_make}
+                <div class="space-y-2">
                     <h3
-                        class="text-sm font-semibold text-amber-900 mb-3"
+                        class="text-xs font-semibold text-amber-800 uppercase tracking-wide"
                         style="margin: 0;"
                     >
-                        Camera Information
+                        Camera
                     </h3>
-                    <div class="space-y-3">
-                        {#if photo.exif.camera_make}
-                            <div class="flex items-start gap-3">
-                                <Camera size={16} />
-                                <div>
-                                    <div
-                                        class="text-xs text-amber-600 font-medium"
-                                    >
-                                        Camera Make
-                                    </div>
-                                    <div class="text-sm text-amber-900">
-                                        {photo.exif.camera_make}
-                                    </div>
-                                </div>
+                    <div class="space-y-2 text-sm">
+                        {#if activePhoto.exif.camera_model}
+                            <div class="flex items-center gap-2 text-amber-700">
+                                <Camera size={14} class="shrink-0" />
+                                <span>{activePhoto.exif.camera_make ?? ""} {activePhoto.exif.camera_model}</span>
                             </div>
                         {/if}
-                        {#if photo.exif.camera_model}
-                            <div class="flex items-start gap-3">
-                                <Camera size={16} />
-                                <div>
-                                    <div
-                                        class="text-xs text-amber-600 font-medium"
-                                    >
-                                        Camera Model
-                                    </div>
-                                    <div class="text-sm text-amber-900">
-                                        {photo.exif.camera_model}
-                                    </div>
-                                </div>
-                            </div>
-                        {/if}
-                        {#if photo.exif.lens_model}
-                            <div class="flex items-start gap-3">
-                                <Aperture size={16} />
-                                <div>
-                                    <div
-                                        class="text-xs text-amber-600 font-medium"
-                                    >
-                                        Lens
-                                    </div>
-                                    <div class="text-sm text-amber-900">
-                                        {photo.exif.lens_model}
-                                    </div>
-                                </div>
+                        {#if activePhoto.exif.lens_model}
+                            <div class="flex items-center gap-2 text-amber-700">
+                                <Aperture size={14} class="shrink-0" />
+                                <span>{activePhoto.exif.lens_model}</span>
                             </div>
                         {/if}
                     </div>
                 </div>
             {/if}
 
-            {#if photo.exif.aperture || photo.exif.shutter_speed || photo.exif.iso || photo.exif.focal_length}
-                <div class="space-y-3">
+            {#if activePhoto.exif.aperture || activePhoto.exif.shutter_speed || activePhoto.exif.iso || activePhoto.exif.focal_length}
+                <div class="space-y-2">
                     <h3
-                        class="text-sm font-semibold text-amber-900 mb-3"
+                        class="text-xs font-semibold text-amber-800 uppercase tracking-wide"
                         style="margin: 0;"
                     >
-                        Exposure Settings
+                        Exposure
                     </h3>
-                    <div class="space-y-3">
-                        {#if photo.exif.aperture}
-                            <div class="flex items-start gap-3">
-                                <Aperture size={16} />
-                                <div>
-                                    <div
-                                        class="text-xs text-amber-600 font-medium"
-                                    >
-                                        Aperture
-                                    </div>
-                                    <div class="text-sm text-amber-900">
-                                        f/{photo.exif.aperture}
-                                    </div>
-                                </div>
+                    <div class="space-y-2 text-sm">
+                        {#if activePhoto.exif.aperture}
+                            <div class="flex items-center gap-2 text-amber-700">
+                                <Aperture size={14} class="shrink-0" />
+                                <span>f/{activePhoto.exif.aperture}</span>
                             </div>
                         {/if}
-                        {#if photo.exif.shutter_speed}
-                            <div class="flex items-start gap-3">
-                                <Clock size={16} />
-                                <div>
-                                    <div
-                                        class="text-xs text-amber-600 font-medium"
-                                    >
-                                        Shutter Speed
-                                    </div>
-                                    <div class="text-sm text-amber-900">
-                                        {photo.exif.shutter_speed}
-                                    </div>
-                                </div>
+                        {#if activePhoto.exif.shutter_speed}
+                            <div class="flex items-center gap-2 text-amber-700">
+                                <Clock size={14} class="shrink-0" />
+                                <span>{activePhoto.exif.shutter_speed}</span>
                             </div>
                         {/if}
-                        {#if photo.exif.iso}
-                            <div class="flex items-start gap-3">
-                                <Image size={16} />
-                                <div>
-                                    <div
-                                        class="text-xs text-amber-600 font-medium"
-                                    >
-                                        ISO
-                                    </div>
-                                    <div class="text-sm text-amber-900">
-                                        {photo.exif.iso}
-                                    </div>
-                                </div>
+                        {#if activePhoto.exif.iso}
+                            <div class="flex items-center gap-2 text-amber-700">
+                                <Image size={14} class="shrink-0" />
+                                <span>ISO {activePhoto.exif.iso}</span>
                             </div>
                         {/if}
-                        {#if photo.exif.focal_length}
-                            <div class="flex items-start gap-3">
-                                <Aperture size={16} />
-                                <div>
-                                    <div
-                                        class="text-xs text-amber-600 font-medium"
-                                    >
-                                        Focal Length
-                                    </div>
-                                    <div class="text-sm text-amber-900">
-                                        {photo.exif.focal_length}mm
-                                    </div>
-                                </div>
+                        {#if activePhoto.exif.focal_length}
+                            <div class="flex items-center gap-2 text-amber-700">
+                                <Monitor size={14} class="shrink-0" />
+                                <span>{activePhoto.exif.focal_length}mm</span>
                             </div>
                         {/if}
                     </div>
                 </div>
             {/if}
 
-            {#if photo.exif.width || photo.exif.height}
-                <div class="space-y-3">
+            {#if activePhoto.exif.width && activePhoto.exif.height}
+                <div class="space-y-2">
                     <h3
-                        class="text-sm font-semibold text-amber-900 mb-3"
+                        class="text-xs font-semibold text-amber-800 uppercase tracking-wide"
                         style="margin: 0;"
                     >
-                        Image Properties
+                        Dimensions
                     </h3>
-                    <div class="space-y-3">
-                        {#if photo.exif.width && photo.exif.height}
-                            <div class="flex items-start gap-3">
-                                <Monitor size={16} />
-                                <div>
-                                    <div
-                                        class="text-xs text-amber-600 font-medium"
-                                    >
-                                        Dimensions
-                                    </div>
-                                    <div class="text-sm text-amber-900">
-                                        {photo.exif.width} × {photo.exif.height}
-                                    </div>
-                                </div>
-                            </div>
-                        {/if}
+                    <div class="text-sm text-amber-700">
+                        {activePhoto.exif.width} × {activePhoto.exif.height}
                     </div>
                 </div>
             {/if}

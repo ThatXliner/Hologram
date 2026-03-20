@@ -542,6 +542,7 @@ pub struct ImageAdjustments {
     pub temperature: f64,  // -100 to 100
     pub highlights: f64,   // -100 to 100
     pub shadows: f64,      // -100 to 100
+    pub sharpen: f64,      // 0 to 100
     pub curve_points: Vec<(f64, f64)>, // (x, y) in 0-255 space
 }
 
@@ -692,6 +693,53 @@ fn apply_custom_adjustments(pixels: &mut [u8], adj: &ImageAdjustments) {
     }
 }
 
+/// Unsharp mask sharpening: blur with 3x3 Gaussian, then blend
+/// output = original + strength * (original - blurred)
+fn apply_unsharp_mask(pixels: &mut [u8], width: u32, height: u32, amount: f64) {
+    if amount <= 0.01 {
+        return;
+    }
+    let strength = amount / 100.0;
+    let w = width as usize;
+    let h = height as usize;
+
+    // Compute blurred copy (3x3 Gaussian: [1 2 1; 2 4 2; 1 2 1] / 16)
+    let mut blurred = vec![0.0f32; w * h * 3];
+    for y in 0..h {
+        for x in 0..w {
+            for c in 0..3 {
+                let mut sum = 0.0f32;
+                let mut wt = 0.0f32;
+                for dy in -1i32..=1 {
+                    let ny = y as i32 + dy;
+                    if ny < 0 || ny >= h as i32 { continue; }
+                    for dx in -1i32..=1 {
+                        let nx = x as i32 + dx;
+                        if nx < 0 || nx >= w as i32 { continue; }
+                        let kernel_w = (if dx == 0 { 2.0 } else { 1.0 }) * (if dy == 0 { 2.0 } else { 1.0 });
+                        sum += pixels[(ny as usize * w + nx as usize) * 4 + c] as f32 * kernel_w;
+                        wt += kernel_w;
+                    }
+                }
+                blurred[(y * w + x) * 3 + c] = sum / wt;
+            }
+        }
+    }
+
+    // Blend
+    for y in 0..h {
+        for x in 0..w {
+            let idx = (y * w + x) * 4;
+            let bidx = (y * w + x) * 3;
+            for c in 0..3 {
+                let orig = pixels[idx + c] as f32;
+                let diff = orig - blurred[bidx + c];
+                pixels[idx + c] = (orig + strength as f32 * diff).round().clamp(0.0, 255.0) as u8;
+            }
+        }
+    }
+}
+
 #[tauri::command]
 async fn apply_edits_and_save(
     file_path: String,
@@ -749,6 +797,9 @@ async fn apply_edits_and_save(
         let mut pixels = photon_img.get_raw_pixels();
         apply_custom_adjustments(&mut pixels, &adj);
 
+        // Apply sharpening (spatial filter, after per-pixel ops)
+        apply_unsharp_mask(&mut pixels, w, h, adj.sharpen);
+
         // Convert RGBA back to RGB and encode as JPEG
         let rgba_img = image::RgbaImage::from_raw(w, h, pixels)
             .ok_or_else(|| "Failed to reconstruct image".to_string())?;
@@ -795,6 +846,8 @@ pub fn run() {
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
+        .plugin(tauri_plugin_updater::Builder::new().build())
+        .plugin(tauri_plugin_process::init())
         .invoke_handler(tauri::generate_handler![
             scan_folder_fast,
             generate_thumbnails,

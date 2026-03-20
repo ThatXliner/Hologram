@@ -10,6 +10,7 @@
         Save,
         Loader2,
         Trash2,
+        Diamond,
     } from "@lucide/svelte";
 
     interface Props {
@@ -27,6 +28,7 @@
     let temperature = $state(0);
     let highlights = $state(0);
     let shadows = $state(0);
+    let sharpen = $state(0);
 
     // --- Tone curve state ---
     // Points are {x, y} in 0-255 space. Always includes anchors at (0,0) and (255,255).
@@ -99,6 +101,7 @@
         void temperature;
         void highlights;
         void shadows;
+        void sharpen;
         void curvePoints;
 
         if (isSourceLoaded) {
@@ -194,6 +197,48 @@
         return lut;
     }
 
+    // --- Unsharp Mask (sharpening) ---
+    // Applies a 3x3 Gaussian blur then blends: sharp = original + amount * (original - blurred)
+    function applyUnsharpMask(data: Uint8ClampedArray, width: number, height: number, amount: number) {
+        if (amount <= 0) return;
+
+        const strength = amount / 100; // 0..1
+        const len = width * height * 4;
+        const blurred = new Float32Array(len);
+
+        // 3x3 Gaussian kernel: [1 2 1; 2 4 2; 1 2 1] / 16
+        for (let y = 0; y < height; y++) {
+            for (let x = 0; x < width; x++) {
+                const idx = (y * width + x) * 4;
+                for (let c = 0; c < 3; c++) {
+                    let sum = 0;
+                    let wt = 0;
+                    for (let dy = -1; dy <= 1; dy++) {
+                        const ny = y + dy;
+                        if (ny < 0 || ny >= height) continue;
+                        for (let dx = -1; dx <= 1; dx++) {
+                            const nx = x + dx;
+                            if (nx < 0 || nx >= width) continue;
+                            const w = (dx === 0 ? 2 : 1) * (dy === 0 ? 2 : 1);
+                            sum += data[(ny * width + nx) * 4 + c] * w;
+                            wt += w;
+                        }
+                    }
+                    blurred[idx + c] = sum / wt;
+                }
+            }
+        }
+
+        // Blend: output = original + strength * (original - blurred)
+        for (let i = 0; i < len; i += 4) {
+            for (let c = 0; c < 3; c++) {
+                const orig = data[i + c];
+                const diff = orig - blurred[i + c];
+                data[i + c] = Math.max(0, Math.min(255, Math.round(orig + strength * diff)));
+            }
+        }
+    }
+
     // --- Pixel processing pipeline ---
     function renderPreview() {
         if (!sourceImageData || !previewCtx || !previewCanvas) return;
@@ -282,6 +327,11 @@
             dst[i + 3] = src[i + 3]; // alpha
         }
 
+        // Apply sharpening (spatial filter, must run after per-pixel ops)
+        if (sharpen > 0) {
+            applyUnsharpMask(out.data, sourceWidth, sourceHeight, sharpen);
+        }
+
         previewCtx.putImageData(out, 0, 0);
 
         // Emit preview blob URL
@@ -305,6 +355,7 @@
             temperature,
             highlights,
             shadows,
+            sharpen,
             curve_points: curvePoints.map((p): [number, number] => [p.x, p.y]),
         };
     }
@@ -439,6 +490,7 @@
         temperature = 0;
         highlights = 0;
         shadows = 0;
+        sharpen = 0;
         curvePoints = [
             { x: 0, y: 0 },
             { x: 255, y: 255 },
@@ -485,6 +537,7 @@
         { label: "Temperature", icon: Thermometer, value: () => temperature, set: (v) => (temperature = v), min: -100, max: 100 },
         { label: "Highlights", icon: Sun, value: () => highlights, set: (v) => (highlights = v), min: -100, max: 100 },
         { label: "Shadows", icon: CircleDot, value: () => shadows, set: (v) => (shadows = v), min: -100, max: 100 },
+        { label: "Sharpen", icon: Diamond, value: () => sharpen, set: (v) => (sharpen = v), min: 0, max: 100 },
     ];
 </script>
 

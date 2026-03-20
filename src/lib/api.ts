@@ -94,6 +94,7 @@ export class HologramAPI {
       temperature: number;
       highlights: number;
       shadows: number;
+      sharpen: number;
       curve_points: [number, number][];
     },
   ): Promise<string> {

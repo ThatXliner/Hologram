@@ -22,10 +22,11 @@
 
     interface Props {
         photos: Photo[];
+        allPhotos: Photo[];
         startIndex?: number;
     }
 
-    let { photos, startIndex = 0 }: Props = $props();
+    let { photos, allPhotos, startIndex = 0 }: Props = $props();
 
     let currentIndex = $state<number>(startIndex);
     const photo = $derived(photos[currentIndex]);
@@ -34,9 +35,10 @@
     const isPaired = $derived(photo?.paired_with != null);
 
     // For paired RAW+JPEG, track which version we're viewing
+    // Look up the pair in allPhotos (not displayPhotos, which collapses pairs)
     let viewingRaw = $state(false);
     const pairedPhoto = $derived(
-        isPaired ? photos.find((p) => p.id === photo.paired_with) : null,
+        isPaired ? allPhotos.find((p) => p.id === photo.paired_with) : null,
     );
     const activePhoto = $derived(
         viewingRaw && pairedPhoto ? pairedPhoto : photo,

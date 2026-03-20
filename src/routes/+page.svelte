@@ -199,6 +199,6 @@
 
     <!-- Photo Viewer Modal -->
     {#if $viewMode === "viewer"}
-        <PhotoViewer photos={$displayPhotos} startIndex={$selectedIndex} />
+        <PhotoViewer photos={$displayPhotos} allPhotos={$filteredPhotos} startIndex={$selectedIndex} />
     {/if}
 </div>

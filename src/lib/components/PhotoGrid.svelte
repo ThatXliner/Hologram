@@ -77,7 +77,7 @@
     {#each visiblePhotos as photo, i (photo.id)}
         <button
             type="button"
-            class="bg-card rounded-lg border border-border hover:shadow-md transition-shadow cursor-pointer text-left w-full p-0 overflow-hidden"
+            class="photo-card bg-card rounded-lg border border-border cursor-pointer text-left w-full p-0 overflow-hidden"
             onclick={() => selectPhoto(photo, i)}
             onkeydown={(e) => e.key === "Enter" && selectPhoto(photo, i)}
         >
@@ -100,7 +100,7 @@
 
             <div class="p-3">
                 <div class="flex justify-between items-start mb-2">
-                    <h3 class="text-sm font-medium text-foreground truncate flex-1 mr-2">
+                    <h3 class="text-sm font-semibold text-foreground truncate flex-1 mr-2 tracking-tight">
                         {photo.file_name}
                     </h3>
                     <span

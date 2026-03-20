@@ -3,8 +3,6 @@
     import { HologramAPI } from "../api.ts";
     import type { PhotoFilter, Photo, ThumbnailReady, ExifData } from "../types.ts";
     import {
-        Filter,
-        BarChart3,
         FolderOpen,
         Plus,
         X,
@@ -214,7 +212,7 @@
 </script>
 
 <aside
-    class="w-72 bg-sidebar border-r border-sidebar-border overflow-y-auto h-screen"
+    class="w-72 sidebar-surface border-r border-sidebar-border overflow-y-auto h-screen"
 >
     <!-- Import Section -->
     <div class="p-4 border-b border-border">
@@ -231,38 +229,37 @@
     {#if $stats}
         <div class="p-4 border-b border-border">
             <div class="flex items-center gap-2 mb-3">
-                <BarChart3 size={16} />
-                <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide flex-1">
+                <h3 class="section-heading text-xs font-semibold text-foreground uppercase tracking-wide flex-1">
                     Library Stats
                 </h3>
             </div>
             <div class="grid grid-cols-2 gap-3 mb-4">
-                <div class="text-center p-3 bg-card rounded-lg border border-border shadow-sm">
-                    <span class="block text-lg font-semibold tabular-nums text-foreground"
+                <div class="text-center p-3 stat-card rounded-lg border border-border">
+                    <span class="block text-xl font-bold tabular-nums text-foreground tracking-tight"
                         >{formatNumber($stats.total_photos)}</span
                     >
                     <span class="block text-xs text-muted-foreground mt-1"
                         >Total Photos</span
                     >
                 </div>
-                <div class="text-center p-3 bg-card rounded-lg border border-border shadow-sm">
-                    <span class="block text-lg font-semibold tabular-nums text-foreground"
+                <div class="text-center p-3 stat-card rounded-lg border border-border">
+                    <span class="block text-xl font-bold tabular-nums text-foreground tracking-tight"
                         >{formatNumber($stats.raw_count)}</span
                     >
                     <span class="block text-xs text-muted-foreground mt-1"
                         >RAW Files</span
                     >
                 </div>
-                <div class="text-center p-3 bg-card rounded-lg border border-border shadow-sm">
-                    <span class="block text-lg font-semibold tabular-nums text-foreground"
+                <div class="text-center p-3 stat-card rounded-lg border border-border">
+                    <span class="block text-xl font-bold tabular-nums text-foreground tracking-tight"
                         >{formatNumber($stats.jpeg_count)}</span
                     >
                     <span class="block text-xs text-muted-foreground mt-1"
                         >JPEG Files</span
                     >
                 </div>
-                <div class="text-center p-3 bg-card rounded-lg border border-border shadow-sm">
-                    <span class="block text-lg font-semibold tabular-nums text-foreground"
+                <div class="text-center p-3 stat-card rounded-lg border border-border">
+                    <span class="block text-xl font-bold tabular-nums text-foreground tracking-tight"
                         >{formatNumber($stats.paired_count)}</span
                     >
                     <span class="block text-xs text-muted-foreground mt-1"
@@ -274,7 +271,7 @@
             <!-- Top Cameras -->
             {#if Object.keys($stats.cameras).length > 0}
                 <div class="mt-4">
-                    <h4 class="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
+                    <h4 class="section-heading text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
                         Top Cameras
                     </h4>
                     {#each Object.entries($stats.cameras)
@@ -286,7 +283,7 @@
                             <span class="text-muted-foreground truncate mr-2"
                                 >{camera}</span
                             >
-                            <span class="text-foreground font-medium"
+                            <span class="text-foreground font-bold tabular-nums"
                                 >{count}</span
                             >
                         </div>
@@ -299,11 +296,10 @@
     <!-- Filters Section -->
     <div class="p-4 border-b border-border">
         <div class="flex items-center gap-2 mb-3">
-            <Filter size={16} />
-            <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide flex-1">
+            <h3 class="section-heading text-xs font-semibold text-foreground uppercase tracking-wide flex-1">
                 Filters
                 {#if activeFilterCount > 0}
-                    <span class="ml-1 text-xs bg-primary text-primary-foreground rounded-full px-1.5 py-0.5">{activeFilterCount}</span>
+                    <span class="ml-1 text-xs font-bold bg-primary text-primary-foreground rounded-full px-1.5 py-0.5 filter-count">{activeFilterCount}</span>
                 {/if}
             </h3>
             <button

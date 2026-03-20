@@ -348,10 +348,10 @@
         class="flex items-center justify-between px-4 py-2 bg-black/80 border-b border-white/10 shrink-0"
     >
         <div class="flex items-center gap-4">
-            <h2 class="text-white text-sm font-medium">
+            <h2 class="text-white text-sm font-semibold tracking-tight">
                 {activePhoto.file_name}
             </h2>
-            <span class="text-white/50 text-sm"
+            <span class="text-white/40 text-xs font-mono tabular-nums"
                 >{currentIndex + 1} / {photos.length}</span
             >
             {#if isPaired}
@@ -523,7 +523,7 @@
                 <div class="border-t border-border pt-4"></div>
             {/if}
             <div class="space-y-2">
-                <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
+                <h3 class="section-heading text-xs font-bold text-foreground uppercase tracking-wide">
                     File Info
                 </h3>
                 <div class="space-y-2 text-sm">
@@ -540,7 +540,7 @@
 
             {#if activePhoto.exif.camera_model || activePhoto.exif.camera_make}
                 <div class="space-y-2">
-                    <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
+                    <h3 class="section-heading text-xs font-bold text-foreground uppercase tracking-wide">
                         Camera
                     </h3>
                     <div class="space-y-2 text-sm">
@@ -562,7 +562,7 @@
 
             {#if activePhoto.exif.aperture || activePhoto.exif.shutter_speed || activePhoto.exif.iso || activePhoto.exif.focal_length}
                 <div class="space-y-2">
-                    <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
+                    <h3 class="section-heading text-xs font-bold text-foreground uppercase tracking-wide">
                         Exposure
                     </h3>
                     <div class="space-y-2 text-sm">
@@ -596,10 +596,10 @@
 
             {#if activePhoto.exif.width && activePhoto.exif.height}
                 <div class="space-y-2">
-                    <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
+                    <h3 class="section-heading text-xs font-bold text-foreground uppercase tracking-wide">
                         Dimensions
                     </h3>
-                    <div class="text-sm text-muted-foreground">
+                    <div class="text-sm text-muted-foreground font-mono tabular-nums">
                         {activePhoto.exif.width} × {activePhoto.exif.height}
                     </div>
                 </div>

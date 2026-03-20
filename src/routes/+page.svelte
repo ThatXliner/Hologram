@@ -121,7 +121,7 @@
                 <div class="mb-12">
                     <div class="flex flex-col items-center mb-6">
                         <div class="text-6xl mb-4">📸</div>
-                        <h1 class="text-2xl font-semibold text-foreground">
+                        <h1 class="text-3xl font-bold text-foreground tracking-tight">
                             Hologram
                         </h1>
                     </div>
@@ -135,7 +135,7 @@
                     class="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-4xl mb-12"
                 >
                     <div class="text-center">
-                        <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">
+                        <h3 class="text-sm font-bold text-foreground uppercase tracking-wide mb-2">
                             RAW+JPEG Workflows
                         </h3>
                         <p class="text-sm text-muted-foreground">
@@ -144,7 +144,7 @@
                         </p>
                     </div>
                     <div class="text-center">
-                        <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">
+                        <h3 class="text-sm font-bold text-foreground uppercase tracking-wide mb-2">
                             EXIF-Based Filtering
                         </h3>
                         <p class="text-sm text-muted-foreground">
@@ -153,7 +153,7 @@
                         </p>
                     </div>
                     <div class="text-center">
-                        <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">
+                        <h3 class="text-sm font-bold text-foreground uppercase tracking-wide mb-2">
                             Local Processing
                         </h3>
                         <p class="text-sm text-muted-foreground">
@@ -191,7 +191,7 @@
                         class="flex-1 flex flex-col items-center justify-center text-center"
                     >
                         <div class="text-6xl mb-4">📁</div>
-                        <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">
+                        <h3 class="text-sm font-bold text-foreground uppercase tracking-wide mb-2">
                             No photos found
                         </h3>
                         <p class="text-sm text-muted-foreground">
@@ -203,8 +203,8 @@
                     <div
                         class="flex items-center gap-4 p-4 bg-background border-b border-border"
                     >
-                        <h2 class="text-sm font-semibold text-foreground uppercase tracking-wide whitespace-nowrap">
-                            Photos ({$displayPhotos.length})
+                        <h2 class="text-sm font-bold text-foreground uppercase tracking-wide whitespace-nowrap">
+                            Photos <span class="text-muted-foreground font-semibold tabular-nums">({$displayPhotos.length})</span>
                         </h2>
                         <div class="flex-1 max-w-md relative">
                             <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />

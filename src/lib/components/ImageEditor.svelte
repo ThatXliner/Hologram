@@ -544,7 +544,7 @@
 <div class="space-y-4">
     <!-- Header -->
     <div class="flex items-center justify-between">
-        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
+        <h3 class="section-heading text-xs font-bold text-foreground uppercase tracking-wide">
             Adjustments
         </h3>
         <button
@@ -570,7 +570,7 @@
                         <slider.icon size={12} class="shrink-0" />
                         <span>{slider.label}</span>
                     </div>
-                    <span class="font-mono text-muted-foreground min-w-[2.5rem] text-right">
+                    <span class="font-mono text-foreground font-medium tabular-nums min-w-[2.5rem] text-right">
                         {slider.value() > 0 ? "+" : ""}{slider.value()}
                     </span>
                 </div>
@@ -589,7 +589,7 @@
         <!-- Tone Curve -->
         <div class="pt-2 border-t border-border">
             <div class="flex items-center justify-between mb-2">
-                <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
+                <h3 class="section-heading text-xs font-bold text-foreground uppercase tracking-wide">
                     Tone Curve
                 </h3>
                 <button

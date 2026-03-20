@@ -346,6 +346,34 @@
     onMount(() => {
         loadCurrentPhoto();
     });
+
+    let tagInput = $state("");
+    let notesValue = $state(activePhoto?.notes ?? "");
+
+    $effect(() => {
+        notesValue = activePhoto?.notes ?? "";
+    });
+
+    function handleTagKeydown(e: KeyboardEvent) {
+        if (e.key === "Enter" && tagInput.trim()) {
+            e.preventDefault();
+            const newTag = tagInput.trim().toLowerCase();
+            const currentTags = activePhoto.tags ?? [];
+            if (!currentTags.includes(newTag)) {
+                photoStore.setPhotoTags(activePhoto.id, [...currentTags, newTag]);
+            }
+            tagInput = "";
+        }
+    }
+
+    function removeTag(tag: string) {
+        const currentTags = activePhoto.tags ?? [];
+        photoStore.setPhotoTags(activePhoto.id, currentTags.filter((t) => t !== tag));
+    }
+
+    function saveNotes() {
+        photoStore.setPhotoNotes(activePhoto.id, notesValue);
+    }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -626,6 +654,35 @@
                     </div>
                 </div>
             {/if}
+
+            <!-- Tags & Notes -->
+            <div class="space-y-2 border-t border-border pt-4">
+                <h3 class="text-xs font-bold text-foreground uppercase tracking-wide">Tags & Notes</h3>
+                <div class="space-y-1">
+                    <div class="flex flex-wrap gap-1 min-h-[24px]">
+                        {#each (activePhoto.tags ?? []) as tag}
+                            <span class="inline-flex items-center gap-1 text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full">
+                                {tag}
+                                <button onclick={() => removeTag(tag)} class="hover:text-red-400 transition-colors">×</button>
+                            </span>
+                        {/each}
+                    </div>
+                    <input
+                        type="text"
+                        placeholder="Add tag, press Enter"
+                        class="w-full text-xs px-2 py-1.5 rounded border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring"
+                        bind:value={tagInput}
+                        onkeydown={handleTagKeydown}
+                    />
+                </div>
+                <textarea
+                    placeholder="Add notes..."
+                    rows="3"
+                    class="w-full text-xs px-2 py-1.5 rounded border border-border bg-background text-foreground placeholder:text-muted-foreground focus:outline-none focus:ring-1 focus:ring-ring resize-none"
+                    bind:value={notesValue}
+                    onblur={saveNotes}
+                ></textarea>
+            </div>
         </div>
     </div>
 </div>

@@ -9,6 +9,8 @@ export interface Photo {
   created_at: string;
   modified_at: string;
   paired_with?: string; // ID of paired RAW/JPEG
+  tags?: string[];
+  notes?: string;
 }
 
 export interface ExifData {
@@ -42,6 +44,7 @@ export interface PhotoFilter {
   exposure_mode?: string;
   flash?: string;
   white_balance?: string;
+  tags?: string[]; // filter photos that have ALL of these tags
 }
 
 export interface PhotoStats {

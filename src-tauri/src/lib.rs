@@ -1,4 +1,5 @@
 use anyhow::Result;
+use rusqlite;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use exif as kamadak_exif;
@@ -937,6 +938,68 @@ async fn load_full_resolution_image_command(file_path: String) -> Response {
     load_full_resolution_image(path)
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhotoMetadata {
+    pub tags: Vec<String>,
+    pub notes: String,
+}
+
+fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {
+    let db_path = app
+        .path()
+        .app_data_dir()
+        .map_err(|e| e.to_string())?
+        .join("hologram.db");
+    let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS photo_metadata (
+            photo_id TEXT PRIMARY KEY,
+            tags TEXT NOT NULL DEFAULT '[]',
+            notes TEXT NOT NULL DEFAULT ''
+        )",
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn)
+}
+
+#[tauri::command]
+fn set_photo_metadata(
+    app: AppHandle,
+    photo_id: String,
+    tags: Vec<String>,
+    notes: String,
+) -> Result<(), String> {
+    let conn = open_db(&app)?;
+    let tags_json = serde_json::to_string(&tags).map_err(|e| e.to_string())?;
+    conn.execute(
+        "INSERT INTO photo_metadata (photo_id, tags, notes) VALUES (?1, ?2, ?3)
+         ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes",
+        rusqlite::params![photo_id, tags_json, notes],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
+}
+
+#[tauri::command]
+fn get_photo_metadata(
+    app: AppHandle,
+    photo_ids: Vec<String>,
+) -> Result<HashMap<String, PhotoMetadata>, String> {
+    let conn = open_db(&app)?;
+    let mut result = HashMap::new();
+    for photo_id in &photo_ids {
+        if let Ok((tags_json, notes)) = conn.query_row(
+            "SELECT tags, notes FROM photo_metadata WHERE photo_id = ?1",
+            rusqlite::params![photo_id],
+            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+        ) {
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            result.insert(photo_id.clone(), PhotoMetadata { tags, notes });
+        }
+    }
+    Ok(result)
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -981,7 +1044,9 @@ pub fn run() {
             get_photo_stats,
             load_full_resolution_image_command,
             apply_edits_and_save,
-            denoise_image
+            denoise_image,
+            set_photo_metadata,
+            get_photo_metadata
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

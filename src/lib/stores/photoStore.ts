@@ -1,5 +1,6 @@
 import { writable, derived } from "svelte/store";
 import type { Photo, PhotoFilter, PhotoStats, AppState, ScanProgress } from "../types.ts";
+import { HologramAPI } from "../api.ts";
 
 function createPhotoStore() {
   const initialState: AppState = {
@@ -94,6 +95,61 @@ function createPhotoStore() {
       update((state) => ({ ...state, viewMode })),
     setSelectedIndex: (selectedIndex: number) =>
       update((state) => ({ ...state, selectedIndex })),
+    setPhotoTags: (photoId: string, tags: string[]) => {
+      let currentNotes = "";
+      update((state) => {
+        const pi = photoIndex.get(photoId);
+        const fi = filteredIndex.get(photoId);
+        const photos = [...state.photos];
+        const filteredPhotos = [...state.filteredPhotos];
+        if (pi !== undefined) {
+          currentNotes = photos[pi].notes ?? "";
+          photos[pi] = { ...photos[pi], tags };
+        }
+        if (fi !== undefined) filteredPhotos[fi] = { ...filteredPhotos[fi], tags };
+        return { ...state, photos, filteredPhotos };
+      });
+      HologramAPI.setPhotoMetadata(photoId, tags, currentNotes).catch((e) =>
+        console.error("setPhotoMetadata failed:", e),
+      );
+    },
+    setPhotoNotes: (photoId: string, notes: string) => {
+      let currentTags: string[] = [];
+      update((state) => {
+        const pi = photoIndex.get(photoId);
+        const fi = filteredIndex.get(photoId);
+        const photos = [...state.photos];
+        const filteredPhotos = [...state.filteredPhotos];
+        if (pi !== undefined) {
+          currentTags = photos[pi].tags ?? [];
+          photos[pi] = { ...photos[pi], notes };
+        }
+        if (fi !== undefined) filteredPhotos[fi] = { ...filteredPhotos[fi], notes };
+        return { ...state, photos, filteredPhotos };
+      });
+      HologramAPI.setPhotoMetadata(photoId, currentTags, notes).catch((e) =>
+        console.error("setPhotoMetadata failed:", e),
+      );
+    },
+    loadMetadata: async (photoIds: string[]) => {
+      if (photoIds.length === 0) return;
+      try {
+        const metadataMap = await HologramAPI.getPhotoMetadata(photoIds);
+        update((state) => {
+          const photos = [...state.photos];
+          const filteredPhotos = [...state.filteredPhotos];
+          for (const [id, meta] of Object.entries(metadataMap)) {
+            const pi = photoIndex.get(id);
+            if (pi !== undefined) photos[pi] = { ...photos[pi], tags: meta.tags, notes: meta.notes };
+            const fi = filteredIndex.get(id);
+            if (fi !== undefined) filteredPhotos[fi] = { ...filteredPhotos[fi], tags: meta.tags, notes: meta.notes };
+          }
+          return { ...state, photos, filteredPhotos };
+        });
+      } catch (e) {
+        console.error("loadMetadata failed:", e);
+      }
+    },
     reset: () => set(initialState),
   };
 }

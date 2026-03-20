@@ -68,6 +68,8 @@
                     photo.exif.white_balance,
                     photo.exif.date_taken,
                     photo.file_type,
+                    ...(photo.tags ?? []),
+                    photo.notes,
                 ].filter(Boolean).map(s => s!.toLowerCase());
                 if (!searchable.some(s => s.includes(q))) return false;
             }
@@ -102,6 +104,10 @@
                 if (!photo.exif.date_taken) return false;
                 if (filter.date_range[0] && photo.exif.date_taken < filter.date_range[0]) return false;
                 if (filter.date_range[1] && photo.exif.date_taken > filter.date_range[1]) return false;
+            }
+            if (filter.tags && filter.tags.length > 0) {
+                const photoTags = photo.tags ?? [];
+                if (!filter.tags.every(t => photoTags.includes(t))) return false;
             }
             return true;
         });

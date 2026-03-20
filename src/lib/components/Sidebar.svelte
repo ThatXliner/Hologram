@@ -20,7 +20,7 @@
     let showFilters = $state(false);
 
     // All possible filter definitions, derived from actual data
-    type FilterKind = "select" | "range" | "date-range";
+    type FilterKind = "select" | "range" | "date-range" | "tags";
     interface FilterDef {
         key: string;
         label: string;
@@ -82,7 +82,10 @@
         { key: "file_type", label: "File Type", kind: "select" as const },
         ...availableRangeFilters.map((f) => ({ key: f.filterKey, label: f.label + " Range", kind: "range" as const })),
         ...(hasDateData ? [{ key: "date_range", label: "Date Range", kind: "date-range" as const }] : []),
+        { key: "tags", label: "Tags", kind: "tags" as const },
     ]);
+
+    let tagFilterInput = $state("");
 
     const unaddedFilters = $derived(
         allFilterOptions.filter((f) => !addedFilterKeys.has(f.key)),
@@ -115,12 +118,38 @@
                 );
                 photoStore.setPhotos(result.photos);
                 photoStore.setStats(result.stats);
+                photoStore.loadMetadata(result.photos.map((p) => p.id));
             } catch (error) {
                 console.error("Failed to import folder:", error);
             } finally {
                 photoStore.setLoading(false);
             }
         }
+    }
+
+    function handleTagFilterKeydown(e: KeyboardEvent) {
+        if (e.key === "Enter" && tagFilterInput.trim()) {
+            e.preventDefault();
+            const newTag = tagFilterInput.trim().toLowerCase();
+            const currentTags = activeFilter.tags ?? [];
+            if (!currentTags.includes(newTag)) {
+                activeFilter = { ...activeFilter, tags: [...currentTags, newTag] };
+                onFilter(activeFilter);
+            }
+            tagFilterInput = "";
+        }
+    }
+
+    function removeTagFilter(tag: string) {
+        const updated = (activeFilter.tags ?? []).filter((t) => t !== tag);
+        if (updated.length === 0) {
+            const copy = { ...activeFilter };
+            delete copy.tags;
+            activeFilter = copy;
+        } else {
+            activeFilter = { ...activeFilter, tags: updated };
+        }
+        onFilter(activeFilter);
     }
 
     function applyFilter() {
@@ -441,6 +470,37 @@
                                 onchange={(e) => setDateMax((e.target as HTMLInputElement).value)}
                             />
                         </div>
+                    </div>
+                {/if}
+
+                <!-- Tags filter -->
+                {#if addedFilterKeys.has("tags")}
+                    <div class="space-y-1">
+                        <div class="flex items-center justify-between">
+                            <label class="text-sm font-medium text-foreground">Tags</label>
+                            <button
+                                class="text-muted-foreground hover:text-foreground p-0.5"
+                                onclick={() => removeFilter("tags")}
+                                title="Remove filter"
+                            >
+                                <X size={12} />
+                            </button>
+                        </div>
+                        <div class="flex flex-wrap gap-1 min-h-[20px]">
+                            {#each (activeFilter.tags ?? []) as tag}
+                                <span class="inline-flex items-center gap-1 text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full">
+                                    {tag}
+                                    <button onclick={() => removeTagFilter(tag)} class="hover:text-red-400 transition-colors">×</button>
+                                </span>
+                            {/each}
+                        </div>
+                        <input
+                            type="text"
+                            placeholder="Filter by tag, press Enter"
+                            class={inputClass}
+                            bind:value={tagFilterInput}
+                            onkeydown={handleTagFilterKeydown}
+                        />
                     </div>
                 {/if}
 

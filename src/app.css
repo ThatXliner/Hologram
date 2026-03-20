@@ -97,8 +97,65 @@
   body {
     background-color: var(--color-background);
     color: var(--color-foreground);
+    -webkit-font-smoothing: antialiased;
+    -moz-osx-font-smoothing: grayscale;
   }
   h1, h2, h3, h4, h5, h6 {
     margin: 0;
+    letter-spacing: -0.01em;
   }
+}
+
+/* Stat cards: subtle inset effect */
+.stat-card {
+  background: linear-gradient(
+    to bottom,
+    var(--color-card) 0%,
+    oklch(from var(--color-card) calc(l - 0.01) c h) 100%
+  );
+  box-shadow:
+    0 1px 2px oklch(0 0 0 / 0.04),
+    inset 0 1px 0 oklch(1 0 0 / 0.5);
+}
+
+/* Section headers: subtle left accent bar */
+.section-heading {
+  position: relative;
+  padding-left: 0.625rem;
+}
+.section-heading::before {
+  content: "";
+  position: absolute;
+  left: 0;
+  top: 0.125rem;
+  bottom: 0.125rem;
+  width: 2px;
+  border-radius: 1px;
+  background: var(--color-primary);
+  opacity: 0.6;
+}
+
+/* Sidebar subtle gradient */
+.sidebar-surface {
+  background: linear-gradient(
+    to bottom,
+    var(--color-sidebar) 0%,
+    oklch(from var(--color-sidebar) calc(l - 0.015) c h) 100%
+  );
+}
+
+/* Active filter badge pulse */
+.filter-count {
+  box-shadow: 0 0 0 2px oklch(from var(--color-primary) l c h / 0.15);
+}
+
+/* Photo card refined hover */
+.photo-card {
+  transition: box-shadow 0.2s ease, transform 0.2s ease;
+}
+.photo-card:hover {
+  box-shadow:
+    0 4px 12px oklch(0 0 0 / 0.08),
+    0 1px 3px oklch(0 0 0 / 0.06);
+  transform: translateY(-1px);
 }

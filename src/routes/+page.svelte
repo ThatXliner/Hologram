@@ -121,14 +121,11 @@
                 <div class="mb-12">
                     <div class="flex flex-col items-center mb-6">
                         <div class="text-6xl mb-4">📸</div>
-                        <h1
-                            class="text-4xl font-bold text-amber-900"
-                            style="margin: 0;"
-                        >
+                        <h1 class="text-2xl font-semibold text-foreground">
                             Hologram
                         </h1>
                     </div>
-                    <p class="text-xl text-amber-700 max-w-2xl">
+                    <p class="text-sm text-muted-foreground max-w-2xl">
                         Pro-grade photo management for photographers who want
                         total control over their files
                     </p>
@@ -138,44 +135,35 @@
                     class="grid grid-cols-1 md:grid-cols-3 gap-8 max-w-4xl mb-12"
                 >
                     <div class="text-center">
-                        <h3
-                            class="text-lg font-semibold text-amber-900 mb-2"
-                            style="margin: 0;"
-                        >
+                        <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">
                             RAW+JPEG Workflows
                         </h3>
-                        <p class="text-amber-700">
+                        <p class="text-sm text-muted-foreground">
                             Automatically pair RAW and JPEG files for seamless
                             comparison and organization
                         </p>
                     </div>
                     <div class="text-center">
-                        <h3
-                            class="text-lg font-semibold text-amber-900 mb-2"
-                            style="margin: 0;"
-                        >
+                        <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">
                             EXIF-Based Filtering
                         </h3>
-                        <p class="text-amber-700">
+                        <p class="text-sm text-muted-foreground">
                             Filter by camera, lens, exposure settings, and more
                             with professional precision
                         </p>
                     </div>
                     <div class="text-center">
-                        <h3
-                            class="text-lg font-semibold text-amber-900 mb-2"
-                            style="margin: 0;"
-                        >
+                        <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">
                             Local Processing
                         </h3>
-                        <p class="text-amber-700">
+                        <p class="text-sm text-muted-foreground">
                             Your files stay on your machine. No cloud, no
                             subscriptions, just pure control
                         </p>
                     </div>
                 </div>
 
-                <div class="text-amber-600">
+                <div class="text-muted-foreground">
                     <p>
                         Get started by importing your first photo folder using
                         the sidebar.
@@ -193,49 +181,43 @@
             <div class="flex-1 flex flex-col">
                 {#if $isLoading}
                     <div
-                        class="flex-1 flex flex-col items-center justify-center text-amber-600"
+                        class="flex-1 flex flex-col items-center justify-center text-muted-foreground"
                     >
                         <Loader2 size={32} class="animate-spin" />
-                        <p class="mt-4 text-lg">Scanning photos...</p>
+                        <p class="mt-4 text-sm">Scanning photos...</p>
                     </div>
                 {:else if $displayPhotos.length === 0}
                     <div
                         class="flex-1 flex flex-col items-center justify-center text-center"
                     >
                         <div class="text-6xl mb-4">📁</div>
-                        <h3
-                            class="text-xl font-semibold text-amber-900 mb-2"
-                            style="margin: 0;"
-                        >
+                        <h3 class="text-sm font-semibold text-foreground uppercase tracking-wide mb-2">
                             No photos found
                         </h3>
-                        <p class="text-amber-700">
+                        <p class="text-sm text-muted-foreground">
                             Try adjusting your filters or import a new folder
                         </p>
                     </div>
                 {:else}
                     <!-- Toolbar -->
                     <div
-                        class="flex items-center gap-4 p-4 bg-stone-50 border-b border-amber-200"
+                        class="flex items-center gap-4 p-4 bg-background border-b border-border"
                     >
-                        <h2
-                            class="text-lg font-semibold text-amber-900 whitespace-nowrap"
-                            style="margin: 0;"
-                        >
+                        <h2 class="text-sm font-semibold text-foreground uppercase tracking-wide whitespace-nowrap">
                             Photos ({$displayPhotos.length})
                         </h2>
                         <div class="flex-1 max-w-md relative">
-                            <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-amber-400 pointer-events-none" />
+                            <Search size={16} class="absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground pointer-events-none" />
                             <input
                                 type="text"
                                 placeholder="Search by filename, camera, lens, date..."
-                                class="w-full pl-9 pr-3 py-2 text-sm border border-amber-300 rounded-lg bg-white text-amber-900 placeholder:text-amber-400 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 focus:outline-none"
+                                class="w-full pl-9 pr-3 py-2 text-sm border border-border rounded-lg bg-card text-foreground placeholder:text-muted-foreground focus:ring-2 focus:ring-ring focus:border-ring focus:outline-none"
                                 bind:value={searchQuery}
                                 oninput={handleSearchInput}
                             />
                         </div>
                         <button
-                            class="p-2 text-amber-600 hover:text-amber-800 hover:bg-amber-100 rounded-md transition-colors"
+                            class="p-2 text-muted-foreground hover:text-foreground hover:bg-accent rounded-lg transition-colors"
                             onclick={toggleViewMode}
                         >
                             {#if $viewMode === "grid"}

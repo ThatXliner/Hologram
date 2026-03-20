@@ -491,11 +491,11 @@
 <div class="space-y-4">
     <!-- Header -->
     <div class="flex items-center justify-between">
-        <h3 class="text-xs font-semibold text-amber-800 uppercase tracking-wide" style="margin: 0;">
+        <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
             Adjustments
         </h3>
         <button
-            class="text-xs text-amber-600 hover:text-amber-800 transition-colors flex items-center gap-1"
+            class="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
             onclick={resetAll}
         >
             <RotateCcw size={12} />
@@ -504,7 +504,7 @@
     </div>
 
     {#if !isSourceLoaded}
-        <div class="flex items-center justify-center py-6 text-amber-500 text-xs gap-2">
+        <div class="flex items-center justify-center py-6 text-muted-foreground text-xs gap-2">
             <Loader2 size={14} class="animate-spin" />
             Loading image...
         </div>
@@ -512,12 +512,12 @@
         <!-- Basic Sliders -->
         {#each sliders as slider}
             <div class="space-y-1">
-                <div class="flex items-center justify-between text-xs text-amber-700">
+                <div class="flex items-center justify-between text-xs text-muted-foreground">
                     <div class="flex items-center gap-1.5">
                         <slider.icon size={12} class="shrink-0" />
                         <span>{slider.label}</span>
                     </div>
-                    <span class="font-mono text-amber-500 min-w-[2.5rem] text-right">
+                    <span class="font-mono text-muted-foreground min-w-[2.5rem] text-right">
                         {slider.value() > 0 ? "+" : ""}{slider.value()}
                     </span>
                 </div>
@@ -528,19 +528,19 @@
                     step="1"
                     value={slider.value()}
                     oninput={(e) => slider.set(Number(e.currentTarget.value))}
-                    class="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-amber-600 bg-amber-200"
+                    class="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-primary bg-secondary"
                 />
             </div>
         {/each}
 
         <!-- Tone Curve -->
-        <div class="pt-2 border-t border-amber-200">
+        <div class="pt-2 border-t border-border">
             <div class="flex items-center justify-between mb-2">
-                <h3 class="text-xs font-semibold text-amber-800 uppercase tracking-wide" style="margin: 0;">
+                <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
                     Tone Curve
                 </h3>
                 <button
-                    class="text-xs text-amber-600 hover:text-amber-800 transition-colors flex items-center gap-1"
+                    class="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
                     onclick={resetCurve}
                     title="Reset curve"
                 >
@@ -555,7 +555,7 @@
                     bind:this={curveContainer}
                     width={CURVE_SIZE}
                     height={CURVE_SIZE}
-                    class="bg-stone-100 rounded-lg border border-amber-200 cursor-crosshair touch-none"
+                    class="bg-card rounded-lg border border-border cursor-crosshair touch-none"
                     onpointerdown={handleCurvePointerDown}
                     onpointermove={handleCurvePointerMove}
                     onpointerup={handleCurvePointerUp}
@@ -568,7 +568,7 @@
                             y1={CURVE_PAD}
                             x2={CURVE_PAD + t * (CURVE_SIZE - 2 * CURVE_PAD)}
                             y2={CURVE_SIZE - CURVE_PAD}
-                            stroke="#d4c5a0"
+                            stroke="var(--border)"
                             stroke-width="0.5"
                         />
                         <line
@@ -576,7 +576,7 @@
                             y1={CURVE_PAD + t * (CURVE_SIZE - 2 * CURVE_PAD)}
                             x2={CURVE_SIZE - CURVE_PAD}
                             y2={CURVE_PAD + t * (CURVE_SIZE - 2 * CURVE_PAD)}
-                            stroke="#d4c5a0"
+                            stroke="var(--border)"
                             stroke-width="0.5"
                         />
                     {/each}
@@ -587,7 +587,7 @@
                         y1={toSvgY(0)}
                         x2={toSvgX(255)}
                         y2={toSvgY(255)}
-                        stroke="#c8b88a"
+                        stroke="var(--muted)"
                         stroke-width="1"
                         stroke-dasharray="4 3"
                     />
@@ -596,7 +596,7 @@
                     <path
                         d={curveSvgPath()}
                         fill="none"
-                        stroke="#b45309"
+                        stroke="var(--primary)"
                         stroke-width="2"
                         stroke-linecap="round"
                         stroke-linejoin="round"
@@ -608,7 +608,7 @@
                             cx={toSvgX(pt.x)}
                             cy={toSvgY(pt.y)}
                             r={draggingPointIndex === i ? 6 : 5}
-                            fill={pt.x === 0 || pt.x === 255 ? "#92400e" : "#d97706"}
+                            fill="var(--primary)"
                             stroke="white"
                             stroke-width="2"
                             class="cursor-grab"
@@ -617,20 +617,20 @@
                     {/each}
 
                     <!-- Axis labels -->
-                    <text x={CURVE_PAD} y={CURVE_SIZE - 1} font-size="8" fill="#92400e" text-anchor="start">0</text>
-                    <text x={CURVE_SIZE - CURVE_PAD} y={CURVE_SIZE - 1} font-size="8" fill="#92400e" text-anchor="end">255</text>
+                    <text x={CURVE_PAD} y={CURVE_SIZE - 1} font-size="8" fill="var(--primary)" text-anchor="start">0</text>
+                    <text x={CURVE_SIZE - CURVE_PAD} y={CURVE_SIZE - 1} font-size="8" fill="var(--primary)" text-anchor="end">255</text>
                 </svg>
             </div>
 
-            <p class="text-[10px] text-amber-500 text-center mt-1.5">
+            <p class="text-[10px] text-muted-foreground text-center mt-1.5">
                 Click to add points. Drag to adjust. Double-click to remove.
             </p>
         </div>
 
         <!-- Save Button -->
-        <div class="pt-2 border-t border-amber-200">
+        <div class="pt-2 border-t border-border">
             <button
-                class="w-full flex items-center justify-center gap-2 px-3 py-2 bg-amber-600 hover:bg-amber-700 text-white text-sm font-medium rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+                class="w-full flex items-center justify-center gap-2 px-3 py-2 bg-primary hover:opacity-90 text-primary-foreground text-sm font-medium rounded-lg transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
                 onclick={saveImage}
                 disabled={isSaving}
             >
@@ -643,7 +643,7 @@
                 {/if}
             </button>
             {#if saveMessage}
-                <p class="text-xs mt-1.5 text-center {saveMessage.startsWith('Error') ? 'text-red-600' : 'text-green-700'}">
+                <p class="text-xs mt-1.5 text-center {saveMessage.startsWith('Error') ? 'text-destructive' : 'text-foreground'}">
                     {saveMessage}
                 </p>
             {/if}

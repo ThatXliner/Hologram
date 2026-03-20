@@ -348,17 +348,17 @@
         class="flex items-center justify-between px-4 py-2 bg-black/80 border-b border-white/10 shrink-0"
     >
         <div class="flex items-center gap-4">
-            <h2 class="text-white text-lg font-medium" style="margin: 0;">
+            <h2 class="text-white text-sm font-medium">
                 {activePhoto.file_name}
             </h2>
-            <span class="text-gray-400 text-sm"
+            <span class="text-white/50 text-sm"
                 >{currentIndex + 1} / {photos.length}</span
             >
             {#if isPaired}
                 <button
                     class="text-xs px-3 py-1 rounded-full font-medium transition-colors {viewingRaw
                         ? 'bg-orange-600 text-white'
-                        : 'bg-blue-600 text-white'}"
+                        : 'bg-sky-600 text-white'}"
                     onclick={(e) => {
                         e.stopPropagation();
                         toggleRawJpeg();
@@ -371,7 +371,7 @@
         <div class="flex items-center gap-2">
             <button
                 class="text-xs px-3 py-1 rounded-full font-medium transition-colors {showEditor
-                    ? 'bg-amber-600 text-white'
+                    ? 'bg-primary text-primary-foreground'
                     : 'bg-white/10 text-white/70 hover:text-white hover:bg-white/20'}"
                 onclick={(e) => {
                     e.stopPropagation();
@@ -481,7 +481,7 @@
                 <div class="absolute top-4 right-4 flex flex-col gap-2 z-20">
                     {#if isPaired}
                         <div
-                            class="bg-amber-600/90 text-white text-xs px-2 py-1 rounded-full flex items-center gap-1"
+                            class="bg-primary/90 text-primary-foreground text-xs px-2 py-0.5 rounded-full flex items-center gap-1"
                         >
                             <FileImage size={12} />
                             RAW+JPEG
@@ -489,7 +489,7 @@
                     {/if}
                     {#if fullResolutionImage}
                         <div
-                            class="bg-green-600/90 text-white text-xs px-2 py-1 rounded-full"
+                            class="bg-green-600/90 text-white text-xs px-2 py-0.5 rounded-full"
                         >
                             Full Res
                         </div>
@@ -509,7 +509,7 @@
 
         <!-- Right Panel: Editor + Metadata -->
         <div
-            class="w-72 bg-amber-50 border-l border-amber-200 overflow-y-auto p-4 space-y-5 shrink-0"
+            class="w-72 bg-card border-l border-border overflow-y-auto p-4 space-y-5 shrink-0"
         >
             {#if showEditor}
                 <ImageEditor
@@ -520,21 +520,18 @@
                         editedPreviewUrl = url;
                     }}
                 />
-                <div class="border-t border-amber-200 pt-4"></div>
+                <div class="border-t border-border pt-4"></div>
             {/if}
             <div class="space-y-2">
-                <h3
-                    class="text-xs font-semibold text-amber-800 uppercase tracking-wide"
-                    style="margin: 0;"
-                >
+                <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
                     File Info
                 </h3>
                 <div class="space-y-2 text-sm">
-                    <div class="flex items-center gap-2 text-amber-700">
+                    <div class="flex items-center gap-2 text-muted-foreground">
                         <FileImage size={14} class="shrink-0" />
                         <span>{activePhoto.file_type} — {formatFileSize(activePhoto.file_size)}</span>
                     </div>
-                    <div class="flex items-center gap-2 text-amber-700">
+                    <div class="flex items-center gap-2 text-muted-foreground">
                         <Calendar size={14} class="shrink-0" />
                         <span>{formatDate(activePhoto.modified_at)}</span>
                     </div>
@@ -543,21 +540,18 @@
 
             {#if activePhoto.exif.camera_model || activePhoto.exif.camera_make}
                 <div class="space-y-2">
-                    <h3
-                        class="text-xs font-semibold text-amber-800 uppercase tracking-wide"
-                        style="margin: 0;"
-                    >
+                    <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
                         Camera
                     </h3>
                     <div class="space-y-2 text-sm">
                         {#if activePhoto.exif.camera_model}
-                            <div class="flex items-center gap-2 text-amber-700">
+                            <div class="flex items-center gap-2 text-muted-foreground">
                                 <Camera size={14} class="shrink-0" />
                                 <span>{activePhoto.exif.camera_make ?? ""} {activePhoto.exif.camera_model}</span>
                             </div>
                         {/if}
                         {#if activePhoto.exif.lens_model}
-                            <div class="flex items-center gap-2 text-amber-700">
+                            <div class="flex items-center gap-2 text-muted-foreground">
                                 <Aperture size={14} class="shrink-0" />
                                 <span>{activePhoto.exif.lens_model}</span>
                             </div>
@@ -568,33 +562,30 @@
 
             {#if activePhoto.exif.aperture || activePhoto.exif.shutter_speed || activePhoto.exif.iso || activePhoto.exif.focal_length}
                 <div class="space-y-2">
-                    <h3
-                        class="text-xs font-semibold text-amber-800 uppercase tracking-wide"
-                        style="margin: 0;"
-                    >
+                    <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
                         Exposure
                     </h3>
                     <div class="space-y-2 text-sm">
                         {#if activePhoto.exif.aperture}
-                            <div class="flex items-center gap-2 text-amber-700">
+                            <div class="flex items-center gap-2 text-muted-foreground">
                                 <Aperture size={14} class="shrink-0" />
                                 <span>f/{activePhoto.exif.aperture}</span>
                             </div>
                         {/if}
                         {#if activePhoto.exif.shutter_speed}
-                            <div class="flex items-center gap-2 text-amber-700">
+                            <div class="flex items-center gap-2 text-muted-foreground">
                                 <Clock size={14} class="shrink-0" />
                                 <span>{activePhoto.exif.shutter_speed}</span>
                             </div>
                         {/if}
                         {#if activePhoto.exif.iso}
-                            <div class="flex items-center gap-2 text-amber-700">
+                            <div class="flex items-center gap-2 text-muted-foreground">
                                 <Image size={14} class="shrink-0" />
                                 <span>ISO {activePhoto.exif.iso}</span>
                             </div>
                         {/if}
                         {#if activePhoto.exif.focal_length}
-                            <div class="flex items-center gap-2 text-amber-700">
+                            <div class="flex items-center gap-2 text-muted-foreground">
                                 <Monitor size={14} class="shrink-0" />
                                 <span>{activePhoto.exif.focal_length}mm</span>
                             </div>
@@ -605,13 +596,10 @@
 
             {#if activePhoto.exif.width && activePhoto.exif.height}
                 <div class="space-y-2">
-                    <h3
-                        class="text-xs font-semibold text-amber-800 uppercase tracking-wide"
-                        style="margin: 0;"
-                    >
+                    <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide">
                         Dimensions
                     </h3>
-                    <div class="text-sm text-amber-700">
+                    <div class="text-sm text-muted-foreground">
                         {activePhoto.exif.width} × {activePhoto.exif.height}
                     </div>
                 </div>

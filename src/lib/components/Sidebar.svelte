@@ -210,17 +210,16 @@
         }).length,
     );
 
-    const inputClass = "w-full px-3 py-2 text-sm border border-amber-300 rounded-md bg-white text-amber-900 focus:ring-2 focus:ring-amber-500 focus:border-amber-500 focus:outline-none";
+    const inputClass = "w-full px-3 py-2 text-sm border border-border rounded-lg bg-card text-foreground focus:ring-2 focus:ring-ring focus:border-ring focus:outline-none";
 </script>
 
 <aside
-    class="w-80 bg-amber-50 border-r border-amber-200 overflow-y-auto"
-    style="height: 100vh;"
+    class="w-72 bg-sidebar border-r border-sidebar-border overflow-y-auto h-screen"
 >
     <!-- Import Section -->
-    <div class="p-4 border-b border-amber-200">
+    <div class="p-4 border-b border-border">
         <button
-            class="w-full flex items-center justify-center gap-2 bg-blue-500 hover:bg-blue-600 text-white font-medium py-3 px-4 rounded-lg transition-colors disabled:opacity-50 disabled:cursor-not-allowed"
+            class="w-full flex items-center justify-center gap-2 bg-primary hover:opacity-90 text-primary-foreground font-medium py-2.5 px-4 rounded-lg transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
             onclick={importFolder}
         >
             <FolderOpen size={20} />
@@ -230,48 +229,43 @@
 
     <!-- Stats Section -->
     {#if $stats}
-        <div class="p-4 border-b border-amber-200">
+        <div class="p-4 border-b border-border">
             <div class="flex items-center gap-2 mb-3">
                 <BarChart3 size={16} />
-                <h3
-                    class="text-sm font-semibold text-amber-900 flex-1"
-                    style="margin: 0;"
-                >
+                <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide flex-1">
                     Library Stats
                 </h3>
             </div>
-            <div
-                style="display: grid; grid-template-columns: 1fr 1fr; gap: 0.75rem; margin-bottom: 1rem;"
-            >
-                <div class="text-center p-3 bg-white rounded-lg shadow-sm">
-                    <span class="block text-lg font-bold text-amber-800"
+            <div class="grid grid-cols-2 gap-3 mb-4">
+                <div class="text-center p-3 bg-card rounded-lg border border-border shadow-sm">
+                    <span class="block text-lg font-semibold tabular-nums text-foreground"
                         >{formatNumber($stats.total_photos)}</span
                     >
-                    <span class="block text-xs text-amber-600 mt-1"
+                    <span class="block text-xs text-muted-foreground mt-1"
                         >Total Photos</span
                     >
                 </div>
-                <div class="text-center p-3 bg-white rounded-lg shadow-sm">
-                    <span class="block text-lg font-bold text-amber-800"
+                <div class="text-center p-3 bg-card rounded-lg border border-border shadow-sm">
+                    <span class="block text-lg font-semibold tabular-nums text-foreground"
                         >{formatNumber($stats.raw_count)}</span
                     >
-                    <span class="block text-xs text-amber-600 mt-1"
+                    <span class="block text-xs text-muted-foreground mt-1"
                         >RAW Files</span
                     >
                 </div>
-                <div class="text-center p-3 bg-white rounded-lg shadow-sm">
-                    <span class="block text-lg font-bold text-amber-800"
+                <div class="text-center p-3 bg-card rounded-lg border border-border shadow-sm">
+                    <span class="block text-lg font-semibold tabular-nums text-foreground"
                         >{formatNumber($stats.jpeg_count)}</span
                     >
-                    <span class="block text-xs text-amber-600 mt-1"
+                    <span class="block text-xs text-muted-foreground mt-1"
                         >JPEG Files</span
                     >
                 </div>
-                <div class="text-center p-3 bg-white rounded-lg shadow-sm">
-                    <span class="block text-lg font-bold text-amber-800"
+                <div class="text-center p-3 bg-card rounded-lg border border-border shadow-sm">
+                    <span class="block text-lg font-semibold tabular-nums text-foreground"
                         >{formatNumber($stats.paired_count)}</span
                     >
-                    <span class="block text-xs text-amber-600 mt-1"
+                    <span class="block text-xs text-muted-foreground mt-1"
                         >Paired Sets</span
                     >
                 </div>
@@ -279,11 +273,8 @@
 
             <!-- Top Cameras -->
             {#if Object.keys($stats.cameras).length > 0}
-                <div style="margin-top: 1rem;">
-                    <h4
-                        class="text-xs font-semibold text-amber-800 mb-2"
-                        style="margin: 0;"
-                    >
+                <div class="mt-4">
+                    <h4 class="text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
                         Top Cameras
                     </h4>
                     {#each Object.entries($stats.cameras)
@@ -292,10 +283,10 @@
                         <div
                             class="flex justify-between items-center py-1 text-sm"
                         >
-                            <span class="text-amber-700 truncate mr-2"
+                            <span class="text-muted-foreground truncate mr-2"
                                 >{camera}</span
                             >
-                            <span class="text-amber-600 font-medium"
+                            <span class="text-foreground font-medium"
                                 >{count}</span
                             >
                         </div>
@@ -306,23 +297,18 @@
     {/if}
 
     <!-- Filters Section -->
-    <div class="p-4 border-b border-amber-200">
+    <div class="p-4 border-b border-border">
         <div class="flex items-center gap-2 mb-3">
             <Filter size={16} />
-            <h3
-                class="text-sm font-semibold text-amber-900 flex-1"
-                style="margin: 0;"
-            >
+            <h3 class="text-xs font-semibold text-foreground uppercase tracking-wide flex-1">
                 Filters
                 {#if activeFilterCount > 0}
-                    <span class="ml-1 text-xs bg-amber-600 text-white rounded-full px-1.5 py-0.5">{activeFilterCount}</span>
+                    <span class="ml-1 text-xs bg-primary text-primary-foreground rounded-full px-1.5 py-0.5">{activeFilterCount}</span>
                 {/if}
             </h3>
             <button
-                class="w-6 h-6 rounded-full bg-amber-200 text-amber-700 text-xs font-bold flex items-center justify-center hover:bg-amber-300"
+                class="w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center transition-colors {showFilters ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-accent'}"
                 onclick={() => (showFilters = !showFilters)}
-                class:bg-amber-700={showFilters}
-                class:text-white={showFilters}
             >
                 {showFilters ? "\u2212" : "+"}
             </button>
@@ -336,12 +322,12 @@
                         <div class="flex items-center justify-between">
                             <label
                                 for="filter-{filter.filterKey}"
-                                class="text-sm font-medium text-amber-800"
+                                class="text-sm font-medium text-foreground"
                             >
                                 {filter.label}
                             </label>
                             <button
-                                class="text-amber-400 hover:text-amber-600 p-0.5"
+                                class="text-muted-foreground hover:text-foreground p-0.5"
                                 onclick={() => removeFilter(filter.filterKey)}
                                 title="Remove filter"
                             >
@@ -368,12 +354,12 @@
                         <div class="flex items-center justify-between">
                             <label
                                 for="filter-file_type"
-                                class="text-sm font-medium text-amber-800"
+                                class="text-sm font-medium text-foreground"
                             >
                                 File Type
                             </label>
                             <button
-                                class="text-amber-400 hover:text-amber-600 p-0.5"
+                                class="text-muted-foreground hover:text-foreground p-0.5"
                                 onclick={() => removeFilter("file_type")}
                                 title="Remove filter"
                             >
@@ -398,11 +384,11 @@
                 {#each availableRangeFilters.filter((f) => addedFilterKeys.has(f.filterKey)) as range (range.filterKey)}
                     <div class="space-y-1">
                         <div class="flex items-center justify-between">
-                            <label class="text-sm font-medium text-amber-800">
+                            <label class="text-sm font-medium text-foreground">
                                 {range.label} Range
                             </label>
                             <button
-                                class="text-amber-400 hover:text-amber-600 p-0.5"
+                                class="text-muted-foreground hover:text-foreground p-0.5"
                                 onclick={() => removeFilter(range.filterKey)}
                                 title="Remove filter"
                             >
@@ -434,11 +420,11 @@
                 {#if addedFilterKeys.has("date_range") && hasDateData}
                     <div class="space-y-1">
                         <div class="flex items-center justify-between">
-                            <label class="text-sm font-medium text-amber-800">
+                            <label class="text-sm font-medium text-foreground">
                                 Date Range
                             </label>
                             <button
-                                class="text-amber-400 hover:text-amber-600 p-0.5"
+                                class="text-muted-foreground hover:text-foreground p-0.5"
                                 onclick={() => removeFilter("date_range")}
                                 title="Remove filter"
                             >
@@ -466,17 +452,17 @@
                 {#if unaddedFilters.length > 0}
                     <div class="relative">
                         <button
-                            class="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-sm text-amber-600 bg-amber-100/50 hover:bg-amber-100 rounded-md transition-colors border border-dashed border-amber-300"
+                            class="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-sm text-muted-foreground bg-accent/50 hover:bg-accent rounded-lg transition-colors border border-dashed border-border"
                             onclick={() => (showAddFilter = !showAddFilter)}
                         >
                             <Plus size={14} />
                             Add Filter
                         </button>
                         {#if showAddFilter}
-                            <div class="absolute z-10 left-0 right-0 mt-1 bg-white border border-amber-200 rounded-lg shadow-lg max-h-48 overflow-y-auto">
+                            <div class="absolute z-10 left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
                                 {#each unaddedFilters as opt}
                                     <button
-                                        class="w-full text-left px-3 py-2 text-sm text-amber-800 hover:bg-amber-50 transition-colors"
+                                        class="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors"
                                         onclick={() => addFilter(opt.key)}
                                     >
                                         {opt.label}
@@ -490,7 +476,7 @@
                 {#if activeFilterCount > 0}
                     <div class="pt-1">
                         <button
-                            class="w-full px-3 py-2 text-sm text-amber-700 bg-amber-100 hover:bg-amber-200 rounded-md transition-colors"
+                            class="w-full px-3 py-2 text-sm text-secondary-foreground bg-secondary hover:bg-accent rounded-lg transition-colors"
                             onclick={clearFilter}>Clear All Filters</button
                         >
                     </div>

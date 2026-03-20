@@ -73,99 +73,68 @@
     }
 </script>
 
-<div
-    style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; padding: 1rem;"
->
+<div class="grid grid-cols-[repeat(auto-fill,minmax(280px,1fr))] gap-4 p-4">
     {#each visiblePhotos as photo, i (photo.id)}
         <button
             type="button"
-            class="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-amber-200 text-left w-full p-0"
+            class="bg-card rounded-lg border border-border hover:shadow-md transition-shadow cursor-pointer text-left w-full p-0 overflow-hidden"
             onclick={() => selectPhoto(photo, i)}
             onkeydown={(e) => e.key === "Enter" && selectPhoto(photo, i)}
         >
-            <div
-                style="position: relative; aspect-ratio: 3/2; overflow: hidden; border-radius: 0.5rem 0.5rem 0 0;"
-            >
+            <div class="relative aspect-[3/2] overflow-hidden rounded-t-lg">
                 <img
                     src={getThumbnailSrc(photo)}
                     alt={photo.file_name}
-                    class="bg-amber-50"
-                    style="width: 100%; height: 100%; object-fit: cover;"
+                    class="w-full h-full object-cover bg-muted"
                     loading="lazy"
                     decoding="async"
                 />
                 {#if photo.paired_with}
                     <div
-                        class="bg-amber-600 text-white text-xs px-2 py-1 rounded-full"
-                        style="position: absolute; top: 0.5rem; right: 0.5rem;"
+                        class="absolute top-2 right-2 bg-primary text-primary-foreground text-xs font-medium px-2 py-0.5 rounded-full"
                     >
-                        <span style="font-weight: 500;">RAW+JPEG</span>
+                        RAW+JPEG
                     </div>
                 {/if}
             </div>
 
-            <div style="padding: 0.75rem;">
-                <div
-                    style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 0.5rem;"
-                >
-                    <h3
-                        class="text-sm font-medium text-amber-900 truncate"
-                        style="margin: 0; flex: 1; margin-right: 0.5rem;"
-                    >
+            <div class="p-3">
+                <div class="flex justify-between items-start mb-2">
+                    <h3 class="text-sm font-medium text-foreground truncate flex-1 mr-2">
                         {photo.file_name}
                     </h3>
                     <span
-                        class="text-xs text-amber-600 bg-amber-100 px-2 py-1 rounded"
-                        style="font-weight: 500;">{photo.file_type}</span
-                    >
+                        class="text-xs font-medium text-secondary-foreground bg-secondary px-2 py-0.5 rounded-full"
+                    >{photo.file_type}</span>
                 </div>
 
-                <div
-                    style="display: flex; flex-direction: column; gap: 0.25rem;"
-                >
+                <div class="flex flex-col gap-1">
                     {#if photo.exif.camera_model}
-                        <div
-                            class="text-xs text-amber-700"
-                            style="display: flex; align-items: center; gap: 0.375rem;"
-                        >
+                        <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Camera size={14} />
-                            <span style="line-height: 1;"
-                                >{photo.exif.camera_model}</span
-                            >
+                            <span>{photo.exif.camera_model}</span>
                         </div>
                     {/if}
 
                     {#if photo.exif.aperture && photo.exif.focal_length}
-                        <div
-                            class="text-xs text-amber-700"
-                            style="display: flex; align-items: center; gap: 0.375rem;"
-                        >
+                        <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Aperture size={14} />
-                            <span style="line-height: 1;"
-                                >{formatAperture(photo.exif.aperture)} • {formatFocalLength(
+                            <span>{formatAperture(photo.exif.aperture)} • {formatFocalLength(
                                     photo.exif.focal_length,
-                                )}</span
-                            >
+                                )}</span>
                         </div>
                     {/if}
 
                     {#if photo.exif.iso}
-                        <div
-                            class="text-xs text-amber-700"
-                            style="display: flex; align-items: center; gap: 0.375rem;"
-                        >
+                        <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
                             <Image size={14} />
-                            <span style="line-height: 1;"
-                                >ISO {photo.exif.iso}</span
-                            >
+                            <span>ISO {photo.exif.iso}</span>
                         </div>
                     {/if}
 
-                    <div class="metadata-item">
+                    <div class="flex items-center gap-1.5 text-xs text-muted-foreground">
                         <Calendar size={14} />
-                        <span style="line-height: 1;"
-                            >{formatFileSize(photo.file_size)}</span
-                        >
+                        <span>{formatFileSize(photo.file_size)}</span>
                     </div>
                 </div>
             </div>
@@ -175,5 +144,5 @@
 
 <!-- Sentinel element for infinite scroll -->
 {#if visibleCount < photos.length}
-    <div bind:this={sentinel} style="height: 1px;"></div>
+    <div bind:this={sentinel} class="h-px"></div>
 {/if}

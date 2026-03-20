@@ -632,61 +632,63 @@ fn build_curve_lut(points: &[(f64, f64)]) -> [u8; 256] {
     lut
 }
 
-fn apply_adjustments_to_pixels(pixels: &mut [u8], adj: &ImageAdjustments) {
+/// Apply temperature, highlights/shadows, and tone curve to raw RGBA pixels.
+/// These are the custom operations that photon-rs doesn't cover.
+fn apply_custom_adjustments(pixels: &mut [u8], adj: &ImageAdjustments) {
     let curve_lut = build_curve_lut(&adj.curve_points);
-    let exposure_mul = 2.0_f64.powf(adj.exposure / 100.0);
-    let contrast_factor = (259.0 * (adj.contrast + 255.0)) / (255.0 * (259.0 - adj.contrast));
-    let sat_mul = 1.0 + adj.saturation / 100.0;
     let temp_r = 1.0 + adj.temperature / 200.0;
     let temp_b = 1.0 - adj.temperature / 200.0;
     let high_mul = 1.0 + adj.highlights / 200.0;
     let shad_mul = 1.0 + adj.shadows / 200.0;
+
+    let has_temp = adj.temperature.abs() > 0.01;
+    let has_high = adj.highlights.abs() > 0.01;
+    let has_shad = adj.shadows.abs() > 0.01;
+    let has_curve = adj.curve_points.len() >= 2
+        && adj.curve_points.iter().any(|(x, y)| (x - y).abs() > 0.01);
+
+    // Skip entirely if nothing custom to do
+    if !has_temp && !has_high && !has_shad && !has_curve {
+        return;
+    }
 
     for chunk in pixels.chunks_exact_mut(4) {
         let mut r = chunk[0] as f64;
         let mut g = chunk[1] as f64;
         let mut b = chunk[2] as f64;
 
-        // Exposure
-        r *= exposure_mul;
-        g *= exposure_mul;
-        b *= exposure_mul;
-
-        // Temperature
-        r *= temp_r;
-        b *= temp_b;
-
-        // Highlights / shadows
-        let lum = 0.299 * r + 0.587 * g + 0.114 * b;
-        let lum_norm = (lum / 255.0).min(1.0);
-        if adj.highlights.abs() > 0.01 {
-            let w = lum_norm * lum_norm;
-            let a = 1.0 + (high_mul - 1.0) * w;
-            r *= a; g *= a; b *= a;
-        }
-        if adj.shadows.abs() > 0.01 {
-            let w = (1.0 - lum_norm) * (1.0 - lum_norm);
-            let a = 1.0 + (shad_mul - 1.0) * w;
-            r *= a; g *= a; b *= a;
+        // Temperature (channel gain)
+        if has_temp {
+            r *= temp_r;
+            b *= temp_b;
         }
 
-        // Contrast
-        r = contrast_factor * (r - 128.0) + 128.0;
-        g = contrast_factor * (g - 128.0) + 128.0;
-        b = contrast_factor * (b - 128.0) + 128.0;
-
-        // Saturation
-        if adj.saturation.abs() > 0.01 {
-            let gray = 0.299 * r + 0.587 * g + 0.114 * b;
-            r = gray + sat_mul * (r - gray);
-            g = gray + sat_mul * (g - gray);
-            b = gray + sat_mul * (b - gray);
+        // Highlights / shadows (luminance-weighted)
+        if has_high || has_shad {
+            let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+            let lum_norm = (lum / 255.0).min(1.0);
+            if has_high {
+                let w = lum_norm * lum_norm;
+                let a = 1.0 + (high_mul - 1.0) * w;
+                r *= a; g *= a; b *= a;
+            }
+            if has_shad {
+                let w = (1.0 - lum_norm) * (1.0 - lum_norm);
+                let a = 1.0 + (shad_mul - 1.0) * w;
+                r *= a; g *= a; b *= a;
+            }
         }
 
-        // Tone curve
-        chunk[0] = curve_lut[r.round().clamp(0.0, 255.0) as usize];
-        chunk[1] = curve_lut[g.round().clamp(0.0, 255.0) as usize];
-        chunk[2] = curve_lut[b.round().clamp(0.0, 255.0) as usize];
+        // Tone curve LUT
+        if has_curve {
+            chunk[0] = curve_lut[r.round().clamp(0.0, 255.0) as usize];
+            chunk[1] = curve_lut[g.round().clamp(0.0, 255.0) as usize];
+            chunk[2] = curve_lut[b.round().clamp(0.0, 255.0) as usize];
+        } else {
+            chunk[0] = r.round().clamp(0.0, 255.0) as u8;
+            chunk[1] = g.round().clamp(0.0, 255.0) as u8;
+            chunk[2] = b.round().clamp(0.0, 255.0) as u8;
+        }
     }
 }
 
@@ -710,14 +712,47 @@ async fn apply_edits_and_save(
     let adj = adjustments;
 
     let output_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
-        let mut img = image::load_from_memory(&image_bytes)
+        let img = image::load_from_memory(&image_bytes)
             .map_err(|e| format!("Failed to decode image: {}", e))?
             .to_rgba8();
 
-        apply_adjustments_to_pixels(img.as_mut(), &adj);
+        let (w, h) = img.dimensions();
+        let raw_pixels = img.into_raw();
 
-        // Encode as JPEG
-        let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
+        // Use photon-rs for exposure, contrast, saturation
+        let mut photon_img = photon_rs::PhotonImage::new(raw_pixels, w, h);
+
+        if adj.exposure.abs() > 0.01 {
+            // Map -100..100 to brightness offset; ±100 → approx ±1 stop
+            // photon-rs brightness is an i16 additive offset per channel
+            let brightness = (adj.exposure * 1.28) as i16; // ±128 range
+            photon_rs::effects::adjust_brightness(&mut photon_img, brightness);
+        }
+
+        if adj.contrast.abs() > 0.01 {
+            // Map -100..100 to photon-rs contrast factor
+            let contrast = (adj.contrast * 1.28) as f32;
+            photon_rs::effects::adjust_contrast(&mut photon_img, contrast);
+        }
+
+        if adj.saturation.abs() > 0.01 {
+            // photon-rs uses separate saturate/desaturate with positive level
+            let level = (adj.saturation.abs() / 100.0 * 0.5) as f32;
+            if adj.saturation > 0.0 {
+                photon_rs::colour_spaces::saturate_hsl(&mut photon_img, level);
+            } else {
+                photon_rs::colour_spaces::desaturate_hsl(&mut photon_img, level);
+            }
+        }
+
+        // Apply custom adjustments (temperature, highlights/shadows, tone curve)
+        let mut pixels = photon_img.get_raw_pixels();
+        apply_custom_adjustments(&mut pixels, &adj);
+
+        // Convert RGBA back to RGB and encode as JPEG
+        let rgba_img = image::RgbaImage::from_raw(w, h, pixels)
+            .ok_or_else(|| "Failed to reconstruct image".to_string())?;
+        let rgb_img = image::DynamicImage::ImageRgba8(rgba_img).to_rgb8();
         let mut output = Vec::with_capacity(image_bytes.len());
         let mut cursor = std::io::Cursor::new(&mut output);
         rgb_img

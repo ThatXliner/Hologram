@@ -204,9 +204,12 @@
         const curveLUT = buildCurveLUT();
 
         // Precompute parameters
-        const exposureMul = Math.pow(2, exposure / 100); // ±1 stop range
-        const contrastFactor = (259 * (contrast + 255)) / (255 * (259 - contrast));
-        const satMul = 1 + saturation / 100;
+        // Exposure: additive brightness offset to match photon-rs behavior
+        const brightnessOffset = exposure * 1.28;
+        // Contrast: photon-rs style factor
+        const contrastVal = contrast * 1.28;
+        const contrastFactor = (259 * (contrastVal + 255)) / (255 * (259 - contrastVal));
+        const satLevel = Math.abs(saturation) / 100 * 0.5;
         // Temperature: shift R/B channels (warm = +R -B, cool = -R +B)
         const tempR = 1 + temperature / 200;
         const tempB = 1 - temperature / 200;
@@ -214,60 +217,68 @@
         const highMul = 1 + highlights / 200;
         const shadMul = 1 + shadows / 200;
 
+        const hasCurve = curvePoints.length >= 2 && curvePoints.some((p) => Math.abs(p.x - p.y) > 0.01);
+
         for (let i = 0; i < src.length; i += 4) {
             let r = src[i];
             let g = src[i + 1];
             let b = src[i + 2];
 
-            // 1. Exposure (multiply)
-            r *= exposureMul;
-            g *= exposureMul;
-            b *= exposureMul;
-
-            // 2. Temperature (channel gain)
-            r *= tempR;
-            b *= tempB;
-
-            // 3. Highlights / shadows (luminance-dependent)
-            const lum = 0.299 * r + 0.587 * g + 0.114 * b;
-            const lumNorm = Math.min(lum / 255, 1);
-            // Highlights affect top end, shadows affect bottom end
-            if (highlights !== 0) {
-                const weight = lumNorm * lumNorm; // quadratic ramp for bright pixels
-                const adj = 1 + (highMul - 1) * weight;
-                r *= adj;
-                g *= adj;
-                b *= adj;
-            }
-            if (shadows !== 0) {
-                const weight = (1 - lumNorm) * (1 - lumNorm);
-                const adj = 1 + (shadMul - 1) * weight;
-                r *= adj;
-                g *= adj;
-                b *= adj;
+            // 1. Exposure (additive brightness, matches photon-rs)
+            if (exposure !== 0) {
+                r += brightnessOffset;
+                g += brightnessOffset;
+                b += brightnessOffset;
             }
 
-            // 4. Contrast (around midpoint 128)
-            r = contrastFactor * (r - 128) + 128;
-            g = contrastFactor * (g - 128) + 128;
-            b = contrastFactor * (b - 128) + 128;
+            // 2. Contrast (matches photon-rs)
+            if (contrast !== 0) {
+                r = contrastFactor * (r - 128) + 128;
+                g = contrastFactor * (g - 128) + 128;
+                b = contrastFactor * (b - 128) + 128;
+            }
 
-            // 5. Saturation (mix with luminance)
+            // 3. Saturation (HSL-based approximation to match photon-rs)
             if (saturation !== 0) {
                 const gray = 0.299 * r + 0.587 * g + 0.114 * b;
-                r = gray + satMul * (r - gray);
-                g = gray + satMul * (g - gray);
-                b = gray + satMul * (b - gray);
+                const factor = saturation > 0 ? 1 + satLevel : 1 - satLevel;
+                r = gray + factor * (r - gray);
+                g = gray + factor * (g - gray);
+                b = gray + factor * (b - gray);
             }
 
-            // 6. Clamp then apply tone curve LUT
-            r = curveLUT[Math.max(0, Math.min(255, Math.round(r)))];
-            g = curveLUT[Math.max(0, Math.min(255, Math.round(g)))];
-            b = curveLUT[Math.max(0, Math.min(255, Math.round(b)))];
+            // 4. Temperature (channel gain — custom)
+            if (temperature !== 0) {
+                r *= tempR;
+                b *= tempB;
+            }
 
-            dst[i] = r;
-            dst[i + 1] = g;
-            dst[i + 2] = b;
+            // 5. Highlights / shadows (luminance-weighted — custom)
+            if (highlights !== 0 || shadows !== 0) {
+                const lum = 0.299 * r + 0.587 * g + 0.114 * b;
+                const lumNorm = Math.min(lum / 255, 1);
+                if (highlights !== 0) {
+                    const weight = lumNorm * lumNorm;
+                    const adj = 1 + (highMul - 1) * weight;
+                    r *= adj; g *= adj; b *= adj;
+                }
+                if (shadows !== 0) {
+                    const weight = (1 - lumNorm) * (1 - lumNorm);
+                    const adj = 1 + (shadMul - 1) * weight;
+                    r *= adj; g *= adj; b *= adj;
+                }
+            }
+
+            // 6. Tone curve LUT (custom)
+            if (hasCurve) {
+                dst[i] = curveLUT[Math.max(0, Math.min(255, Math.round(r)))];
+                dst[i + 1] = curveLUT[Math.max(0, Math.min(255, Math.round(g)))];
+                dst[i + 2] = curveLUT[Math.max(0, Math.min(255, Math.round(b)))];
+            } else {
+                dst[i] = Math.max(0, Math.min(255, Math.round(r)));
+                dst[i + 1] = Math.max(0, Math.min(255, Math.round(g)));
+                dst[i + 2] = Math.max(0, Math.min(255, Math.round(b)));
+            }
             dst[i + 3] = src[i + 3]; // alpha
         }
 
@@ -286,7 +297,6 @@
         );
     }
 
-    // --- Build adjustments object for Rust backend ---
     function getAdjustments() {
         return {
             exposure,

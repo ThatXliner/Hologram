@@ -535,6 +535,23 @@ async fn get_photo_stats(photos: Vec<Photo>) -> Result<PhotoStats, String> {
 }
 
 #[tauri::command]
+async fn save_edited_image(
+    file_path: String,
+    image_data: Vec<u8>,
+) -> Result<String, String> {
+    let path = Path::new(&file_path);
+
+    // Derive output path: insert "_edited" before extension
+    let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("photo");
+    let parent = path.parent().unwrap_or(Path::new("."));
+    let output_path = parent.join(format!("{}_edited.jpg", stem));
+
+    fs::write(&output_path, &image_data).map_err(|e| format!("Failed to save: {}", e))?;
+
+    Ok(output_path.to_string_lossy().to_string())
+}
+
+#[tauri::command]
 async fn load_full_resolution_image_command(file_path: String) -> Response {
     let path = Path::new(&file_path);
 
@@ -560,7 +577,8 @@ pub fn run() {
             generate_thumbnails,
             filter_photos,
             get_photo_stats,
-            load_full_resolution_image_command
+            load_full_resolution_image_command,
+            save_edited_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

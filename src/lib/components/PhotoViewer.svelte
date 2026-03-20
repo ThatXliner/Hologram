@@ -17,7 +17,9 @@
         ZoomIn,
         ZoomOut,
         Maximize2,
+        SlidersHorizontal,
     } from "@lucide/svelte";
+    import ImageEditor from "./ImageEditor.svelte";
     import { onMount, onDestroy } from "svelte";
 
     interface Props {
@@ -47,6 +49,10 @@
     let fullResolutionImage = $state<ArrayBuffer | null>(null);
     let isLoadingFullRes = $state(false);
     let loadError = $state<string | null>(null);
+
+    // Image editing state
+    let showEditor = $state(false);
+    let imageFilterStyle = $state("");
 
     let currentBlobUrl = $state<string | null>(null);
     const preloadCache = new Map<string, string>();
@@ -140,6 +146,7 @@
     function navigatePrevious() {
         if (hasPrevious) {
             viewingRaw = false;
+            imageFilterStyle = "";
             resetZoom();
             currentIndex--;
             loadCurrentPhoto();
@@ -149,6 +156,7 @@
     function navigateNext() {
         if (hasNext) {
             viewingRaw = false;
+            imageFilterStyle = "";
             resetZoom();
             currentIndex++;
             loadCurrentPhoto();
@@ -353,12 +361,28 @@
                 </button>
             {/if}
         </div>
-        <button
-            class="text-white/70 hover:text-white transition-colors p-1"
-            onclick={closeViewer}
-        >
-            <X size={20} />
-        </button>
+        <div class="flex items-center gap-2">
+            <button
+                class="text-xs px-3 py-1 rounded-full font-medium transition-colors {showEditor
+                    ? 'bg-amber-600 text-white'
+                    : 'bg-white/10 text-white/70 hover:text-white hover:bg-white/20'}"
+                onclick={(e) => {
+                    e.stopPropagation();
+                    showEditor = !showEditor;
+                }}
+            >
+                <span class="flex items-center gap-1.5">
+                    <SlidersHorizontal size={14} />
+                    Edit
+                </span>
+            </button>
+            <button
+                class="text-white/70 hover:text-white transition-colors p-1"
+                onclick={closeViewer}
+            >
+                <X size={20} />
+            </button>
+        </div>
     </div>
 
     <!-- Main Content -->
@@ -412,7 +436,7 @@
                             class="max-w-full max-h-full object-contain select-none"
                             class:opacity-50={isLoadingFullRes && !currentBlobUrl}
                             draggable="false"
-                            style="transform: scale({zoomLevel}) translate({panX / zoomLevel}px, {panY / zoomLevel}px); transform-origin: center center; transition: {isPanning ? 'none' : 'transform 0.15s ease-out'};"
+                            style="transform: scale({zoomLevel}) translate({panX / zoomLevel}px, {panY / zoomLevel}px); transform-origin: center center; transition: {isPanning ? 'none' : 'transform 0.15s ease-out'}; {imageFilterStyle ? `filter: ${imageFilterStyle};` : ''}"
                         />
                     {/key}
                 {/if}
@@ -476,10 +500,18 @@
             {/if}
         </div>
 
-        <!-- Metadata Panel -->
+        <!-- Right Panel: Editor + Metadata -->
         <div
             class="w-72 bg-amber-50 border-l border-amber-200 overflow-y-auto p-4 space-y-5 shrink-0"
         >
+            {#if showEditor}
+                <ImageEditor
+                    imageSrc={getImageSrc()}
+                    filePath={activePhoto.file_path}
+                    onFilterStyle={(style) => (imageFilterStyle = style)}
+                />
+                <div class="border-t border-amber-200 pt-4"></div>
+            {/if}
             <div class="space-y-2">
                 <h3
                     class="text-xs font-semibold text-amber-800 uppercase tracking-wide"

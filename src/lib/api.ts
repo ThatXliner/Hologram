@@ -85,6 +85,17 @@ export class HologramAPI {
     }
   }
 
+  static async saveEditedImage(
+    filePath: string,
+    imageData: number[],
+  ): Promise<string> {
+    const savedPath = await invoke<string>("save_edited_image", {
+      filePath,
+      imageData,
+    });
+    return savedPath;
+  }
+
   static async loadFullResolutionImage(filePath: string): Promise<ArrayBuffer> {
     const imageData = await invoke<ArrayBuffer | string>(
       "load_full_resolution_image_command",

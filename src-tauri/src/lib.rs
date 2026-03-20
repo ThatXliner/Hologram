@@ -102,22 +102,15 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
     let mut exif_data = ExifData::default();
 
     if let Ok(exif) = exifreader.read_from_container(&mut bufreader) {
-        // Camera make
         if let Some(field) = exif.get_field(kamadak_exif::Tag::Make, In::PRIMARY) {
             exif_data.camera_make = Some(field.display_value().to_string());
         }
-
-        // Camera model
         if let Some(field) = exif.get_field(kamadak_exif::Tag::Model, In::PRIMARY) {
             exif_data.camera_model = Some(field.display_value().to_string());
         }
-
-        // Lens model
         if let Some(field) = exif.get_field(kamadak_exif::Tag::LensModel, In::PRIMARY) {
             exif_data.lens_model = Some(field.display_value().to_string());
         }
-
-        // Focal length
         if let Some(field) = exif.get_field(kamadak_exif::Tag::FocalLength, In::PRIMARY) {
             if let kamadak_exif::Value::Rational(ref vec) = field.value {
                 if let Some(rational) = vec.first() {
@@ -125,8 +118,6 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
                 }
             }
         }
-
-        // Aperture
         if let Some(field) = exif.get_field(kamadak_exif::Tag::FNumber, In::PRIMARY) {
             if let kamadak_exif::Value::Rational(ref vec) = field.value {
                 if let Some(rational) = vec.first() {
@@ -134,8 +125,6 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
                 }
             }
         }
-
-        // ISO
         if let Some(field) = exif.get_field(kamadak_exif::Tag::PhotographicSensitivity, In::PRIMARY)
         {
             if let kamadak_exif::Value::Short(ref vec) = field.value {
@@ -144,13 +133,9 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
                 }
             }
         }
-
-        // Shutter speed
         if let Some(field) = exif.get_field(kamadak_exif::Tag::ExposureTime, In::PRIMARY) {
             exif_data.shutter_speed = Some(field.display_value().to_string());
         }
-
-        // Image dimensions
         if let Some(field) = exif.get_field(kamadak_exif::Tag::ImageWidth, In::PRIMARY) {
             if let kamadak_exif::Value::Long(ref vec) = field.value {
                 if let Some(width) = vec.first() {
@@ -165,16 +150,9 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
                 }
             }
         }
-
-        if exif_data.width.is_none() || exif_data.height.is_none() {
-            if let Ok(img) = image::open(file_path) {
-                let (width, height) = img.dimensions();
-                exif_data.width = Some(width);
-                exif_data.height = Some(height);
-            }
-        }
     }
 
+    // Skip the expensive image::open fallback for dimensions - EXIF is enough
     Ok(exif_data)
 }
 
@@ -182,7 +160,7 @@ fn generate_thumbnail(file_path: &Path) -> Result<String> {
     let img = image::open(file_path)?;
     let thumbnail = img.thumbnail(200, 200);
 
-    let mut buffer = Vec::new();
+    let mut buffer = Vec::with_capacity(8192);
     let mut cursor = std::io::Cursor::new(&mut buffer);
     thumbnail.write_to(&mut cursor, ImageFormat::Jpeg)?;
 
@@ -237,28 +215,32 @@ async fn process_photo_parallel(path: &Path) -> Option<Photo> {
 }
 
 fn load_full_resolution_image(file_path: &Path) -> Response {
-    let img = fs::read(file_path).unwrap();
-    tauri::ipc::Response::new(img)
-    // let img = image::open(file_path)?;
+    let Ok(img) = image::open(file_path) else {
+        // Fallback: send raw bytes if image crate can't decode (e.g. some RAW formats)
+        let data = fs::read(file_path).unwrap_or_default();
+        return tauri::ipc::Response::new(data);
+    };
 
-    // // Resize if image is too large (max 2048px on longest side)
-    // let (width, height) = img.dimensions();
-    // let max_dimension = width.max(height);
+    let (width, height) = img.dimensions();
+    let max_dimension = width.max(height);
 
-    // let processed_img = if max_dimension > 2048 {
-    //     let scale = 2048.0 / max_dimension as f32;
-    //     let new_width = (width as f32 * scale) as u32;
-    //     let new_height = (height as f32 * scale) as u32;
-    //     img.resize(new_width, new_height, image::imageops::FilterType::Lanczos3)
-    // } else {
-    //     img
-    // };
+    let processed_img = if max_dimension > 4096 {
+        let scale = 4096.0 / max_dimension as f32;
+        let new_width = (width as f32 * scale) as u32;
+        let new_height = (height as f32 * scale) as u32;
+        img.resize(new_width, new_height, image::imageops::FilterType::Triangle)
+    } else {
+        img
+    };
 
-    // let mut buffer = Vec::new();
-    // let mut cursor = std::io::Cursor::new(&mut buffer);
-    // processed_img.write_to(&mut cursor, ImageFormat::Jpeg)?;
+    let mut buffer = Vec::with_capacity(2 * 1024 * 1024);
+    let mut cursor = std::io::Cursor::new(&mut buffer);
+    if processed_img.write_to(&mut cursor, ImageFormat::Jpeg).is_err() {
+        let data = fs::read(file_path).unwrap_or_default();
+        return tauri::ipc::Response::new(data);
+    }
 
-    // Ok(base64::engine::general_purpose::STANDARD.encode(buffer))
+    tauri::ipc::Response::new(buffer)
 }
 
 fn pair_raw_jpeg(photos: &mut Vec<Photo>) {

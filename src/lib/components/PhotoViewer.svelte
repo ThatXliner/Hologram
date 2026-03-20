@@ -15,8 +15,7 @@
         Monitor,
         Loader2,
     } from "@lucide/svelte";
-    import { onMount } from "svelte";
-    // import { onMount } from "svelte";
+    import { onMount, onDestroy } from "svelte";
 
     interface Props {
         photos: Photo[];
@@ -24,7 +23,7 @@
 
     let { photos }: Props = $props();
 
-    let currentIndex = $state<number>(0); //(photos.findIndex((p) => p.id === photo.id));
+    let currentIndex = $state<number>(0);
     const photo = $derived(photos[currentIndex]);
     const hasPrevious = $derived(currentIndex > 0);
     const hasNext = $derived(currentIndex < photos.length - 1);
@@ -33,23 +32,41 @@
     let isLoadingFullRes = $state(false);
     let loadError = $state<string | null>(null);
 
+    // Cache blob URLs to avoid recreating them + enable cleanup
+    let currentBlobUrl = $state<string | null>(null);
+    // Preload cache: index -> blob URL
+    const preloadCache = new Map<number, string>();
+    // Track in-flight preloads to avoid duplicates
+    const preloadingSet = new Set<number>();
+
+    function revokeBlobUrl(url: string | null) {
+        if (url) URL.revokeObjectURL(url);
+    }
+
+    onDestroy(() => {
+        revokeBlobUrl(currentBlobUrl);
+        for (const url of preloadCache.values()) {
+            URL.revokeObjectURL(url);
+        }
+        preloadCache.clear();
+    });
+
     function closeViewer() {
         photoStore.setViewMode("grid");
-        // photoStore.setSelectedPhoto(undefined);
     }
 
     function navigatePrevious() {
         if (hasPrevious) {
             currentIndex--;
+            loadCurrentPhoto();
         }
-        loadFullResolutionImage(photo);
     }
 
     function navigateNext() {
         if (hasNext) {
             currentIndex++;
+            loadCurrentPhoto();
         }
-        loadFullResolutionImage(photo);
     }
 
     function handleKeydown(event: KeyboardEvent) {
@@ -90,40 +107,87 @@
     }
 
     function getImageSrc(photo: Photo): string {
-        // Use full resolution if available, otherwise fall back to thumbnail
-        if (fullResolutionImage && photo.file_type === "JPG") {
-            const uint8Array = new Uint8Array(fullResolutionImage);
-            const blob = new Blob([uint8Array], { type: "image/jpeg" });
-            const url = URL.createObjectURL(blob);
-
-            return url;
+        if (currentBlobUrl && photo.file_type === "JPG") {
+            return currentBlobUrl;
         }
         return getThumbnailSrc(photo);
     }
 
-    async function loadFullResolutionImage(photo: Photo) {
-        if (isLoadingFullRes) return;
-
-        isLoadingFullRes = true;
-        loadError = null;
-        fullResolutionImage = null;
-
+    async function loadImageForIndex(index: number): Promise<string | null> {
+        const p = photos[index];
+        if (!p) return null;
         try {
-            const imageData = await HologramAPI.loadFullResolutionImage(
-                photo.file_path,
-            );
-            fullResolutionImage = imageData;
-        } catch (error) {
-            console.error("Failed to load full resolution image:", error);
-            loadError = "Failed to load high-quality image";
-        } finally {
-            isLoadingFullRes = false;
+            const imageData = await HologramAPI.loadFullResolutionImage(p.file_path);
+            const uint8Array = new Uint8Array(imageData);
+            const blob = new Blob([uint8Array], { type: "image/jpeg" });
+            return URL.createObjectURL(blob);
+        } catch {
+            return null;
         }
     }
 
-    // Load full resolution image when photo changes
+    async function loadCurrentPhoto() {
+        // Check preload cache first
+        const cached = preloadCache.get(currentIndex);
+        if (cached) {
+            revokeBlobUrl(currentBlobUrl);
+            currentBlobUrl = cached;
+            preloadCache.delete(currentIndex);
+            fullResolutionImage = new ArrayBuffer(0); // truthy marker
+            isLoadingFullRes = false;
+            loadError = null;
+            preloadAdjacent();
+            return;
+        }
+
+        isLoadingFullRes = true;
+        loadError = null;
+
+        const blobUrl = await loadImageForIndex(currentIndex);
+        if (blobUrl) {
+            revokeBlobUrl(currentBlobUrl);
+            currentBlobUrl = blobUrl;
+            fullResolutionImage = new ArrayBuffer(0);
+        } else {
+            loadError = "Failed to load high-quality image";
+            fullResolutionImage = null;
+        }
+        isLoadingFullRes = false;
+
+        preloadAdjacent();
+    }
+
+    function preloadAdjacent() {
+        // Evict distant cache entries
+        for (const [idx, url] of preloadCache) {
+            if (Math.abs(idx - currentIndex) > 2) {
+                URL.revokeObjectURL(url);
+                preloadCache.delete(idx);
+            }
+        }
+
+        const toPreload = [currentIndex + 1, currentIndex - 1].filter(
+            (i) => i >= 0 && i < photos.length && !preloadCache.has(i) && !preloadingSet.has(i),
+        );
+
+        for (const idx of toPreload) {
+            preloadingSet.add(idx);
+            loadImageForIndex(idx).then((url) => {
+                preloadingSet.delete(idx);
+                if (url) {
+                    // Only cache if still relevant
+                    if (Math.abs(idx - currentIndex) <= 2) {
+                        preloadCache.set(idx, url);
+                    } else {
+                        URL.revokeObjectURL(url);
+                    }
+                }
+            });
+        }
+    }
+
     onMount(() => {
-        loadFullResolutionImage(photo);
+        loadCurrentPhoto();
     });
 </script>
 
@@ -165,7 +229,6 @@
             {/if}
 
             <div class="relative max-w-full max-h-full">
-                <!-- Loading overlay -->
                 {#if isLoadingFullRes}
                     <div
                         class="absolute inset-0 bg-black/20 flex items-center justify-center z-20"
@@ -179,7 +242,6 @@
                     </div>
                 {/if}
 
-                <!-- Error overlay -->
                 {#if loadError}
                     <div
                         class="absolute top-4 left-4 bg-red-500 text-white text-sm px-3 py-1 rounded-lg z-20"
@@ -188,7 +250,6 @@
                     </div>
                 {/if}
                 {#key photo.id}
-                    <!-- Main image -->
                     <img
                         src={getImageSrc(photo)}
                         alt={photo.file_name}
@@ -197,7 +258,6 @@
                     />
                 {/key}
 
-                <!-- Badges -->
                 <div class="absolute top-4 right-4 flex flex-col gap-2">
                     {#if photo.paired_with}
                         <div

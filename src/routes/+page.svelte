@@ -7,7 +7,6 @@
         isLoading,
         scanProgress,
     } from "../lib/stores/photoStore.ts";
-    import { HologramAPI } from "../lib/api.ts";
     import PhotoGrid from "../lib/components/PhotoGrid.svelte";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import PhotoViewer from "../lib/components/PhotoViewer.svelte";
@@ -23,18 +22,29 @@
         }
     });
 
-    async function handleFilter(filter: PhotoFilter) {
-        photoStore.setLoading(true);
-        try {
-            const photos = photoStore.photos || [];
-            const filtered = await HologramAPI.filterPhotos(photos, filter);
-            photoStore.setFilteredPhotos(filtered);
-            photoStore.setFilter(filter);
-        } catch (error) {
-            console.error("Failed to filter photos:", error);
-        } finally {
-            photoStore.setLoading(false);
-        }
+    function handleFilter(filter: PhotoFilter) {
+        const allPhotos = photoStore.photos || [];
+        photoStore.setFilter(filter);
+
+        // Filter locally instead of round-tripping through IPC
+        const filtered = allPhotos.filter((photo) => {
+            if (filter.camera_make && (!photo.exif.camera_make || !photo.exif.camera_make.includes(filter.camera_make))) return false;
+            if (filter.camera_model && (!photo.exif.camera_model || !photo.exif.camera_model.includes(filter.camera_model))) return false;
+            if (filter.lens_model && (!photo.exif.lens_model || !photo.exif.lens_model.includes(filter.lens_model))) return false;
+            if (filter.file_type && photo.file_type !== filter.file_type) return false;
+            if (filter.iso_range) {
+                if (!photo.exif.iso || photo.exif.iso < filter.iso_range[0] || photo.exif.iso > filter.iso_range[1]) return false;
+            }
+            if (filter.aperture_range) {
+                if (!photo.exif.aperture || photo.exif.aperture < filter.aperture_range[0] || photo.exif.aperture > filter.aperture_range[1]) return false;
+            }
+            if (filter.focal_length_range) {
+                if (!photo.exif.focal_length || photo.exif.focal_length < filter.focal_length_range[0] || photo.exif.focal_length > filter.focal_length_range[1]) return false;
+            }
+            return true;
+        });
+
+        photoStore.setFilteredPhotos(filtered);
     }
 
     function handlePhotosImported() {

@@ -35,3 +35,9 @@ anyhow = "1.0"
 rayon = "1.8"
 photon-rs = "0.3"
 futures = "0.3"
+ort = "2.0.0-rc.12"
+ndarray = "0.16"
+
+[target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
+tauri-plugin-updater = "2"
+tauri-plugin-process = "2"

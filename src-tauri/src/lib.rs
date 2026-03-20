@@ -4,17 +4,22 @@ use chrono::{DateTime, Utc};
 use exif as kamadak_exif;
 use image::ImageFormat;
 use kamadak_exif::{In, Reader};
+use ndarray::Array4;
+use ort::session::Session;
 use rayon::prelude::*;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
 use std::process::Command;
-use std::sync::Arc;
+use std::sync::{Arc, Mutex};
 use tauri::ipc::Response;
-use tauri::{AppHandle, Emitter};
+use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 use walkdir::WalkDir;
+
+/// Managed state holding the DnCNN ONNX session for AI denoising.
+pub struct DenoiseModel(Mutex<Option<Session>>);
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct Photo {
@@ -740,6 +745,95 @@ fn apply_unsharp_mask(pixels: &mut [u8], width: u32, height: u32, amount: f64) {
     }
 }
 
+/// Run DnCNN AI denoising on an image.
+/// Receives RGBA pixels, converts to YCbCr, denoises Y channel, converts back.
+/// `strength` (0-100) controls blend between original and denoised.
+#[tauri::command]
+async fn denoise_image(
+    app: AppHandle,
+    image_bytes: Vec<u8>,
+    width: u32,
+    height: u32,
+    strength: f64,
+) -> Result<Vec<u8>, String> {
+    let state = app.state::<DenoiseModel>();
+
+    let result = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let w = width as usize;
+        let h = height as usize;
+        let blend = (strength / 100.0).clamp(0.0, 1.0) as f32;
+
+        // Ensure we have RGBA data
+        if image_bytes.len() != w * h * 4 {
+            return Err(format!(
+                "Expected {} bytes ({}x{}x4), got {}",
+                w * h * 4, w, h, image_bytes.len()
+            ));
+        }
+
+        // Extract Y (luminance) channel, normalized to 0..1
+        let mut y_channel = vec![0.0f32; w * h];
+        for i in 0..w * h {
+            let r = image_bytes[i * 4] as f32 / 255.0;
+            let g = image_bytes[i * 4 + 1] as f32 / 255.0;
+            let b = image_bytes[i * 4 + 2] as f32 / 255.0;
+            y_channel[i] = 0.299 * r + 0.587 * g + 0.114 * b;
+        }
+
+        // Build input tensor [1, 1, H, W]
+        let input = Array4::from_shape_vec((1, 1, h, w), y_channel.clone())
+            .map_err(|e| format!("Shape error: {}", e))?;
+
+        // Run inference
+        let mut guard = state.0.lock().map_err(|e| format!("Lock error: {}", e))?;
+        let session = guard.as_mut().ok_or_else(|| "Denoise model not loaded".to_string())?;
+
+        let outputs = session.run(
+            ort::inputs!["input" => input.view()].map_err(|e| format!("Input error: {}", e))?
+        ).map_err(|e| format!("Inference error: {}", e))?;
+
+        let output_tensor = outputs["output"]
+            .try_extract_tensor::<f32>()
+            .map_err(|e| format!("Output error: {}", e))?;
+        let denoised_y: Vec<f32> = output_tensor.as_slice()
+            .ok_or_else(|| "Failed to extract output slice".to_string())?
+            .to_vec();
+
+        // Blend denoised Y back into RGB pixels
+        let mut result = image_bytes.clone();
+        for i in 0..w * h {
+            let r = image_bytes[i * 4] as f32 / 255.0;
+            let g = image_bytes[i * 4 + 1] as f32 / 255.0;
+            let b = image_bytes[i * 4 + 2] as f32 / 255.0;
+
+            let orig_y = y_channel[i];
+            let new_y = denoised_y[i].clamp(0.0, 1.0);
+            // Blend between original and denoised luminance
+            let blended_y = orig_y + blend * (new_y - orig_y);
+
+            // Scale RGB proportionally to match new luminance
+            if orig_y > 1e-6 {
+                let scale = blended_y / orig_y;
+                result[i * 4] = (r * scale * 255.0).round().clamp(0.0, 255.0) as u8;
+                result[i * 4 + 1] = (g * scale * 255.0).round().clamp(0.0, 255.0) as u8;
+                result[i * 4 + 2] = (b * scale * 255.0).round().clamp(0.0, 255.0) as u8;
+            } else {
+                let val = (blended_y * 255.0).round().clamp(0.0, 255.0) as u8;
+                result[i * 4] = val;
+                result[i * 4 + 1] = val;
+                result[i * 4 + 2] = val;
+            }
+            // Alpha unchanged
+        }
+
+        Ok(result)
+    })
+    .await
+    .map_err(|e| format!("Task error: {}", e))?;
+
+    result
+}
+
 #[tauri::command]
 async fn apply_edits_and_save(
     file_path: String,
@@ -848,13 +942,43 @@ pub fn run() {
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
+        .setup(|app| {
+            // Load DnCNN ONNX model for AI denoising
+            let resource_dir = app
+                .path()
+                .resource_dir()
+                .expect("failed to resolve resource dir");
+            let model_path = resource_dir.join("resources/dncnn_gray_blind.onnx");
+
+            let session = if model_path.exists() {
+                match Session::builder()
+                    .and_then(|b| b.commit_from_file(&model_path))
+                {
+                    Ok(s) => {
+                        eprintln!("DnCNN model loaded from {:?}", model_path);
+                        Some(s)
+                    }
+                    Err(e) => {
+                        eprintln!("Failed to load DnCNN model: {}", e);
+                        None
+                    }
+                }
+            } else {
+                eprintln!("DnCNN model not found at {:?}", model_path);
+                None
+            };
+
+            app.manage(DenoiseModel(Mutex::new(session)));
+            Ok(())
+        })
         .invoke_handler(tauri::generate_handler![
             scan_folder_fast,
             generate_thumbnails,
             filter_photos,
             get_photo_stats,
             load_full_resolution_image_command,
-            apply_edits_and_save
+            apply_edits_and_save,
+            denoise_image
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

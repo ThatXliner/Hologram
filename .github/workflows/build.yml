@@ -1,10 +1,17 @@
 name: Build
+
 on:
   push:
+    branches: [main]
+    tags:
+      - "v*"
+  pull_request:
   workflow_dispatch:
 
 jobs:
   build:
+    # Only run CI builds on non-tag pushes and PRs
+    if: "!startsWith(github.ref, 'refs/tags/v')"
     strategy:
       matrix:
         os: [ubuntu-latest, macos-latest, windows-latest]
@@ -17,11 +24,10 @@ jobs:
         uses: actions/checkout@v4
 
       - name: Setup Rust
-        uses: actions-rs/toolchain@v1
-        with:
-          toolchain: stable
+        uses: dtolnay/rust-toolchain@stable
 
       - uses: oven-sh/setup-bun@v2
+
       - name: Install dependencies for Tauri (ubuntu only)
         if: matrix.os == 'ubuntu-latest'
         run: |
@@ -47,20 +53,102 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ${{ runner.os }} ${{ runner.arch }} artifacts
-          # No .app because it's pretty big and .dmg is nicer
           path: |
             src-tauri/target/release/bundle/*/*.dmg
             src-tauri/target/release/bundle/*/*.AppImage
             src-tauri/target/release/bundle/*/*.deb
             src-tauri/target/release/bundle/*/*.msi
-      # - name: Build the app
-      #   uses: tauri-apps/tauri-action@v0
-      #   working-directory: src/frontend
-      #   env:
-      #     GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-      #   with:
-      #     tagName: v__VERSION__ # tauri-action replaces \_\_VERSION\_\_ with the app version
-      #     releaseName: 'v__VERSION__'
-      #     releaseBody: 'See the assets to download this version and install.'
-      #     releaseDraft: true
-      #     prerelease: false
+
+  release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    permissions:
+      contents: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - platform: "macos-latest"
+            args: "--target aarch64-apple-darwin"
+          - platform: "ubuntu-latest"
+            args: ""
+          - platform: "windows-latest"
+            args: ""
+
+    runs-on: ${{ matrix.platform }}
+    env:
+      APPLE_ID: ${{ secrets.APPLE_ID }}
+      APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+    steps:
+      - name: Checkout repository
+        uses: actions/checkout@v4
+
+      - name: Install dependencies (Ubuntu only)
+        if: matrix.platform == 'ubuntu-latest'
+        uses: awalsh128/cache-apt-pkgs-action@latest
+        with:
+          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          version: 1.0
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          cache: true
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+
+      - name: Rust cache
+        uses: swatinem/rust-cache@v2
+        with:
+          workspaces: "src-tauri -> target"
+          cache-on-failure: true
+
+      - name: Install libvips (macOS only)
+        if: matrix.platform == 'macos-latest'
+        run: brew install vips
+
+      - name: Install frontend dependencies
+        run: bun install
+
+      - name: Import Apple Developer Certificate
+        if: matrix.platform == 'macos-latest'
+        env:
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          KEYCHAIN_PASSWORD: ${{ secrets.KEYCHAIN_PASSWORD }}
+        run: |
+          echo $APPLE_CERTIFICATE | base64 --decode > certificate.p12
+          security create-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security default-keychain -s build.keychain
+          security unlock-keychain -p "$KEYCHAIN_PASSWORD" build.keychain
+          security set-keychain-settings -t 3600 -u build.keychain
+          security import certificate.p12 -k build.keychain -P "$APPLE_CERTIFICATE_PASSWORD" -T /usr/bin/codesign
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$KEYCHAIN_PASSWORD" build.keychain
+          security find-identity -v -p codesigning build.keychain
+
+      - name: Verify Certificate
+        if: matrix.platform == 'macos-latest'
+        run: |
+          CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
+          CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')
+          echo "CERT_ID=$CERT_ID" >> $GITHUB_ENV
+          echo "Certificate imported."
+
+      - name: Build the app
+        uses: tauri-apps/tauri-action@v0
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
+          APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
+          APPLE_SIGNING_IDENTITY: ${{ env.CERT_ID }}
+          APPLE_TEAM_ID: ${{ secrets.APPLE_TEAM_ID }}
+          TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
+          TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
+        with:
+          tagName: ${{ github.ref_name }}
+          releaseName: "Hologram v__VERSION__"
+          releaseBody: "See the assets to download and install this version."
+          releaseDraft: false
+          prerelease: false
+          args: ${{ matrix.args }}

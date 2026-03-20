@@ -21,15 +21,31 @@
       "csp": null
     }
   },
+  "plugins": {
+    "updater": {
+      "pubkey": "dW50cnVzdGVkIGNvbW1lbnQ6IG1pbmlzaWduIHB1YmxpYyBrZXk6IEUxQTMyODYxQzYyQzA5RgpSV1Nmd0dJY2hqSWFEdElrSURNSkJ0QTVQdk4vQUlkQkhSeUs4WXhtTmN3YXpmeUZYNW9IWng2TAo=",
+      "endpoints": [
+        "https://github.com/ThatXliner/Hologram/releases/latest/download/latest.json"
+      ]
+    }
+  },
   "bundle": {
     "active": true,
     "targets": "all",
+    "resources": [
+      "resources/dncnn_gray_blind.onnx",
+      "resources/dncnn_gray_blind.onnx.data"
+    ],
     "icon": [
       "icons/32x32.png",
       "icons/128x128.png",
       "icons/128x128@2x.png",
       "icons/icon.icns",
       "icons/icon.ico"
-    ]
+    ],
+    "macOS": {
+      "signingIdentity": "468EDC933124742F56059262D0D9CA04CF9576DB"
+    },
+    "createUpdaterArtifacts": true
   }
 }

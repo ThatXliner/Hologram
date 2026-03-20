@@ -29,6 +29,7 @@ export interface ExifData {
 }
 
 export interface PhotoFilter {
+  search?: string; // text search across filename + all metadata
   camera_make?: string;
   camera_model?: string;
   lens_model?: string;
@@ -37,6 +38,10 @@ export interface PhotoFilter {
   iso_range?: [number, number];
   date_range?: [string, string];
   file_type?: string;
+  shutter_speed?: string;
+  exposure_mode?: string;
+  flash?: string;
+  white_balance?: string;
 }
 
 export interface PhotoStats {

@@ -23,6 +23,17 @@
         if ($filteredPhotos.length > 0) {
             showWelcome = false;
         }
+
+        // Expose store for screenshot automation (dev only)
+        if (import.meta.env.DEV) {
+            (window as any).__photoStore__ = photoStore;
+            window.addEventListener("__hologram_seed__", ((e: CustomEvent) => {
+                const { photos: seedPhotos, stats: seedStats } = e.detail;
+                photoStore.setPhotos(seedPhotos);
+                photoStore.setStats(seedStats);
+                showWelcome = false;
+            }) as EventListener);
+        }
     });
 
     function handleSidebarFilter(filter: PhotoFilter) {

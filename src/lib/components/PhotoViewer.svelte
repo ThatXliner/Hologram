@@ -52,7 +52,7 @@
 
     // Image editing state
     let showEditor = $state(false);
-    let imageFilterStyle = $state("");
+    let editedPreviewUrl = $state<string | null>(null);
 
     let currentBlobUrl = $state<string | null>(null);
     const preloadCache = new Map<string, string>();
@@ -146,7 +146,7 @@
     function navigatePrevious() {
         if (hasPrevious) {
             viewingRaw = false;
-            imageFilterStyle = "";
+            if (editedPreviewUrl) { URL.revokeObjectURL(editedPreviewUrl); editedPreviewUrl = null; }
             resetZoom();
             currentIndex--;
             loadCurrentPhoto();
@@ -156,7 +156,7 @@
     function navigateNext() {
         if (hasNext) {
             viewingRaw = false;
-            imageFilterStyle = "";
+            if (editedPreviewUrl) { URL.revokeObjectURL(editedPreviewUrl); editedPreviewUrl = null; }
             resetZoom();
             currentIndex++;
             loadCurrentPhoto();
@@ -224,11 +224,18 @@
         return "";
     }
 
-    function getImageSrc(): string {
+    function getOriginalSrc(): string {
         if (currentBlobUrl) {
             return currentBlobUrl;
         }
         return getThumbnailSrc(activePhoto);
+    }
+
+    function getImageSrc(): string {
+        if (showEditor && editedPreviewUrl) {
+            return editedPreviewUrl;
+        }
+        return getOriginalSrc();
     }
 
     async function loadImageForPhoto(
@@ -436,7 +443,7 @@
                             class="max-w-full max-h-full object-contain select-none"
                             class:opacity-50={isLoadingFullRes && !currentBlobUrl}
                             draggable="false"
-                            style="transform: scale({zoomLevel}) translate({panX / zoomLevel}px, {panY / zoomLevel}px); transform-origin: center center; transition: {isPanning ? 'none' : 'transform 0.15s ease-out'}; {imageFilterStyle ? `filter: ${imageFilterStyle};` : ''}"
+                            style="transform: scale({zoomLevel}) translate({panX / zoomLevel}px, {panY / zoomLevel}px); transform-origin: center center; transition: {isPanning ? 'none' : 'transform 0.15s ease-out'};"
                         />
                     {/key}
                 {/if}
@@ -506,9 +513,12 @@
         >
             {#if showEditor}
                 <ImageEditor
-                    imageSrc={getImageSrc()}
+                    imageSrc={getOriginalSrc()}
                     filePath={activePhoto.file_path}
-                    onFilterStyle={(style) => (imageFilterStyle = style)}
+                    onPreview={(url) => {
+                        if (editedPreviewUrl) URL.revokeObjectURL(editedPreviewUrl);
+                        editedPreviewUrl = url;
+                    }}
                 />
                 <div class="border-t border-amber-200 pt-4"></div>
             {/if}

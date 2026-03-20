@@ -85,13 +85,21 @@ export class HologramAPI {
     }
   }
 
-  static async saveEditedImage(
+  static async applyEditsAndSave(
     filePath: string,
-    imageData: number[],
+    adjustments: {
+      exposure: number;
+      contrast: number;
+      saturation: number;
+      temperature: number;
+      highlights: number;
+      shadows: number;
+      curve_points: [number, number][];
+    },
   ): Promise<string> {
-    const savedPath = await invoke<string>("save_edited_image", {
+    const savedPath = await invoke<string>("apply_edits_and_save", {
       filePath,
-      imageData,
+      adjustments,
     });
     return savedPath;
   }

@@ -534,19 +534,207 @@ async fn get_photo_stats(photos: Vec<Photo>) -> Result<PhotoStats, String> {
     Ok(compute_stats(&photos))
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ImageAdjustments {
+    pub exposure: f64,     // -100 to 100
+    pub contrast: f64,     // -100 to 100
+    pub saturation: f64,   // -100 to 100
+    pub temperature: f64,  // -100 to 100
+    pub highlights: f64,   // -100 to 100
+    pub shadows: f64,      // -100 to 100
+    pub curve_points: Vec<(f64, f64)>, // (x, y) in 0-255 space
+}
+
+fn build_curve_lut(points: &[(f64, f64)]) -> [u8; 256] {
+    let mut lut = [0u8; 256];
+    let mut pts: Vec<(f64, f64)> = points.to_vec();
+    pts.sort_by(|a, b| a.0.partial_cmp(&b.0).unwrap_or(std::cmp::Ordering::Equal));
+
+    if pts.len() < 2 {
+        for i in 0..256 {
+            lut[i] = i as u8;
+        }
+        return lut;
+    }
+
+    let n = pts.len();
+    let xs: Vec<f64> = pts.iter().map(|p| p.0).collect();
+    let ys: Vec<f64> = pts.iter().map(|p| p.1).collect();
+
+    // Compute finite differences
+    let mut deltas: Vec<f64> = Vec::with_capacity(n - 1);
+    for i in 0..n - 1 {
+        let dx = xs[i + 1] - xs[i];
+        deltas.push(if dx.abs() < 1e-6 { 0.0 } else { (ys[i + 1] - ys[i]) / dx });
+    }
+
+    // Initial tangents
+    let mut m = vec![0.0f64; n];
+    m[0] = deltas[0];
+    m[n - 1] = deltas[n - 2];
+    for i in 1..n - 1 {
+        if deltas[i - 1] * deltas[i] <= 0.0 {
+            m[i] = 0.0;
+        } else {
+            m[i] = (deltas[i - 1] + deltas[i]) / 2.0;
+        }
+    }
+
+    // Fritsch-Carlson monotonicity
+    for i in 0..n - 1 {
+        if deltas[i].abs() < 1e-6 {
+            m[i] = 0.0;
+            m[i + 1] = 0.0;
+        } else {
+            let alpha = m[i] / deltas[i];
+            let beta = m[i + 1] / deltas[i];
+            let tau = alpha * alpha + beta * beta;
+            if tau > 9.0 {
+                let t = 3.0 / tau.sqrt();
+                m[i] = t * alpha * deltas[i];
+                m[i + 1] = t * beta * deltas[i];
+            }
+        }
+    }
+
+    for x in 0..256 {
+        let xf = x as f64;
+        if xf <= xs[0] {
+            lut[x] = ys[0].round().clamp(0.0, 255.0) as u8;
+            continue;
+        }
+        if xf >= xs[n - 1] {
+            lut[x] = ys[n - 1].round().clamp(0.0, 255.0) as u8;
+            continue;
+        }
+
+        let mut seg = 0;
+        for i in 0..n - 1 {
+            if xf >= xs[i] && xf < xs[i + 1] {
+                seg = i;
+                break;
+            }
+        }
+
+        let h = (xs[seg + 1] - xs[seg]).max(1.0);
+        let t = (xf - xs[seg]) / h;
+        let t2 = t * t;
+        let t3 = t2 * t;
+
+        let val = (2.0 * t3 - 3.0 * t2 + 1.0) * ys[seg]
+            + (t3 - 2.0 * t2 + t) * h * m[seg]
+            + (-2.0 * t3 + 3.0 * t2) * ys[seg + 1]
+            + (t3 - t2) * h * m[seg + 1];
+
+        lut[x] = val.round().clamp(0.0, 255.0) as u8;
+    }
+
+    lut
+}
+
+fn apply_adjustments_to_pixels(pixels: &mut [u8], adj: &ImageAdjustments) {
+    let curve_lut = build_curve_lut(&adj.curve_points);
+    let exposure_mul = 2.0_f64.powf(adj.exposure / 100.0);
+    let contrast_factor = (259.0 * (adj.contrast + 255.0)) / (255.0 * (259.0 - adj.contrast));
+    let sat_mul = 1.0 + adj.saturation / 100.0;
+    let temp_r = 1.0 + adj.temperature / 200.0;
+    let temp_b = 1.0 - adj.temperature / 200.0;
+    let high_mul = 1.0 + adj.highlights / 200.0;
+    let shad_mul = 1.0 + adj.shadows / 200.0;
+
+    for chunk in pixels.chunks_exact_mut(4) {
+        let mut r = chunk[0] as f64;
+        let mut g = chunk[1] as f64;
+        let mut b = chunk[2] as f64;
+
+        // Exposure
+        r *= exposure_mul;
+        g *= exposure_mul;
+        b *= exposure_mul;
+
+        // Temperature
+        r *= temp_r;
+        b *= temp_b;
+
+        // Highlights / shadows
+        let lum = 0.299 * r + 0.587 * g + 0.114 * b;
+        let lum_norm = (lum / 255.0).min(1.0);
+        if adj.highlights.abs() > 0.01 {
+            let w = lum_norm * lum_norm;
+            let a = 1.0 + (high_mul - 1.0) * w;
+            r *= a; g *= a; b *= a;
+        }
+        if adj.shadows.abs() > 0.01 {
+            let w = (1.0 - lum_norm) * (1.0 - lum_norm);
+            let a = 1.0 + (shad_mul - 1.0) * w;
+            r *= a; g *= a; b *= a;
+        }
+
+        // Contrast
+        r = contrast_factor * (r - 128.0) + 128.0;
+        g = contrast_factor * (g - 128.0) + 128.0;
+        b = contrast_factor * (b - 128.0) + 128.0;
+
+        // Saturation
+        if adj.saturation.abs() > 0.01 {
+            let gray = 0.299 * r + 0.587 * g + 0.114 * b;
+            r = gray + sat_mul * (r - gray);
+            g = gray + sat_mul * (g - gray);
+            b = gray + sat_mul * (b - gray);
+        }
+
+        // Tone curve
+        chunk[0] = curve_lut[r.round().clamp(0.0, 255.0) as usize];
+        chunk[1] = curve_lut[g.round().clamp(0.0, 255.0) as usize];
+        chunk[2] = curve_lut[b.round().clamp(0.0, 255.0) as usize];
+    }
+}
+
 #[tauri::command]
-async fn save_edited_image(
+async fn apply_edits_and_save(
     file_path: String,
-    image_data: Vec<u8>,
+    adjustments: ImageAdjustments,
 ) -> Result<String, String> {
     let path = Path::new(&file_path);
+    if !path.exists() {
+        return Err("File does not exist".to_string());
+    }
 
-    // Derive output path: insert "_edited" before extension
+    // Load the full-res image (handle RAW via sips conversion)
+    let image_bytes = if is_raw_file(path) {
+        convert_raw_with_sips(path, 8192).map_err(|e| format!("RAW conversion failed: {}", e))?
+    } else {
+        fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?
+    };
+
+    let adj = adjustments;
+
+    let output_bytes = tokio::task::spawn_blocking(move || -> Result<Vec<u8>, String> {
+        let mut img = image::load_from_memory(&image_bytes)
+            .map_err(|e| format!("Failed to decode image: {}", e))?
+            .to_rgba8();
+
+        apply_adjustments_to_pixels(img.as_mut(), &adj);
+
+        // Encode as JPEG
+        let rgb_img = image::DynamicImage::ImageRgba8(img).to_rgb8();
+        let mut output = Vec::with_capacity(image_bytes.len());
+        let mut cursor = std::io::Cursor::new(&mut output);
+        rgb_img
+            .write_to(&mut cursor, ImageFormat::Jpeg)
+            .map_err(|e| format!("Failed to encode JPEG: {}", e))?;
+        Ok(output)
+    })
+    .await
+    .map_err(|e| format!("Processing failed: {}", e))?
+    .map_err(|e| e)?;
+
+    // Write output file
     let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("photo");
     let parent = path.parent().unwrap_or(Path::new("."));
     let output_path = parent.join(format!("{}_edited.jpg", stem));
 
-    fs::write(&output_path, &image_data).map_err(|e| format!("Failed to save: {}", e))?;
+    fs::write(&output_path, &output_bytes).map_err(|e| format!("Failed to save: {}", e))?;
 
     Ok(output_path.to_string_lossy().to_string())
 }
@@ -578,7 +766,7 @@ pub fn run() {
             filter_photos,
             get_photo_stats,
             load_full_resolution_image_command,
-            save_edited_image
+            apply_edits_and_save
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

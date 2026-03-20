@@ -2,7 +2,6 @@ use anyhow::Result;
 use base64::Engine;
 use chrono::{DateTime, Utc};
 use exif as kamadak_exif;
-use futures::future::join_all;
 use image::GenericImageView;
 use image::ImageFormat;
 use kamadak_exif::{In, Reader};
@@ -11,7 +10,6 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::Arc;
 use tauri::ipc::Response;
 use tauri::{AppHandle, Emitter};
@@ -68,6 +66,28 @@ pub struct ScanProgress {
     pub total: usize,
     pub percentage: f64,
     pub current_file: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ThumbnailReady {
+    pub id: String,
+    pub thumbnail: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ScanResult {
+    pub photos: Vec<Photo>,
+    pub stats: PhotoStats,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PhotoStats {
+    pub total_photos: usize,
+    pub raw_count: usize,
+    pub jpeg_count: usize,
+    pub paired_count: usize,
+    pub cameras: HashMap<String, usize>,
+    pub lenses: HashMap<String, usize>,
 }
 
 static SUPPORTED_EXTENSIONS: &[&str] = &[
@@ -152,7 +172,6 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
         }
     }
 
-    // Skip the expensive image::open fallback for dimensions - EXIF is enough
     Ok(exif_data)
 }
 
@@ -167,7 +186,9 @@ fn generate_thumbnail(file_path: &Path) -> Result<String> {
     Ok(base64::engine::general_purpose::STANDARD.encode(buffer))
 }
 
-async fn process_photo_parallel(path: &Path) -> Option<Photo> {
+/// Phase 1: Collect metadata + EXIF only (no image decoding). This is fast
+/// because it only reads file headers, not pixel data.
+fn collect_photo_metadata(path: &Path) -> Option<Photo> {
     if !is_supported_file(path) {
         return None;
     }
@@ -191,14 +212,7 @@ async fn process_photo_parallel(path: &Path) -> Option<Photo> {
         .unwrap_or("unknown")
         .to_uppercase();
 
-    let path_clone = path.to_path_buf();
-    let (exif_data, thumbnail) = tokio::task::spawn_blocking(move || {
-        let exif = extract_exif_data(&path_clone).unwrap_or_default();
-        let thumb = generate_thumbnail(&path_clone).ok();
-        (exif, thumb)
-    })
-    .await
-    .ok()?;
+    let exif_data = extract_exif_data(path).unwrap_or_default();
 
     Some(Photo {
         id: Uuid::new_v4().to_string(),
@@ -206,7 +220,7 @@ async fn process_photo_parallel(path: &Path) -> Option<Photo> {
         file_name,
         file_size,
         file_type,
-        thumbnail,
+        thumbnail: None, // Thumbnails generated in phase 2
         exif: exif_data,
         created_at: Utc::now(),
         modified_at,
@@ -214,39 +228,41 @@ async fn process_photo_parallel(path: &Path) -> Option<Photo> {
     })
 }
 
-fn load_full_resolution_image(file_path: &Path) -> Response {
-    let Ok(img) = image::open(file_path) else {
-        // Fallback: send raw bytes if image crate can't decode (e.g. some RAW formats)
-        let data = fs::read(file_path).unwrap_or_default();
-        return tauri::ipc::Response::new(data);
-    };
+fn compute_stats(photos: &[Photo]) -> PhotoStats {
+    let mut raw_count = 0;
+    let mut paired_count = 0;
+    let mut cameras: HashMap<String, usize> = HashMap::new();
+    let mut lenses: HashMap<String, usize> = HashMap::new();
 
-    let (width, height) = img.dimensions();
-    let max_dimension = width.max(height);
-
-    let processed_img = if max_dimension > 4096 {
-        let scale = 4096.0 / max_dimension as f32;
-        let new_width = (width as f32 * scale) as u32;
-        let new_height = (height as f32 * scale) as u32;
-        img.resize(new_width, new_height, image::imageops::FilterType::Triangle)
-    } else {
-        img
-    };
-
-    let mut buffer = Vec::with_capacity(2 * 1024 * 1024);
-    let mut cursor = std::io::Cursor::new(&mut buffer);
-    if processed_img.write_to(&mut cursor, ImageFormat::Jpeg).is_err() {
-        let data = fs::read(file_path).unwrap_or_default();
-        return tauri::ipc::Response::new(data);
+    for photo in photos {
+        if is_raw_file(Path::new(&photo.file_path)) {
+            raw_count += 1;
+        }
+        if photo.paired_with.is_some() {
+            paired_count += 1;
+        }
+        if let Some(ref camera) = photo.exif.camera_model {
+            *cameras.entry(camera.clone()).or_insert(0) += 1;
+        }
+        if let Some(ref lens) = photo.exif.lens_model {
+            *lenses.entry(lens.clone()).or_insert(0) += 1;
+        }
     }
 
-    tauri::ipc::Response::new(buffer)
+    let total_photos = photos.len();
+    PhotoStats {
+        total_photos,
+        raw_count,
+        jpeg_count: total_photos - raw_count,
+        paired_count,
+        cameras,
+        lenses,
+    }
 }
 
 fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
     let mut base_names: HashMap<String, Vec<usize>> = HashMap::new();
 
-    // Group photos by base filename (without extension)
     for (i, photo) in photos.iter().enumerate() {
         let path = Path::new(&photo.file_path);
         if let Some(stem) = path.file_stem() {
@@ -259,7 +275,6 @@ fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
         }
     }
 
-    // Pair RAW and JPEG files with the same base name
     for indices in base_names.values() {
         if indices.len() > 1 {
             let mut raw_idx = None;
@@ -285,39 +300,41 @@ fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
     }
 }
 
-#[tauri::command]
-async fn scan_folder(folder_path: String) -> Result<Vec<Photo>, String> {
-    let paths: Vec<std::path::PathBuf> = WalkDir::new(&folder_path)
-        .follow_links(true)
-        .into_iter()
-        .filter_map(|e| e.ok())
-        .map(|entry| entry.path().to_path_buf())
-        .filter(|path| is_supported_file(path))
-        .collect();
+fn load_full_resolution_image(file_path: &Path) -> Response {
+    let Ok(img) = image::open(file_path) else {
+        let data = fs::read(file_path).unwrap_or_default();
+        return tauri::ipc::Response::new(data);
+    };
 
-    const CHUNK_SIZE: usize = 50;
-    let mut all_photos = Vec::new();
+    let (width, height) = img.dimensions();
+    let max_dimension = width.max(height);
 
-    for chunk in paths.chunks(CHUNK_SIZE) {
-        let chunk_futures: Vec<_> = chunk
-            .iter()
-            .map(|path| process_photo_parallel(path))
-            .collect();
+    let processed_img = if max_dimension > 4096 {
+        let scale = 4096.0 / max_dimension as f32;
+        let new_width = (width as f32 * scale) as u32;
+        let new_height = (height as f32 * scale) as u32;
+        img.resize(new_width, new_height, image::imageops::FilterType::Triangle)
+    } else {
+        img
+    };
 
-        let chunk_results = join_all(chunk_futures).await;
-        let chunk_photos: Vec<Photo> = chunk_results.into_iter().filter_map(|p| p).collect();
-        all_photos.extend(chunk_photos);
+    let mut buffer = Vec::with_capacity(2 * 1024 * 1024);
+    let mut cursor = std::io::Cursor::new(&mut buffer);
+    if processed_img
+        .write_to(&mut cursor, ImageFormat::Jpeg)
+        .is_err()
+    {
+        let data = fs::read(file_path).unwrap_or_default();
+        return tauri::ipc::Response::new(data);
     }
 
-    pair_raw_jpeg(&mut all_photos);
-    Ok(all_photos)
+    tauri::ipc::Response::new(buffer)
 }
 
+/// Phase 1: Fast scan — metadata + EXIF only, no image decoding.
+/// Returns photos (with thumbnail: None) and computed stats.
 #[tauri::command]
-async fn scan_folder_with_progress(
-    folder_path: String,
-    app: AppHandle,
-) -> Result<Vec<Photo>, String> {
+async fn scan_folder_fast(folder_path: String, app: AppHandle) -> Result<ScanResult, String> {
     let paths: Vec<std::path::PathBuf> = WalkDir::new(&folder_path)
         .follow_links(true)
         .into_iter()
@@ -327,64 +344,57 @@ async fn scan_folder_with_progress(
         .collect();
 
     let total_files = paths.len();
-    let processed_count = Arc::new(AtomicUsize::new(0));
 
-    const CHUNK_SIZE: usize = 50;
-    let mut all_photos = Vec::new();
+    // Use rayon for parallel EXIF extraction (CPU-bound, no image decoding)
+    let mut photos: Vec<Photo> = tokio::task::spawn_blocking(move || {
+        paths
+            .par_iter()
+            .filter_map(|path| collect_photo_metadata(path))
+            .collect()
+    })
+    .await
+    .map_err(|e| format!("Scan failed: {}", e))?;
 
-    for chunk in paths.chunks(CHUNK_SIZE) {
-        let chunk_futures: Vec<_> = chunk
-            .iter()
-            .map(|path| {
-                let processed_count = Arc::clone(&processed_count);
-                let app = app.clone();
-                let path = path.clone();
-                async move {
-                    let result = process_photo_parallel(&path).await;
+    pair_raw_jpeg(&mut photos);
+    let stats = compute_stats(&photos);
 
-                    let current = processed_count.fetch_add(1, Ordering::SeqCst) + 1;
-                    let percentage = (current as f64 / total_files as f64) * 100.0;
-
-                    let progress = ScanProgress {
-                        current,
-                        total: total_files,
-                        percentage,
-                        current_file: Some(
-                            path.file_name()
-                                .and_then(|n| n.to_str())
-                                .unwrap_or("unknown")
-                                .to_string(),
-                        ),
-                    };
-
-                    if let Err(e) = app.emit("scan-progress", &progress) {
-                        eprintln!("Failed to emit progress: {}", e);
-                    }
-
-                    result
-                }
-            })
-            .collect();
-
-        let chunk_results = join_all(chunk_futures).await;
-        let chunk_photos: Vec<Photo> = chunk_results.into_iter().filter_map(|p| p).collect();
-        all_photos.extend(chunk_photos);
-    }
-
-    pair_raw_jpeg(&mut all_photos);
-
-    let final_progress = ScanProgress {
+    let _ = app.emit("scan-complete", &ScanProgress {
         current: total_files,
         total: total_files,
         percentage: 100.0,
         current_file: None,
-    };
+    });
 
-    if let Err(e) = app.emit("scan-complete", &final_progress) {
-        eprintln!("Failed to emit completion: {}", e);
-    }
+    Ok(ScanResult { photos, stats })
+}
 
-    Ok(all_photos)
+/// Phase 2: Generate thumbnails in background, streaming each one to the
+/// frontend as it completes via "thumbnail-ready" events.
+#[tauri::command]
+async fn generate_thumbnails(photos: Vec<Photo>, app: AppHandle) -> Result<(), String> {
+    let items: Vec<(String, String)> = photos
+        .into_iter()
+        .map(|p| (p.id, p.file_path))
+        .collect();
+
+    let app = Arc::new(app);
+
+    tokio::task::spawn_blocking(move || {
+        items.par_iter().for_each(|(id, file_path)| {
+            let path = Path::new(file_path);
+            if let Ok(thumb) = generate_thumbnail(path) {
+                let event = ThumbnailReady {
+                    id: id.clone(),
+                    thumbnail: thumb,
+                };
+                let _ = app.emit("thumbnail-ready", &event);
+            }
+        });
+    })
+    .await
+    .map_err(|e| format!("Thumbnail generation failed: {}", e))?;
+
+    Ok(())
 }
 
 #[tauri::command]
@@ -396,7 +406,6 @@ async fn filter_photos(photos: Vec<Photo>, filter: PhotoFilter) -> Result<Vec<Ph
         .filter(|photo| {
             let filter = Arc::clone(&filter);
 
-            // Camera make filter
             if let Some(ref make) = filter.camera_make {
                 if photo
                     .exif
@@ -407,8 +416,6 @@ async fn filter_photos(photos: Vec<Photo>, filter: PhotoFilter) -> Result<Vec<Ph
                     return false;
                 }
             }
-
-            // Camera model filter
             if let Some(ref model) = filter.camera_model {
                 if photo
                     .exif
@@ -419,8 +426,6 @@ async fn filter_photos(photos: Vec<Photo>, filter: PhotoFilter) -> Result<Vec<Ph
                     return false;
                 }
             }
-
-            // Lens model filter
             if let Some(ref lens) = filter.lens_model {
                 if photo
                     .exif
@@ -431,8 +436,6 @@ async fn filter_photos(photos: Vec<Photo>, filter: PhotoFilter) -> Result<Vec<Ph
                     return false;
                 }
             }
-
-            // Focal length range filter
             if let Some((min_fl, max_fl)) = filter.focal_length_range {
                 if let Some(fl) = photo.exif.focal_length {
                     if fl < min_fl || fl > max_fl {
@@ -442,8 +445,6 @@ async fn filter_photos(photos: Vec<Photo>, filter: PhotoFilter) -> Result<Vec<Ph
                     return false;
                 }
             }
-
-            // Aperture range filter
             if let Some((min_ap, max_ap)) = filter.aperture_range {
                 if let Some(ap) = photo.exif.aperture {
                     if ap < min_ap || ap > max_ap {
@@ -453,8 +454,6 @@ async fn filter_photos(photos: Vec<Photo>, filter: PhotoFilter) -> Result<Vec<Ph
                     return false;
                 }
             }
-
-            // ISO range filter
             if let Some((min_iso, max_iso)) = filter.iso_range {
                 if let Some(iso) = photo.exif.iso {
                     if iso < min_iso || iso > max_iso {
@@ -464,8 +463,6 @@ async fn filter_photos(photos: Vec<Photo>, filter: PhotoFilter) -> Result<Vec<Ph
                     return false;
                 }
             }
-
-            // File type filter
             if let Some(ref file_type) = filter.file_type {
                 if photo.file_type != *file_type {
                     return false;
@@ -480,52 +477,8 @@ async fn filter_photos(photos: Vec<Photo>, filter: PhotoFilter) -> Result<Vec<Ph
 }
 
 #[tauri::command]
-async fn get_photo_stats(photos: Vec<Photo>) -> Result<HashMap<String, serde_json::Value>, String> {
-    let mut stats = HashMap::new();
-
-    let total_photos = photos.len();
-    let raw_count = photos
-        .iter()
-        .filter(|p| is_raw_file(Path::new(&p.file_path)))
-        .count();
-    let jpeg_count = total_photos - raw_count;
-    let paired_count = photos.iter().filter(|p| p.paired_with.is_some()).count();
-
-    let mut cameras = HashMap::new();
-    let mut lenses = HashMap::new();
-
-    for photo in &photos {
-        if let Some(ref camera) = photo.exif.camera_model {
-            *cameras.entry(camera.clone()).or_insert(0) += 1;
-        }
-        if let Some(ref lens) = photo.exif.lens_model {
-            *lenses.entry(lens.clone()).or_insert(0) += 1;
-        }
-    }
-
-    stats.insert(
-        "total_photos".to_string(),
-        serde_json::Value::Number(total_photos.into()),
-    );
-    stats.insert(
-        "raw_count".to_string(),
-        serde_json::Value::Number(raw_count.into()),
-    );
-    stats.insert(
-        "jpeg_count".to_string(),
-        serde_json::Value::Number(jpeg_count.into()),
-    );
-    stats.insert(
-        "paired_count".to_string(),
-        serde_json::Value::Number(paired_count.into()),
-    );
-    stats.insert(
-        "cameras".to_string(),
-        serde_json::to_value(cameras).unwrap(),
-    );
-    stats.insert("lenses".to_string(), serde_json::to_value(lenses).unwrap());
-
-    Ok(stats)
+async fn get_photo_stats(photos: Vec<Photo>) -> Result<PhotoStats, String> {
+    Ok(compute_stats(&photos))
 }
 
 #[tauri::command]
@@ -541,7 +494,6 @@ async fn load_full_resolution_image_command(file_path: String) -> Response {
     }
 
     load_full_resolution_image(path)
-    // load_full_resolution_image(path).map_err(|e| format!("Failed to load image: {}", e))
 }
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
@@ -551,8 +503,8 @@ pub fn run() {
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .invoke_handler(tauri::generate_handler![
-            scan_folder,
-            scan_folder_with_progress,
+            scan_folder_fast,
+            generate_thumbnails,
             filter_photos,
             get_photo_stats,
             load_full_resolution_image_command

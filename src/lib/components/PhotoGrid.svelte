@@ -2,6 +2,7 @@
     import { photoStore } from "../stores/photoStore.ts";
     import type { Photo } from "../types.ts";
     import { Camera, Image, Calendar, Aperture } from "@lucide/svelte";
+    import { onMount, onDestroy } from "svelte";
 
     interface Props {
         photos: Photo[];
@@ -9,8 +10,41 @@
 
     let { photos }: Props = $props();
 
-    function selectPhoto(photo: Photo) {
-        // photoStore.setSelectedPhoto(photo);
+    // Virtualization: only render photos that are near the viewport
+    let visibleCount = $state(60);
+    const BATCH_SIZE = 40;
+    let sentinel: HTMLDivElement | undefined = $state();
+    let observer: IntersectionObserver | undefined;
+
+    const visiblePhotos = $derived(photos.slice(0, visibleCount));
+
+    // Reset visible count when photos change (e.g. filter applied)
+    $effect(() => {
+        photos; // track
+        visibleCount = 60;
+    });
+
+    onMount(() => {
+        observer = new IntersectionObserver(
+            (entries) => {
+                if (entries[0]?.isIntersecting && visibleCount < photos.length) {
+                    visibleCount = Math.min(visibleCount + BATCH_SIZE, photos.length);
+                }
+            },
+            { rootMargin: "400px" },
+        );
+    });
+
+    $effect(() => {
+        if (sentinel && observer) {
+            observer.observe(sentinel);
+            return () => observer!.unobserve(sentinel!);
+        }
+    });
+
+    onDestroy(() => observer?.disconnect());
+
+    function selectPhoto(photo: Photo, index: number) {
         photoStore.setViewMode("viewer");
     }
 
@@ -41,12 +75,12 @@
 <div
     style="display: grid; grid-template-columns: repeat(auto-fill, minmax(280px, 1fr)); gap: 1rem; padding: 1rem;"
 >
-    {#each photos as photo (photo.id)}
+    {#each visiblePhotos as photo, i (photo.id)}
         <button
             type="button"
             class="bg-white rounded-lg shadow-sm hover:shadow-md transition-shadow cursor-pointer border border-amber-200 text-left w-full p-0"
-            onclick={() => selectPhoto(photo)}
-            onkeydown={(e) => e.key === "Enter" && selectPhoto(photo)}
+            onclick={() => selectPhoto(photo, i)}
+            onkeydown={(e) => e.key === "Enter" && selectPhoto(photo, i)}
         >
             <div
                 style="position: relative; aspect-ratio: 3/2; overflow: hidden; border-radius: 0.5rem 0.5rem 0 0;"
@@ -57,6 +91,7 @@
                     class="bg-amber-50"
                     style="width: 100%; height: 100%; object-fit: cover;"
                     loading="lazy"
+                    decoding="async"
                 />
                 {#if photo.paired_with}
                     <div
@@ -136,3 +171,8 @@
         </button>
     {/each}
 </div>
+
+<!-- Sentinel element for infinite scroll -->
+{#if visibleCount < photos.length}
+    <div bind:this={sentinel} style="height: 1px;"></div>
+{/if}

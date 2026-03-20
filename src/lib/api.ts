@@ -120,6 +120,19 @@ export class HologramAPI {
     return new Uint8Array(result);
   }
 
+  static async openInEditor(filePath: string): Promise<void> {
+    const { open } = await import("@tauri-apps/plugin-opener");
+    await open(filePath);
+  }
+
+  static async setPhotoMetadata(photoId: string, tags: string[], notes: string): Promise<void> {
+    await invoke("set_photo_metadata", { photoId, tags, notes });
+  }
+
+  static async getPhotoMetadata(photoIds: string[]): Promise<Record<string, { tags: string[]; notes: string }>> {
+    return await invoke("get_photo_metadata", { photoIds });
+  }
+
   static async loadFullResolutionImage(filePath: string): Promise<ArrayBuffer> {
     const imageData = await invoke<ArrayBuffer | string>(
       "load_full_resolution_image_command",

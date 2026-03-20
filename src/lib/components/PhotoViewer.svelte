@@ -18,6 +18,7 @@
         ZoomOut,
         Maximize2,
         SlidersHorizontal,
+        ExternalLink,
     } from "@lucide/svelte";
     import ImageEditor from "./ImageEditor.svelte";
     import { onMount, onDestroy } from "svelte";
@@ -198,6 +199,18 @@
             case "0":
                 resetZoom();
                 break;
+            case "o":
+            case "O":
+                openInEditor();
+                break;
+        }
+    }
+
+    async function openInEditor() {
+        try {
+            await HologramAPI.openInEditor(activePhoto.file_path);
+        } catch (error) {
+            console.error("Error opening in editor:", error);
         }
     }
 
@@ -381,6 +394,15 @@
                 <span class="flex items-center gap-1.5">
                     <SlidersHorizontal size={14} />
                     Edit
+                </span>
+            </button>
+            <button
+                class="text-xs px-3 py-1 rounded-full font-medium transition-colors bg-white/10 text-white/70 hover:text-white hover:bg-white/20"
+                onclick={(e) => { e.stopPropagation(); openInEditor(); }}
+            >
+                <span class="flex items-center gap-1.5">
+                    <ExternalLink size={14} />
+                    Open
                 </span>
             </button>
             <button

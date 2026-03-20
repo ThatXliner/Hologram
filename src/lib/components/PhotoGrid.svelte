@@ -45,6 +45,7 @@
     onDestroy(() => observer?.disconnect());
 
     function selectPhoto(photo: Photo, index: number) {
+        photoStore.setSelectedIndex(index);
         photoStore.setViewMode("viewer");
     }
 

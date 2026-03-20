@@ -73,4 +73,5 @@ export interface AppState {
   scanProgress?: ScanProgress;
   stats?: PhotoStats;
   viewMode: "grid" | "list" | "viewer";
+  selectedIndex: number;
 }

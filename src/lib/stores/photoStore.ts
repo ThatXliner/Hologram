@@ -10,6 +10,7 @@ function createPhotoStore() {
     scanProgress: undefined,
     stats: undefined,
     viewMode: "grid",
+    selectedIndex: 0,
   };
 
   const { subscribe, set, update } = writable<AppState>(initialState);
@@ -35,7 +36,6 @@ function createPhotoStore() {
     pendingThumbnails = new Map();
 
     update((state) => {
-      // Mutate in place for performance (these arrays are owned by the store)
       for (const [id, thumbnail] of batch) {
         const pi = photoIndex.get(id);
         if (pi !== undefined) {
@@ -46,7 +46,6 @@ function createPhotoStore() {
           state.filteredPhotos[fi] = { ...state.filteredPhotos[fi], thumbnail };
         }
       }
-      // Return new refs so Svelte detects the change
       return {
         ...state,
         photos: [...state.photos],
@@ -93,6 +92,8 @@ function createPhotoStore() {
     setStats: (stats: PhotoStats) => update((state) => ({ ...state, stats })),
     setViewMode: (viewMode: "grid" | "list" | "viewer") =>
       update((state) => ({ ...state, viewMode })),
+    setSelectedIndex: (selectedIndex: number) =>
+      update((state) => ({ ...state, selectedIndex })),
     reset: () => set(initialState),
   };
 }
@@ -105,6 +106,32 @@ export const filteredPhotos = derived(
   photoStore,
   ($store) => $store.filteredPhotos,
 );
+
+// Display photos: collapse paired RAW+JPEG into single entries (prefer JPEG for display)
+export const displayPhotos = derived(filteredPhotos, ($photos) => {
+  const seen = new Set<string>();
+  const result: Photo[] = [];
+  for (const photo of $photos) {
+    if (seen.has(photo.id)) continue;
+    seen.add(photo.id);
+    if (photo.paired_with) {
+      seen.add(photo.paired_with);
+      // For the grid, show the JPEG version (has better thumbnail)
+      const isRaw = ["CR2", "CR3", "ARW", "NEF", "DNG"].includes(photo.file_type);
+      if (isRaw) {
+        // Find the JPEG pair and show that instead, but keep the RAW reference
+        const jpegPair = $photos.find((p) => p.id === photo.paired_with);
+        if (jpegPair) {
+          result.push(jpegPair);
+          continue;
+        }
+      }
+    }
+    result.push(photo);
+  }
+  return result;
+});
+
 export const currentFilter = derived(
   photoStore,
   ($store) => $store.currentFilter,
@@ -113,3 +140,4 @@ export const isLoading = derived(photoStore, ($store) => $store.isLoading);
 export const scanProgress = derived(photoStore, ($store) => $store.scanProgress);
 export const stats = derived(photoStore, ($store) => $store.stats);
 export const viewMode = derived(photoStore, ($store) => $store.viewMode);
+export const selectedIndex = derived(photoStore, ($store) => $store.selectedIndex);

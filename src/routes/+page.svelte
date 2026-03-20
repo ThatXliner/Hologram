@@ -3,8 +3,10 @@
     import {
         photoStore,
         filteredPhotos,
+        displayPhotos,
         viewMode,
         isLoading,
+        selectedIndex,
     } from "../lib/stores/photoStore.ts";
     import PhotoGrid from "../lib/components/PhotoGrid.svelte";
     import Sidebar from "../lib/components/Sidebar.svelte";
@@ -15,7 +17,6 @@
     let showWelcome = $state(true);
 
     onMount(() => {
-        // Check if we have photos already loaded
         if ($filteredPhotos.length > 0) {
             showWelcome = false;
         }
@@ -25,7 +26,6 @@
         const allPhotos = photoStore.photos || [];
         photoStore.setFilter(filter);
 
-        // Filter locally instead of round-tripping through IPC
         const filtered = allPhotos.filter((photo) => {
             if (filter.camera_make && (!photo.exif.camera_make || !photo.exif.camera_make.includes(filter.camera_make))) return false;
             if (filter.camera_model && (!photo.exif.camera_model || !photo.exif.camera_model.includes(filter.camera_model))) return false;
@@ -44,10 +44,6 @@
         });
 
         photoStore.setFilteredPhotos(filtered);
-    }
-
-    function handlePhotosImported() {
-        showWelcome = false;
     }
 
     function toggleViewMode() {
@@ -135,7 +131,6 @@
                 </div>
             </div>
 
-            <!-- Sidebar always visible -->
             <Sidebar photos={$filteredPhotos} onFilter={handleFilter} />
         </div>
     {:else}
@@ -151,7 +146,7 @@
                         <Loader2 size={32} class="animate-spin" />
                         <p class="mt-4 text-lg">Scanning photos...</p>
                     </div>
-                {:else if $filteredPhotos.length === 0}
+                {:else if $displayPhotos.length === 0}
                     <div
                         class="flex-1 flex flex-col items-center justify-center text-center"
                     >
@@ -176,7 +171,7 @@
                                 class="text-lg font-semibold text-amber-900"
                                 style="margin: 0;"
                             >
-                                Photos ({$filteredPhotos.length})
+                                Photos ({$displayPhotos.length})
                             </h2>
                         </div>
                         <div>
@@ -195,7 +190,7 @@
 
                     <!-- Photo Grid -->
                     <div class="flex-1 overflow-y-auto">
-                        <PhotoGrid photos={$filteredPhotos} />
+                        <PhotoGrid photos={$displayPhotos} />
                     </div>
                 {/if}
             </div>
@@ -204,6 +199,6 @@
 
     <!-- Photo Viewer Modal -->
     {#if $viewMode === "viewer"}
-        <PhotoViewer photos={$filteredPhotos} />
+        <PhotoViewer photos={$displayPhotos} startIndex={$selectedIndex} />
     {/if}
 </div>

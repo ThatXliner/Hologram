@@ -12,6 +12,20 @@ Easy filtering for duplicates. Easily select for editing. Easily learn from your
 
 Eventually I plan to expand it to normies, directly competing with Google Photos.
 
+## Screenshots
+
+| Welcome | Grid View |
+|---------|-----------|
+| ![Welcome screen](screenshots/01-welcome.png) | ![Photo grid](screenshots/02-grid.png) |
+
+| Filtered Grid | Photo Viewer |
+|---------------|--------------|
+| ![Filtered grid](screenshots/03-grid-filtered.png) | ![Photo viewer with EXIF](screenshots/04-viewer.png) |
+
+| RAW+JPEG Paired View | Adjustments Panel |
+|----------------------|-------------------|
+| ![RAW+JPEG paired viewer](screenshots/05-viewer-paired.png) | ![Adjustments/edit panel](screenshots/06-editor.png) |
+
 ## Roadmap
 
 See [here](https://github.com/ThatXliner/Hologram/issues/6)

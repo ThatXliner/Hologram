@@ -1,6 +1,4 @@
 use anyhow::Result;
-use rusqlite;
-use base64::Engine;
 use chrono::{DateTime, Utc};
 use exif as kamadak_exif;
 use image::ImageFormat;
@@ -8,16 +6,19 @@ use kamadak_exif::{In, Reader};
 use ndarray::Array4;
 use ort::session::Session;
 use rayon::prelude::*;
+use rusqlite;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Response;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 use walkdir::WalkDir;
+
+mod raw_preview;
+use raw_preview::{convert_raw_to_jpeg, generate_thumbnail, is_raw_file, is_supported_file};
 
 /// Managed state holding the DnCNN ONNX session for AI denoising.
 pub struct DenoiseModel(Arc<Mutex<Option<Session>>>);
@@ -96,30 +97,6 @@ pub struct PhotoStats {
     pub lenses: HashMap<String, usize>,
 }
 
-static SUPPORTED_EXTENSIONS: &[&str] = &[
-    "jpg", "jpeg", "cr2", "cr3", "arw", "nef", "dng", "tiff", "tif", "png",
-];
-
-static RAW_EXTENSIONS: &[&str] = &["cr2", "cr3", "arw", "nef", "dng"];
-
-fn is_supported_file(path: &Path) -> bool {
-    if let Some(ext) = path.extension() {
-        if let Some(ext_str) = ext.to_str() {
-            return SUPPORTED_EXTENSIONS.contains(&ext_str.to_lowercase().as_str());
-        }
-    }
-    false
-}
-
-fn is_raw_file(path: &Path) -> bool {
-    if let Some(ext) = path.extension() {
-        if let Some(ext_str) = ext.to_str() {
-            return RAW_EXTENSIONS.contains(&ext_str.to_lowercase().as_str());
-        }
-    }
-    false
-}
-
 fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
     let file = fs::File::open(file_path)?;
     let mut bufreader = std::io::BufReader::new(&file);
@@ -179,85 +156,6 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
     }
 
     Ok(exif_data)
-}
-
-/// Get the cache directory for sips conversions
-fn sips_cache_dir() -> std::path::PathBuf {
-    let dir = std::env::temp_dir().join("hologram_sips_cache");
-    let _ = fs::create_dir_all(&dir);
-    dir
-}
-
-/// Generate a cache key from file path + modification time + max dimension
-fn sips_cache_key(file_path: &Path, max_dimension: u32) -> String {
-    use std::hash::{Hash, Hasher};
-    let mut hasher = std::collections::hash_map::DefaultHasher::new();
-    file_path.hash(&mut hasher);
-    if let Ok(meta) = fs::metadata(file_path) {
-        if let Ok(modified) = meta.modified() {
-            modified.hash(&mut hasher);
-        }
-    }
-    max_dimension.hash(&mut hasher);
-    format!("{:x}.jpeg", hasher.finish())
-}
-
-/// Convert a RAW file to JPEG bytes using macOS sips (Apple's native imaging pipeline).
-/// Results are cached on disk keyed by file path + mtime + dimension.
-#[cfg(target_os = "macos")]
-fn convert_raw_with_sips(file_path: &Path, max_dimension: u32) -> Result<Vec<u8>> {
-    let cache_dir = sips_cache_dir();
-    let cache_key = sips_cache_key(file_path, max_dimension);
-    let cache_path = cache_dir.join(&cache_key);
-
-    // Check cache first
-    if cache_path.exists() {
-        if let Ok(data) = fs::read(&cache_path) {
-            if !data.is_empty() {
-                return Ok(data);
-            }
-        }
-    }
-
-    let output = Command::new("sips")
-        .args([
-            "-s", "format", "jpeg",
-            "-s", "formatOptions", "90",
-            "--resampleHeightWidthMax", &max_dimension.to_string(),
-            file_path.to_str().unwrap_or_default(),
-            "--out", cache_path.to_str().unwrap_or_default(),
-        ])
-        .output()?;
-
-    if !output.status.success() {
-        let stderr = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("sips failed: {}", stderr);
-    }
-
-    let data = fs::read(&cache_path)?;
-    Ok(data)
-}
-
-#[cfg(not(target_os = "macos"))]
-fn convert_raw_with_sips(_file_path: &Path, _max_dimension: u32) -> Result<Vec<u8>> {
-    anyhow::bail!("RAW conversion via sips only available on macOS")
-}
-
-fn generate_thumbnail(file_path: &Path) -> Result<String> {
-    // For RAW files, use macOS sips for proper rendering
-    if is_raw_file(file_path) {
-        let data = convert_raw_with_sips(file_path, 400)?;
-        return Ok(base64::engine::general_purpose::STANDARD.encode(data));
-    }
-
-    let img = image::open(file_path)?;
-    let thumbnail = img.thumbnail(400, 400);
-
-    let mut buffer = Vec::with_capacity(16384);
-    let mut cursor = std::io::Cursor::new(&mut buffer);
-    thumbnail.write_to(&mut cursor, ImageFormat::Jpeg)?;
-
-    Ok(base64::engine::general_purpose::STANDARD.encode(buffer))
 }
 
 /// Phase 1: Collect metadata + EXIF only (no image decoding). This is fast
@@ -375,12 +273,12 @@ fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
 }
 
 fn load_full_resolution_image(file_path: &Path) -> Response {
-    // For RAW files, use macOS sips for proper color rendering
+    // For RAW files, render a browser-friendly JPEG through LibRaw.
     if is_raw_file(file_path) {
-        if let Ok(data) = convert_raw_with_sips(file_path, 8192) {
+        if let Ok(data) = convert_raw_to_jpeg(file_path, 8192) {
             return tauri::ipc::Response::new(data);
         }
-        // If sips fails, fall through to raw bytes
+        // If LibRaw fails, fall through to raw bytes.
         let data = fs::read(file_path).unwrap_or_default();
         return tauri::ipc::Response::new(data);
     }
@@ -848,9 +746,9 @@ async fn apply_edits_and_save(
         return Err("File does not exist".to_string());
     }
 
-    // Load the full-res image (handle RAW via sips conversion)
+    // Load the full-res image (handle RAW via LibRaw conversion)
     let image_bytes = if is_raw_file(path) {
-        convert_raw_with_sips(path, 8192).map_err(|e| format!("RAW conversion failed: {}", e))?
+        convert_raw_to_jpeg(path, 8192).map_err(|e| format!("RAW conversion failed: {}", e))?
     } else {
         fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?
     };

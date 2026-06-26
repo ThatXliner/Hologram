@@ -2,6 +2,13 @@ import { writable, derived } from "svelte/store";
 import type { Photo, PhotoFilter, PhotoStats, AppState, ScanProgress } from "../types.ts";
 import { HologramAPI } from "../api.ts";
 
+const RAW_FILE_TYPES = new Set([
+  "3FR", "ARI", "ARW", "BAY", "CAP", "CRW", "CR2", "CR3", "DATA", "DCS", "DCR",
+  "DNG", "DRF", "ERF", "FFF", "GPR", "IIQ", "K25", "KDC", "MDC", "MEF", "MOS",
+  "MRW", "NEF", "NRW", "OBM", "ORF", "PEF", "PTX", "PXN", "RAF", "RAW", "RW2",
+  "RWL", "RWZ", "SR2", "SRF", "SRW", "X3F",
+]);
+
 function createPhotoStore() {
   const initialState: AppState = {
     photos: [],
@@ -173,7 +180,7 @@ export const displayPhotos = derived(filteredPhotos, ($photos) => {
     if (photo.paired_with) {
       seen.add(photo.paired_with);
       // For the grid, show the JPEG version (has better thumbnail)
-      const isRaw = ["CR2", "CR3", "ARW", "NEF", "DNG"].includes(photo.file_type);
+      const isRaw = RAW_FILE_TYPES.has(photo.file_type);
       if (isRaw) {
         // Find the JPEG pair and show that instead, but keep the RAW reference
         const jpegPair = $photos.find((p) => p.id === photo.paired_with);

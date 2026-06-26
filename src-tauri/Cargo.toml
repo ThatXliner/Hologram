@@ -26,6 +26,7 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 kamadak-exif = "0.5"
 image = "0.25"
+rsraw = "0.1.1"
 walkdir = "^2"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "serde"] }

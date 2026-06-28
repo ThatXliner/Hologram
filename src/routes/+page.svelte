@@ -15,7 +15,8 @@
     import PhotoViewer from "../lib/components/PhotoViewer.svelte";
     import { HologramAPI } from "../lib/api.ts";
     import { buildSmartCollections } from "../lib/collections.ts";
-    import type { CullFlag, Photo, PhotoFilter, SavedSearch, ThumbnailReady } from "../lib/types.ts";
+    import { indexPhotoVisuals } from "../lib/visualIndex.ts";
+    import type { CullFlag, Photo, PhotoFilter, SavedSearch, ThumbnailReady, VisualIndexEntry, VisualIndexProgress } from "../lib/types.ts";
     import {
         Bookmark,
         CalendarRange,
@@ -32,6 +33,7 @@
         Rows3,
         Search,
         Save,
+        Sparkles,
         Star,
         XCircle,
     } from "@lucide/svelte";
@@ -55,6 +57,12 @@
     let savedSearchName = $state("");
     let activeSmartCollectionId = $state<string | null>(null);
     let didLoadGridPreferences = $state(false);
+    let smartCollectionsEnabled = $state(false);
+    let showSmartCollectionsModal = $state(false);
+    let isVisualIndexing = $state(false);
+    let visualIndex = $state<Record<string, VisualIndexEntry>>({});
+    let visualIndexProgress = $state<VisualIndexProgress>({ current: 0, total: 0 });
+    let visualIndexLibraryKey = $state("");
     let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
     const searchCache = new Map<string, { key: string; text: string }>();
@@ -66,10 +74,13 @@
     const unmarkedCount = $derived(
         $displayPhotos.filter((photo) => (photo.flag ?? "none") === "none" && (photo.rating ?? 0) === 0).length,
     );
-    const smartCollections = $derived(buildSmartCollections($photos));
+    const smartCollections = $derived(
+        smartCollectionsEnabled ? buildSmartCollections($photos, visualIndex) : [],
+    );
 
     onMount(() => {
         loadSavedSearches();
+        loadSmartCollectionState();
         loadGridPreferences();
         didLoadGridPreferences = true;
         if (import.meta.env.DEV) {
@@ -91,6 +102,13 @@
             GRID_PREFERENCES_KEY,
             JSON.stringify({ density, detailMode: gridDetailMode }),
         );
+    });
+
+    $effect(() => {
+        const ids = $photos.map((photo) => photo.id).join("|");
+        if (!smartCollectionsEnabled || !ids || isVisualIndexing || ids === visualIndexLibraryKey) return;
+        visualIndexLibraryKey = ids;
+        void startVisualIndexing($photos);
     });
 
     $effect(() => {
@@ -216,8 +234,61 @@
     }
 
     function selectSmartCollection(id: string | null) {
+        if (!smartCollectionsEnabled) {
+            showSmartCollectionsModal = true;
+            return;
+        }
         activeSmartCollectionId = id;
         applyAllFilters();
+    }
+
+    function loadSmartCollectionState() {
+        smartCollectionsEnabled = localStorage.getItem("hologram.smartCollections.enabled") === "true";
+        try {
+            const raw = localStorage.getItem("hologram.visualIndex");
+            visualIndex = raw ? JSON.parse(raw) : {};
+        } catch {
+            visualIndex = {};
+        }
+    }
+
+    function persistVisualIndex(entries: Record<string, VisualIndexEntry>) {
+        visualIndex = entries;
+        localStorage.setItem("hologram.visualIndex", JSON.stringify(entries));
+    }
+
+    function openSmartCollectionsModal() {
+        if (smartCollectionsEnabled) return;
+        showSmartCollectionsModal = true;
+    }
+
+    function enableSmartCollections() {
+        smartCollectionsEnabled = true;
+        localStorage.setItem("hologram.smartCollections.enabled", "true");
+        showSmartCollectionsModal = false;
+        activeSmartCollectionId = null;
+        if ($photos.length > 0) {
+            visualIndexLibraryKey = $photos.map((photo) => photo.id).join("|");
+            void startVisualIndexing($photos);
+        }
+    }
+
+    async function startVisualIndexing(items: Photo[]) {
+        if (isVisualIndexing || items.length === 0) return;
+        isVisualIndexing = true;
+        visualIndexProgress = { current: 0, total: items.length };
+        try {
+            const entries = await indexPhotoVisuals(
+                items,
+                (progress) => {
+                    visualIndexProgress = progress;
+                },
+                visualIndex,
+            );
+            persistVisualIndex(entries);
+        } finally {
+            isVisualIndexing = false;
+        }
     }
 
     async function importFolder() {
@@ -387,10 +458,14 @@
         activeSavedSearchId={activeSavedSearchId}
         smartCollections={smartCollections}
         activeSmartCollectionId={activeSmartCollectionId}
+        smartCollectionsEnabled={smartCollectionsEnabled}
+        smartCollectionsIndexing={isVisualIndexing}
+        visualIndexProgress={visualIndexProgress}
         onFilter={handleSidebarFilter}
         onSavedSearchSelect={selectSavedSearch}
         onSavedSearchDelete={deleteSavedSearch}
         onSmartCollectionSelect={selectSmartCollection}
+        onSmartCollectionsTitleClick={openSmartCollectionsModal}
     />
 
     {#if !hasLibrary}
@@ -589,6 +664,42 @@
                 {/if}
             {/if}
         </main>
+    {/if}
+
+    {#if showSmartCollectionsModal}
+        <div class="fixed inset-0 z-[90] grid place-items-center bg-black/60 px-4">
+            <section class="w-full max-w-md rounded-lg border border-border bg-card p-5 shadow-xl">
+                <div class="mb-4 flex items-start gap-3">
+                    <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/15 text-primary">
+                        <Sparkles size={20} />
+                    </div>
+                    <div class="min-w-0">
+                        <h2 class="text-base font-semibold text-foreground">Enable Smart Collections?</h2>
+                        <p class="mt-1 text-sm text-muted-foreground">
+                            Hologram will index previews locally in the background to build visual collections.
+                        </p>
+                    </div>
+                </div>
+                <div class="rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
+                    The current index uses local thumbnail analysis and existing content labels. A bundled object detector can plug into the same index later.
+                </div>
+                <div class="mt-5 flex justify-end gap-2">
+                    <button
+                        class="inline-flex h-9 items-center justify-center rounded-md bg-secondary px-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                        onclick={() => (showSmartCollectionsModal = false)}
+                    >
+                        Cancel
+                    </button>
+                    <button
+                        class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+                        onclick={enableSmartCollections}
+                    >
+                        <Sparkles size={15} />
+                        Enable Indexing
+                    </button>
+                </div>
+            </section>
+        </div>
     {/if}
 
     {#if $viewMode === "viewer"}

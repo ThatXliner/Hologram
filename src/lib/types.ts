@@ -101,9 +101,28 @@ export interface SavedSearch {
 export interface SmartCollection {
   id: string;
   name: string;
-  kind: "event" | "day" | "week" | "camera" | "location";
+  kind: "object" | "scene" | "visual";
   detail: string;
   photo_ids: string[];
+}
+
+export interface VisualIndexLabel {
+  label: string;
+  kind: "object" | "scene" | "visual";
+  confidence: number;
+  source: "image" | "metadata";
+}
+
+export interface VisualIndexEntry {
+  photo_id: string;
+  labels: VisualIndexLabel[];
+  indexed_at: string;
+}
+
+export interface VisualIndexProgress {
+  current: number;
+  total: number;
+  current_file?: string;
 }
 
 export interface ExportOptions {

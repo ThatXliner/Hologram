@@ -1,17 +1,17 @@
 <script lang="ts">
     import { photoStore, stats } from "../stores/photoStore.ts";
     import { HologramAPI } from "../api.ts";
-    import type { ExifData, Photo, PhotoFilter, SavedSearch, SmartCollection, ThumbnailReady } from "../types.ts";
+    import type { ExifData, Photo, PhotoFilter, SavedSearch, SmartCollection, ThumbnailReady, VisualIndexProgress } from "../types.ts";
     import ExportPanel from "./ExportPanel.svelte";
     import {
         BarChart3,
         Bookmark,
         Camera,
-        CalendarRange,
         Check,
         Filter,
         FolderOpen,
         Plus,
+        Sparkles,
         Star,
         Trash2,
         X,
@@ -26,10 +26,14 @@
         activeSavedSearchId?: string | null;
         smartCollections?: SmartCollection[];
         activeSmartCollectionId?: string | null;
+        smartCollectionsEnabled?: boolean;
+        smartCollectionsIndexing?: boolean;
+        visualIndexProgress?: VisualIndexProgress;
         onFilter: (filter: PhotoFilter) => void;
         onSavedSearchSelect?: (id: string) => void;
         onSavedSearchDelete?: (id: string) => void;
         onSmartCollectionSelect?: (id: string | null) => void;
+        onSmartCollectionsTitleClick?: () => void;
     }
 
     let {
@@ -40,10 +44,14 @@
         activeSavedSearchId = null,
         smartCollections = [],
         activeSmartCollectionId = null,
+        smartCollectionsEnabled = false,
+        smartCollectionsIndexing = false,
+        visualIndexProgress = { current: 0, total: 0 },
         onFilter,
         onSavedSearchSelect = () => {},
         onSavedSearchDelete = () => {},
         onSmartCollectionSelect = () => {},
+        onSmartCollectionsTitleClick = () => {},
     }: Props = $props();
 
     let activeFilter = $state<PhotoFilter>({});
@@ -354,34 +362,71 @@
             </section>
         {/if}
 
-        {#if smartCollections.length > 0}
+        {#if allPhotos.length > 0}
             <section class="border-b border-sidebar-border p-4">
                 <div class="mb-3 flex items-center gap-2">
-                    <CalendarRange size={14} class="text-primary" />
-                    <h2 class="text-xs font-bold uppercase text-foreground">Smart Collections</h2>
-                </div>
-                <div class="space-y-1">
+                    <Sparkles size={14} class="text-primary" />
                     <button
-                        class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {activeSmartCollectionId == null ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
-                        onclick={() => onSmartCollectionSelect(null)}
+                        class="text-left text-xs font-bold uppercase text-foreground transition-colors hover:text-primary"
+                        onclick={smartCollectionsEnabled ? undefined : onSmartCollectionsTitleClick}
                     >
-                        <span class="truncate font-semibold">All Photos</span>
-                        <span class="tabular-nums">{allPhotos.length}</span>
+                        Smart Collections
                     </button>
-                    {#each smartCollections.slice(0, 12) as collection (collection.id)}
-                        <button
-                            class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {activeSmartCollectionId === collection.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
-                            onclick={() => onSmartCollectionSelect(collection.id)}
-                            title={collection.detail}
-                        >
-                            <span class="min-w-0">
-                                <span class="block truncate font-semibold">{collection.name}</span>
-                                <span class="block truncate text-[10px] opacity-75">{collection.detail}</span>
-                            </span>
-                            <span class="shrink-0 tabular-nums">{collection.photo_ids.length}</span>
-                        </button>
-                    {/each}
+                    {#if !smartCollectionsEnabled}
+                        <span class="ml-auto rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">Off</span>
+                    {:else if smartCollectionsIndexing}
+                        <span class="ml-auto text-xs tabular-nums text-muted-foreground">
+                            {visualIndexProgress.total ? Math.round((visualIndexProgress.current / visualIndexProgress.total) * 100) : 0}%
+                        </span>
+                    {/if}
                 </div>
+
+                {#if !smartCollectionsEnabled}
+                    <button
+                        class="flex w-full items-center justify-between gap-2 rounded-md border border-dashed border-border bg-card px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
+                        onclick={onSmartCollectionsTitleClick}
+                    >
+                        <span class="font-semibold">Enable visual index</span>
+                        <Sparkles size={14} />
+                    </button>
+                {:else}
+                    {#if smartCollectionsIndexing}
+                        <div class="mb-2 h-1.5 overflow-hidden rounded-full bg-secondary">
+                            <div
+                                class="h-full rounded-full bg-primary"
+                                style:width={progressWidth(visualIndexProgress.total ? (visualIndexProgress.current / visualIndexProgress.total) * 100 : 0)}
+                            ></div>
+                        </div>
+                    {/if}
+
+                    <div class="space-y-1">
+                        <button
+                            class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {activeSmartCollectionId == null ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                            onclick={() => onSmartCollectionSelect(null)}
+                        >
+                            <span class="truncate font-semibold">All Photos</span>
+                            <span class="tabular-nums">{allPhotos.length}</span>
+                        </button>
+                        {#each smartCollections.slice(0, 12) as collection (collection.id)}
+                            <button
+                                class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {activeSmartCollectionId === collection.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                onclick={() => onSmartCollectionSelect(collection.id)}
+                                title={collection.detail}
+                            >
+                                <span class="min-w-0">
+                                    <span class="block truncate font-semibold">{collection.name}</span>
+                                    <span class="block truncate text-[10px] opacity-75">{collection.detail}</span>
+                                </span>
+                                <span class="shrink-0 tabular-nums">{collection.photo_ids.length}</span>
+                            </button>
+                        {/each}
+                        {#if !smartCollectionsIndexing && smartCollections.length === 0}
+                            <div class="rounded-md bg-card px-3 py-2 text-xs text-muted-foreground">
+                                No visual collections yet.
+                            </div>
+                        {/if}
+                    </div>
+                {/if}
             </section>
         {/if}
 

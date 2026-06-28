@@ -131,7 +131,7 @@
                                             <FileImage size={12} />
                                         </span>
                                     {/if}
-                                    {#if embeddedPreview}
+                                    {#if embeddedPreview && index === $selectedIndex}
                                         <span
                                             class="grid h-5 w-5 place-items-center rounded-full bg-primary/90 text-primary-foreground"
                                             title={embeddedPreviewTitle(embeddedPreview)}

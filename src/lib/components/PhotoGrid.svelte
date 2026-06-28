@@ -307,7 +307,7 @@
                                     Pair
                                 </span>
                             {/if}
-                            {#if embeddedPreview}
+                            {#if embeddedPreview && i === $selectedIndex}
                                 <span
                                     class="grid h-5 w-5 place-items-center rounded-full bg-primary/90 text-primary-foreground shadow-sm"
                                     title={embeddedPreviewTitle(embeddedPreview)}

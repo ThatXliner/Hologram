@@ -11,7 +11,6 @@
         Check,
         Filter,
         FolderOpen,
-        Info,
         Plus,
         Star,
         Trash2,
@@ -60,7 +59,6 @@
         allPhotos.filter((photo) => photo.flag === "pick" || photo.flag === "reject" || (photo.rating ?? 0) > 0).length,
     );
     const reviewPct = $derived(allPhotos.length ? Math.round((reviewedCount / allPhotos.length) * 100) : 0);
-    const rawJpegRedundancyCount = $derived($stats?.raw_jpeg_redundancy_count ?? 0);
 
     const selectFields: { exifKey: keyof ExifData; label: string; filterKey: keyof PhotoFilter }[] = [
         { exifKey: "camera_model", label: "Camera Model", filterKey: "camera_model" },
@@ -317,19 +315,6 @@
                     </div>
                 </div>
 
-                {#if rawJpegRedundancyCount > 0}
-                    <div class="mt-3 flex gap-2 rounded-lg border border-primary/25 bg-primary/10 p-3">
-                        <Info size={15} class="mt-0.5 shrink-0 text-primary" />
-                        <div class="min-w-0">
-                            <div class="text-xs font-semibold text-foreground">Embedded previews found</div>
-                            <p class="mt-1 text-xs leading-5 text-muted-foreground">
-                                {formatNumber(rawJpegRedundancyCount)}
-                                RAW+JPEG {rawJpegRedundancyCount === 1 ? "pair has" : "pairs have"} a JPEG preview inside the RAW.
-                                Consider switching the camera to RAW only.
-                            </p>
-                        </div>
-                    </div>
-                {/if}
             </section>
         {/if}
 

@@ -3,53 +3,47 @@
 @import "tw-animate-css";
 
 :root {
-  --radius: 0.625rem;
-  /* Parchment yellow background - warm and easy on eyes */
-  --background: oklch(0.95 0.02 85);
-  /* Dark brown text for good contrast */
-  --foreground: oklch(0.25 0.03 35);
-  /* Slightly off-white cards for subtle layering */
-  --card: oklch(0.98 0.015 80);
-  --card-foreground: oklch(0.25 0.03 35);
-  /* Popovers similar to cards */
-  --popover: oklch(0.98 0.015 80);
-  --popover-foreground: oklch(0.25 0.03 35);
-  /* Warm brown primary color */
-  --primary: oklch(0.45 0.08 45);
-  --primary-foreground: oklch(0.98 0.015 80);
-  /* Light beige secondary */
-  --secondary: oklch(0.90 0.025 75);
-  --secondary-foreground: oklch(0.35 0.04 40);
-  /* Muted beige tones */
-  --muted: oklch(0.88 0.02 70);
-  --muted-foreground: oklch(0.55 0.03 50);
-  /* Accent similar to secondary but slightly different */
-  --accent: oklch(0.92 0.02 80);
-  --accent-foreground: oklch(0.35 0.04 40);
-  /* Warm red for destructive actions */
-  --destructive: oklch(0.55 0.15 25);
-  /* Soft borders */
-  --border: oklch(0.82 0.025 65);
-  --input: oklch(0.85 0.02 70);
-  /* Focus ring */
-  --ring: oklch(0.60 0.08 45);
-  /* Chart colors - earthy palette */
-  --chart-1: oklch(0.65 0.12 45);
-  --chart-2: oklch(0.70 0.10 120);
-  --chart-3: oklch(0.60 0.08 200);
-  --chart-4: oklch(0.75 0.10 280);
-  --chart-5: oklch(0.68 0.12 350);
-  /* Sidebar with slightly darker parchment */
-  --sidebar: oklch(0.92 0.025 75);
-  --sidebar-foreground: oklch(0.25 0.03 35);
-  --sidebar-primary: oklch(0.45 0.08 45);
-  --sidebar-primary-foreground: oklch(0.98 0.015 80);
-  --sidebar-accent: oklch(0.88 0.02 70);
-  --sidebar-accent-foreground: oklch(0.35 0.04 40);
-  --sidebar-border: oklch(0.80 0.03 60);
-  --sidebar-ring: oklch(0.60 0.08 45);
-}
+  --radius: 0.5rem;
 
+  --background: oklch(0.145 0.006 78);
+  --foreground: oklch(0.93 0.01 86);
+  --card: oklch(0.205 0.008 78);
+  --card-foreground: oklch(0.93 0.01 86);
+  --popover: oklch(0.235 0.01 78);
+  --popover-foreground: oklch(0.94 0.01 86);
+
+  --primary: oklch(0.7 0.13 178);
+  --primary-foreground: oklch(0.12 0.012 190);
+  --secondary: oklch(0.265 0.009 78);
+  --secondary-foreground: oklch(0.86 0.012 86);
+  --muted: oklch(0.235 0.007 78);
+  --muted-foreground: oklch(0.66 0.018 82);
+  --accent: oklch(0.325 0.015 82);
+  --accent-foreground: oklch(0.94 0.01 86);
+  --destructive: oklch(0.58 0.18 28);
+  --border: oklch(0.32 0.012 78);
+  --input: oklch(0.38 0.012 78);
+  --ring: oklch(0.7 0.13 178);
+
+  --pick: oklch(0.74 0.16 145);
+  --reject: oklch(0.58 0.19 28);
+  --rating: oklch(0.82 0.16 86);
+
+  --chart-1: oklch(0.7 0.13 178);
+  --chart-2: oklch(0.74 0.16 145);
+  --chart-3: oklch(0.82 0.16 86);
+  --chart-4: oklch(0.65 0.12 305);
+  --chart-5: oklch(0.62 0.18 28);
+
+  --sidebar: oklch(0.175 0.008 78);
+  --sidebar-foreground: oklch(0.91 0.01 86);
+  --sidebar-primary: var(--primary);
+  --sidebar-primary-foreground: var(--primary-foreground);
+  --sidebar-accent: oklch(0.275 0.011 78);
+  --sidebar-accent-foreground: oklch(0.94 0.01 86);
+  --sidebar-border: oklch(0.29 0.012 78);
+  --sidebar-ring: var(--ring);
+}
 
 @theme inline {
   --radius-sm: calc(var(--radius) - 4px);
@@ -74,6 +68,9 @@
   --color-border: var(--border);
   --color-input: var(--input);
   --color-ring: var(--ring);
+  --color-pick: var(--pick);
+  --color-reject: var(--reject);
+  --color-rating: var(--rating);
   --color-chart-1: var(--chart-1);
   --color-chart-2: var(--chart-2);
   --color-chart-3: var(--chart-3);
@@ -92,70 +89,81 @@
 @layer base {
   * {
     border-color: var(--color-border);
-    outline-color: oklch(from var(--color-ring) l c h / 0.5);
+    outline-color: oklch(from var(--color-ring) l c h / 0.45);
   }
+
+  html,
   body {
+    height: 100%;
+  }
+
+  body {
+    margin: 0;
     background-color: var(--color-background);
     color: var(--color-foreground);
+    font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", system-ui, sans-serif;
     -webkit-font-smoothing: antialiased;
     -moz-osx-font-smoothing: grayscale;
   }
-  h1, h2, h3, h4, h5, h6 {
+
+  h1,
+  h2,
+  h3,
+  h4,
+  h5,
+  h6 {
     margin: 0;
-    letter-spacing: -0.01em;
+    letter-spacing: 0;
+  }
+
+  button,
+  input,
+  select,
+  textarea {
+    font: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  ::selection {
+    background: oklch(from var(--color-primary) l c h / 0.28);
+  }
+
+  ::-webkit-scrollbar {
+    width: 12px;
+    height: 12px;
+  }
+
+  ::-webkit-scrollbar-track {
+    background: var(--color-background);
+  }
+
+  ::-webkit-scrollbar-thumb {
+    background: var(--color-accent);
+    border: 3px solid var(--color-background);
+    border-radius: 999px;
   }
 }
 
-/* Stat cards: subtle inset effect */
-.stat-card {
-  background: linear-gradient(
-    to bottom,
-    var(--color-card) 0%,
-    oklch(from var(--color-card) calc(l - 0.01) c h) 100%
-  );
-  box-shadow:
-    0 1px 2px oklch(0 0 0 / 0.04),
-    inset 0 1px 0 oklch(1 0 0 / 0.5);
+.photo-tile {
+  content-visibility: auto;
+  contain-intrinsic-size: 220px 210px;
 }
 
-/* Section headers: subtle left accent bar */
+.photo-preview-image {
+  image-orientation: from-image;
+}
+
 .section-heading {
-  position: relative;
-  padding-left: 0.625rem;
+  letter-spacing: 0;
 }
+
 .section-heading::before {
-  content: "";
-  position: absolute;
-  left: 0;
-  top: 0.125rem;
-  bottom: 0.125rem;
-  width: 2px;
-  border-radius: 1px;
-  background: var(--color-primary);
-  opacity: 0.6;
+  display: none;
 }
 
-/* Sidebar subtle gradient */
-.sidebar-surface {
-  background: linear-gradient(
-    to bottom,
-    var(--color-sidebar) 0%,
-    oklch(from var(--color-sidebar) calc(l - 0.015) c h) 100%
-  );
-}
-
-/* Active filter badge pulse */
-.filter-count {
-  box-shadow: 0 0 0 2px oklch(from var(--color-primary) l c h / 0.15);
-}
-
-/* Photo card refined hover */
-.photo-card {
-  transition: box-shadow 0.2s ease, transform 0.2s ease;
-}
-.photo-card:hover {
-  box-shadow:
-    0 4px 12px oklch(0 0 0 / 0.08),
-    0 1px 3px oklch(0 0 0 / 0.06);
-  transform: translateY(-1px);
+input[type="range"] {
+  accent-color: var(--color-primary);
 }

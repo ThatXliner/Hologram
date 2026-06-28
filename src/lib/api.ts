@@ -1,9 +1,19 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { Photo, PhotoFilter, PhotoStats, ScanResult, ThumbnailReady } from "./types.ts";
+import type { CullFlag, Photo, PhotoFilter, PhotoMetadata, PhotoStats, ScanResult, ThumbnailReady } from "./types.ts";
 
 export class HologramAPI {
+  private static activeFolderPath: string | null = null;
+
+  static getActiveFolderPath(): string | null {
+    return HologramAPI.activeFolderPath;
+  }
+
+  static setActiveFolderPath(folderPath: string | null): void {
+    HologramAPI.activeFolderPath = folderPath;
+  }
+
   static async selectFolder(): Promise<string | null> {
     try {
       const result = await open({
@@ -29,6 +39,7 @@ export class HologramAPI {
     onThumbnail?: (data: ThumbnailReady) => void,
   ): Promise<ScanResult> {
     let unlistenThumbnail: (() => void) | null = null;
+    HologramAPI.setActiveFolderPath(folderPath);
 
     try {
       // Set up thumbnail listener before starting generation
@@ -121,16 +132,32 @@ export class HologramAPI {
   }
 
   static async openInEditor(filePath: string): Promise<void> {
-    const { open } = await import("@tauri-apps/plugin-opener");
-    await open(filePath);
+    const { openPath } = await import("@tauri-apps/plugin-opener");
+    await openPath(filePath);
   }
 
-  static async setPhotoMetadata(photoId: string, tags: string[], notes: string): Promise<void> {
-    await invoke("set_photo_metadata", { photoId, tags, notes });
+  static async setPhotoMetadata(
+    photoId: string,
+    tags: string[],
+    notes: string,
+    rating = 0,
+    flag: CullFlag = "none",
+  ): Promise<void> {
+    await invoke("set_photo_metadata", {
+      photoId,
+      folderPath: HologramAPI.activeFolderPath,
+      tags,
+      notes,
+      rating,
+      flag,
+    });
   }
 
-  static async getPhotoMetadata(photoIds: string[]): Promise<Record<string, { tags: string[]; notes: string }>> {
-    return await invoke("get_photo_metadata", { photoIds });
+  static async getPhotoMetadata(photoIds: string[]): Promise<Record<string, PhotoMetadata>> {
+    return await invoke("get_photo_metadata", {
+      photoIds,
+      folderPath: HologramAPI.activeFolderPath,
+    });
   }
 
   static async loadFullResolutionImage(filePath: string): Promise<ArrayBuffer> {

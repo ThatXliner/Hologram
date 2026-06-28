@@ -18,7 +18,7 @@ crate-type = ["staticlib", "cdylib", "rlib"]
 tauri-build = { version = "^2", features = [] }
 
 [dependencies]
-tauri = { version = "^2", features = [] }
+tauri = { version = "^2", features = ["protocol-asset"] }
 tauri-plugin-opener = "^2"
 tauri-plugin-fs = "2.0.0"
 tauri-plugin-dialog = "2.0.0"
@@ -29,7 +29,7 @@ image = "0.25"
 rsraw = "0.1.1"
 walkdir = "^2"
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.0", features = ["v4", "serde"] }
+uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
 base64 = "0.22"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 anyhow = "1.0"

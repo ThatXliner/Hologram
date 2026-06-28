@@ -18,7 +18,10 @@ use uuid::Uuid;
 use walkdir::WalkDir;
 
 mod raw_preview;
-use raw_preview::{convert_raw_to_jpeg, generate_thumbnail, is_raw_file, is_supported_file};
+use raw_preview::{
+    convert_raw_to_jpeg, generate_embedded_thumbnail, generate_thumbnail, is_raw_file,
+    is_supported_file,
+};
 
 /// Managed state holding the DnCNN ONNX session for AI denoising.
 pub struct DenoiseModel(Arc<Mutex<Option<Session>>>);
@@ -50,6 +53,11 @@ pub struct ExifData {
     pub flash: Option<String>,
     pub white_balance: Option<String>,
     pub date_taken: Option<DateTime<Utc>>,
+    pub exposure_bias: Option<f64>,
+    pub ev100: Option<f64>,
+    pub latitude: Option<f64>,
+    pub longitude: Option<f64>,
+    pub altitude: Option<f64>,
     pub width: Option<u32>,
     pub height: Option<u32>,
     pub orientation: Option<u16>,
@@ -97,6 +105,71 @@ pub struct PhotoStats {
     pub lenses: HashMap<String, usize>,
 }
 
+fn first_exif_u32(value: &kamadak_exif::Value) -> Option<u32> {
+    match value {
+        kamadak_exif::Value::Byte(values) => values.first().map(|value| u32::from(*value)),
+        kamadak_exif::Value::Short(values) => values.first().map(|value| u32::from(*value)),
+        kamadak_exif::Value::Long(values) => values.first().copied(),
+        _ => None,
+    }
+}
+
+fn first_exif_f64(value: &kamadak_exif::Value) -> Option<f64> {
+    match value {
+        kamadak_exif::Value::Short(values) => values.first().map(|value| f64::from(*value)),
+        kamadak_exif::Value::Long(values) => values.first().map(|value| f64::from(*value)),
+        kamadak_exif::Value::Rational(values) => values
+            .first()
+            .filter(|value| value.denom != 0)
+            .map(|value| value.to_f64()),
+        kamadak_exif::Value::SRational(values) => values
+            .first()
+            .filter(|value| value.denom != 0)
+            .map(|value| value.to_f64()),
+        _ => None,
+    }
+}
+
+fn first_exif_ascii(value: &kamadak_exif::Value) -> Option<String> {
+    match value {
+        kamadak_exif::Value::Ascii(values) => values.first().and_then(|bytes| {
+            String::from_utf8(bytes.clone())
+                .ok()
+                .map(|value| value.trim_matches(char::from(0)).trim().to_string())
+                .filter(|value| !value.is_empty())
+        }),
+        _ => None,
+    }
+}
+
+fn gps_coordinate(
+    value: &kamadak_exif::Value,
+    ref_value: Option<&kamadak_exif::Value>,
+) -> Option<f64> {
+    let parts = match value {
+        kamadak_exif::Value::Rational(values) if values.len() >= 3 => values,
+        _ => return None,
+    };
+    if parts.iter().take(3).any(|part| part.denom == 0) {
+        return None;
+    }
+
+    let mut coordinate = parts[0].to_f64() + parts[1].to_f64() / 60.0 + parts[2].to_f64() / 3600.0;
+    if let Some(reference) = ref_value.and_then(first_exif_ascii) {
+        if matches!(reference.as_str(), "S" | "W") {
+            coordinate = -coordinate;
+        }
+    }
+    Some(coordinate)
+}
+
+fn exposure_ev100(aperture: Option<f64>, exposure_seconds: Option<f64>, iso: Option<u32>) -> Option<f64> {
+    let aperture = aperture.filter(|value| *value > 0.0)?;
+    let exposure_seconds = exposure_seconds.filter(|value| *value > 0.0)?;
+    let iso = f64::from(iso.filter(|value| *value > 0)?);
+    Some((aperture * aperture / exposure_seconds).log2() - (iso / 100.0).log2())
+}
+
 fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
     let file = fs::File::open(file_path)?;
     let mut bufreader = std::io::BufReader::new(&file);
@@ -130,26 +203,58 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
         }
         if let Some(field) = exif.get_field(kamadak_exif::Tag::PhotographicSensitivity, In::PRIMARY)
         {
-            if let kamadak_exif::Value::Short(ref vec) = field.value {
-                if let Some(iso) = vec.first() {
-                    exif_data.iso = Some(*iso as u32);
-                }
-            }
+            exif_data.iso = first_exif_u32(&field.value);
         }
         if let Some(field) = exif.get_field(kamadak_exif::Tag::ExposureTime, In::PRIMARY) {
             exif_data.shutter_speed = Some(field.display_value().to_string());
         }
+        let exposure_seconds = exif
+            .get_field(kamadak_exif::Tag::ExposureTime, In::PRIMARY)
+            .and_then(|field| first_exif_f64(&field.value));
+        if let Some(field) = exif.get_field(kamadak_exif::Tag::ExposureBiasValue, In::PRIMARY) {
+            exif_data.exposure_bias = first_exif_f64(&field.value);
+        }
+        exif_data.ev100 = exposure_ev100(exif_data.aperture, exposure_seconds, exif_data.iso);
         if let Some(field) = exif.get_field(kamadak_exif::Tag::ImageWidth, In::PRIMARY) {
-            if let kamadak_exif::Value::Long(ref vec) = field.value {
-                if let Some(width) = vec.first() {
-                    exif_data.width = Some(*width);
-                }
+            exif_data.width = first_exif_u32(&field.value);
+        }
+        if exif_data.width.is_none() {
+            if let Some(field) = exif.get_field(kamadak_exif::Tag::PixelXDimension, In::PRIMARY) {
+                exif_data.width = first_exif_u32(&field.value);
             }
         }
         if let Some(field) = exif.get_field(kamadak_exif::Tag::ImageLength, In::PRIMARY) {
-            if let kamadak_exif::Value::Long(ref vec) = field.value {
-                if let Some(height) = vec.first() {
-                    exif_data.height = Some(*height);
+            exif_data.height = first_exif_u32(&field.value);
+        }
+        if exif_data.height.is_none() {
+            if let Some(field) = exif.get_field(kamadak_exif::Tag::PixelYDimension, In::PRIMARY) {
+                exif_data.height = first_exif_u32(&field.value);
+            }
+        }
+        if let Some(field) = exif.get_field(kamadak_exif::Tag::Orientation, In::PRIMARY) {
+            exif_data.orientation =
+                first_exif_u32(&field.value).and_then(|value| u16::try_from(value).ok());
+        }
+        if let Some(field) = exif.get_field(kamadak_exif::Tag::GPSLatitude, In::PRIMARY) {
+            let ref_value = exif
+                .get_field(kamadak_exif::Tag::GPSLatitudeRef, In::PRIMARY)
+                .map(|field| &field.value);
+            exif_data.latitude = gps_coordinate(&field.value, ref_value);
+        }
+        if let Some(field) = exif.get_field(kamadak_exif::Tag::GPSLongitude, In::PRIMARY) {
+            let ref_value = exif
+                .get_field(kamadak_exif::Tag::GPSLongitudeRef, In::PRIMARY)
+                .map(|field| &field.value);
+            exif_data.longitude = gps_coordinate(&field.value, ref_value);
+        }
+        if let Some(field) = exif.get_field(kamadak_exif::Tag::GPSAltitude, In::PRIMARY) {
+            exif_data.altitude = first_exif_f64(&field.value);
+            if let Some(altitude_ref) = exif
+                .get_field(kamadak_exif::Tag::GPSAltitudeRef, In::PRIMARY)
+                .and_then(|field| first_exif_u32(&field.value))
+            {
+                if altitude_ref == 1 {
+                    exif_data.altitude = exif_data.altitude.map(|value| -value);
                 }
             }
         }
@@ -185,19 +290,33 @@ fn collect_photo_metadata(path: &Path) -> Option<Photo> {
         .to_uppercase();
 
     let exif_data = extract_exif_data(path).unwrap_or_default();
+    let thumbnail = if is_browser_preview_file(path) {
+        generate_embedded_thumbnail(path)
+    } else {
+        None
+    };
 
     Some(Photo {
-        id: Uuid::new_v4().to_string(),
+        id: stable_photo_id(path),
         file_path: path.to_string_lossy().to_string(),
         file_name,
         file_size,
         file_type,
-        thumbnail: None, // Thumbnails generated in phase 2
+        thumbnail,
         exif: exif_data,
         created_at: Utc::now(),
         modified_at,
         paired_with: None,
     })
+}
+
+fn stable_photo_id(path: &Path) -> String {
+    let canonical = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    Uuid::new_v5(&Uuid::NAMESPACE_URL, canonical.as_bytes()).to_string()
 }
 
 fn compute_stats(photos: &[Photo]) -> PhotoStats {
@@ -239,8 +358,12 @@ fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
         let path = Path::new(&photo.file_path);
         if let Some(stem) = path.file_stem() {
             if let Some(stem_str) = stem.to_str() {
+                let parent = path
+                    .parent()
+                    .map(|parent| parent.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 base_names
-                    .entry(stem_str.to_string())
+                    .entry(format!("{parent}\0{stem_str}"))
                     .or_insert_with(Vec::new)
                     .push(i);
             }
@@ -270,6 +393,17 @@ fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
             }
         }
     }
+}
+
+fn is_browser_preview_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| {
+            matches!(
+                ext.to_lowercase().as_str(),
+                "jpg" | "jpeg" | "png" | "webp" | "gif"
+            )
+        })
 }
 
 fn load_full_resolution_image(file_path: &Path) -> Response {
@@ -315,12 +449,15 @@ async fn scan_folder_fast(folder_path: String, app: AppHandle) -> Result<ScanRes
     pair_raw_jpeg(&mut photos);
     let stats = compute_stats(&photos);
 
-    let _ = app.emit("scan-complete", &ScanProgress {
-        current: total_files,
-        total: total_files,
-        percentage: 100.0,
-        current_file: None,
-    });
+    let _ = app.emit(
+        "scan-complete",
+        &ScanProgress {
+            current: total_files,
+            total: total_files,
+            percentage: 100.0,
+            current_file: None,
+        },
+    );
 
     Ok(ScanResult { photos, stats })
 }
@@ -331,6 +468,7 @@ async fn scan_folder_fast(folder_path: String, app: AppHandle) -> Result<ScanRes
 async fn generate_thumbnails(photos: Vec<Photo>, app: AppHandle) -> Result<(), String> {
     let items: Vec<(String, String)> = photos
         .into_iter()
+        .filter(|p| p.thumbnail.is_none() || is_browser_preview_file(Path::new(&p.file_path)))
         .map(|p| (p.id, p.file_path))
         .collect();
 
@@ -440,13 +578,13 @@ async fn get_photo_stats(photos: Vec<Photo>) -> Result<PhotoStats, String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ImageAdjustments {
-    pub exposure: f64,     // -100 to 100
-    pub contrast: f64,     // -100 to 100
-    pub saturation: f64,   // -100 to 100
-    pub temperature: f64,  // -100 to 100
-    pub highlights: f64,   // -100 to 100
-    pub shadows: f64,      // -100 to 100
-    pub sharpen: f64,      // 0 to 100
+    pub exposure: f64,                 // -100 to 100
+    pub contrast: f64,                 // -100 to 100
+    pub saturation: f64,               // -100 to 100
+    pub temperature: f64,              // -100 to 100
+    pub highlights: f64,               // -100 to 100
+    pub shadows: f64,                  // -100 to 100
+    pub sharpen: f64,                  // 0 to 100
     pub curve_points: Vec<(f64, f64)>, // (x, y) in 0-255 space
 }
 
@@ -470,7 +608,11 @@ fn build_curve_lut(points: &[(f64, f64)]) -> [u8; 256] {
     let mut deltas: Vec<f64> = Vec::with_capacity(n - 1);
     for i in 0..n - 1 {
         let dx = xs[i + 1] - xs[i];
-        deltas.push(if dx.abs() < 1e-6 { 0.0 } else { (ys[i + 1] - ys[i]) / dx });
+        deltas.push(if dx.abs() < 1e-6 {
+            0.0
+        } else {
+            (ys[i + 1] - ys[i]) / dx
+        });
     }
 
     // Initial tangents
@@ -549,8 +691,8 @@ fn apply_custom_adjustments(pixels: &mut [u8], adj: &ImageAdjustments) {
     let has_temp = adj.temperature.abs() > 0.01;
     let has_high = adj.highlights.abs() > 0.01;
     let has_shad = adj.shadows.abs() > 0.01;
-    let has_curve = adj.curve_points.len() >= 2
-        && adj.curve_points.iter().any(|(x, y)| (x - y).abs() > 0.01);
+    let has_curve =
+        adj.curve_points.len() >= 2 && adj.curve_points.iter().any(|(x, y)| (x - y).abs() > 0.01);
 
     // Skip entirely if nothing custom to do
     if !has_temp && !has_high && !has_shad && !has_curve {
@@ -575,12 +717,16 @@ fn apply_custom_adjustments(pixels: &mut [u8], adj: &ImageAdjustments) {
             if has_high {
                 let w = lum_norm * lum_norm;
                 let a = 1.0 + (high_mul - 1.0) * w;
-                r *= a; g *= a; b *= a;
+                r *= a;
+                g *= a;
+                b *= a;
             }
             if has_shad {
                 let w = (1.0 - lum_norm) * (1.0 - lum_norm);
                 let a = 1.0 + (shad_mul - 1.0) * w;
-                r *= a; g *= a; b *= a;
+                r *= a;
+                g *= a;
+                b *= a;
             }
         }
 
@@ -616,11 +762,16 @@ fn apply_unsharp_mask(pixels: &mut [u8], width: u32, height: u32, amount: f64) {
                 let mut wt = 0.0f32;
                 for dy in -1i32..=1 {
                     let ny = y as i32 + dy;
-                    if ny < 0 || ny >= h as i32 { continue; }
+                    if ny < 0 || ny >= h as i32 {
+                        continue;
+                    }
                     for dx in -1i32..=1 {
                         let nx = x as i32 + dx;
-                        if nx < 0 || nx >= w as i32 { continue; }
-                        let kernel_w = (if dx == 0 { 2.0 } else { 1.0 }) * (if dy == 0 { 2.0 } else { 1.0 });
+                        if nx < 0 || nx >= w as i32 {
+                            continue;
+                        }
+                        let kernel_w =
+                            (if dx == 0 { 2.0 } else { 1.0 }) * (if dy == 0 { 2.0 } else { 1.0 });
                         sum += pixels[(ny as usize * w + nx as usize) * 4 + c] as f32 * kernel_w;
                         wt += kernel_w;
                     }
@@ -666,7 +817,10 @@ async fn denoise_image(
         if image_bytes.len() != w * h * 4 {
             return Err(format!(
                 "Expected {} bytes ({}x{}x4), got {}",
-                w * h * 4, w, h, image_bytes.len()
+                w * h * 4,
+                w,
+                h,
+                image_bytes.len()
             ));
         }
 
@@ -685,13 +839,15 @@ async fn denoise_image(
 
         // Run inference
         let mut guard = model.lock().map_err(|e| format!("Lock error: {}", e))?;
-        let session = guard.as_mut().ok_or_else(|| "Denoise model not loaded".to_string())?;
+        let session = guard
+            .as_mut()
+            .ok_or_else(|| "Denoise model not loaded".to_string())?;
 
-        let input_value = ort::value::Tensor::from_array(input)
-            .map_err(|e| format!("Input error: {}", e))?;
-        let outputs = session.run(
-            ort::inputs!["input" => input_value]
-        ).map_err(|e| format!("Inference error: {}", e))?;
+        let input_value =
+            ort::value::Tensor::from_array(input).map_err(|e| format!("Input error: {}", e))?;
+        let outputs = session
+            .run(ort::inputs!["input" => input_value])
+            .map_err(|e| format!("Inference error: {}", e))?;
 
         let output_tensor = outputs["output"]
             .downcast_ref::<ort::value::TensorValueType<f32>>()
@@ -840,23 +996,45 @@ async fn load_full_resolution_image_command(file_path: String) -> Response {
 pub struct PhotoMetadata {
     pub tags: Vec<String>,
     pub notes: String,
+    pub rating: u8,
+    pub flag: String,
 }
 
-fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {
-    let db_path = app
-        .path()
-        .app_data_dir()
-        .map_err(|e| e.to_string())?
-        .join("hologram.db");
+fn open_db(app: &AppHandle, folder_path: Option<&str>) -> Result<rusqlite::Connection, String> {
+    let db_path = if let Some(folder_path) = folder_path.filter(|path| !path.trim().is_empty()) {
+        let folder = Path::new(folder_path);
+        if !folder.is_dir() {
+            return Err(format!("Catalog folder does not exist: {folder_path}"));
+        }
+        folder.join("hologram.sql")
+    } else {
+        app.path()
+            .app_data_dir()
+            .map_err(|e| e.to_string())?
+            .join("hologram.db")
+    };
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS photo_metadata (
             photo_id TEXT PRIMARY KEY,
             tags TEXT NOT NULL DEFAULT '[]',
-            notes TEXT NOT NULL DEFAULT ''
+            notes TEXT NOT NULL DEFAULT '',
+            rating INTEGER NOT NULL DEFAULT 0,
+            flag TEXT NOT NULL DEFAULT 'none'
         )",
     )
     .map_err(|e| e.to_string())?;
+    let _ = conn.execute(
+        "ALTER TABLE photo_metadata ADD COLUMN rating INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE photo_metadata ADD COLUMN flag TEXT NOT NULL DEFAULT 'none'",
+        [],
+    );
     Ok(conn)
 }
 
@@ -864,37 +1042,96 @@ fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {
 fn set_photo_metadata(
     app: AppHandle,
     photo_id: String,
+    folder_path: Option<String>,
     tags: Vec<String>,
     notes: String,
+    rating: u8,
+    flag: String,
 ) -> Result<(), String> {
-    let conn = open_db(&app)?;
+    let conn = open_db(&app, folder_path.as_deref())?;
     let tags_json = serde_json::to_string(&tags).map_err(|e| e.to_string())?;
+    let rating = rating.min(5);
+    let flag = match flag.as_str() {
+        "pick" | "reject" => flag,
+        _ => "none".to_string(),
+    };
     conn.execute(
-        "INSERT INTO photo_metadata (photo_id, tags, notes) VALUES (?1, ?2, ?3)
-         ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes",
-        rusqlite::params![photo_id, tags_json, notes],
+        "INSERT INTO photo_metadata (photo_id, tags, notes, rating, flag) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes, rating=excluded.rating, flag=excluded.flag",
+        rusqlite::params![photo_id, tags_json, notes, rating, flag],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
+}
+
+fn read_photo_metadata(
+    conn: &rusqlite::Connection,
+    photo_ids: &[String],
+) -> HashMap<String, PhotoMetadata> {
+    let mut result = HashMap::new();
+    for photo_id in photo_ids {
+        if let Ok((tags_json, notes, rating, flag)) = conn.query_row(
+            "SELECT tags, notes, rating, flag FROM photo_metadata WHERE photo_id = ?1",
+            rusqlite::params![photo_id],
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u8>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
+        ) {
+            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
+            let flag = match flag.as_str() {
+                "pick" | "reject" => flag,
+                _ => "none".to_string(),
+            };
+            result.insert(
+                photo_id.clone(),
+                PhotoMetadata {
+                    tags,
+                    notes,
+                    rating: rating.min(5),
+                    flag,
+                },
+            );
+        }
+    }
+    result
 }
 
 #[tauri::command]
 fn get_photo_metadata(
     app: AppHandle,
     photo_ids: Vec<String>,
+    folder_path: Option<String>,
 ) -> Result<HashMap<String, PhotoMetadata>, String> {
-    let conn = open_db(&app)?;
-    let mut result = HashMap::new();
-    for photo_id in &photo_ids {
-        if let Ok((tags_json, notes)) = conn.query_row(
-            "SELECT tags, notes FROM photo_metadata WHERE photo_id = ?1",
-            rusqlite::params![photo_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
-        ) {
-            let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-            result.insert(photo_id.clone(), PhotoMetadata { tags, notes });
+    let conn = open_db(&app, folder_path.as_deref())?;
+    let mut result = read_photo_metadata(&conn, &photo_ids);
+
+    if folder_path.is_some() && result.len() < photo_ids.len() {
+        let missing_ids: Vec<String> = photo_ids
+            .iter()
+            .filter(|photo_id| !result.contains_key(*photo_id))
+            .cloned()
+            .collect();
+        if !missing_ids.is_empty() {
+            let fallback_conn = open_db(&app, None)?;
+            let fallback_metadata = read_photo_metadata(&fallback_conn, &missing_ids);
+            for (photo_id, metadata) in &fallback_metadata {
+                let tags_json = serde_json::to_string(&metadata.tags).map_err(|e| e.to_string())?;
+                conn.execute(
+                    "INSERT INTO photo_metadata (photo_id, tags, notes, rating, flag) VALUES (?1, ?2, ?3, ?4, ?5)
+                     ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes, rating=excluded.rating, flag=excluded.flag",
+                    rusqlite::params![photo_id, tags_json, metadata.notes, metadata.rating.min(5), metadata.flag],
+                )
+                .map_err(|e| e.to_string())?;
+            }
+            result.extend(fallback_metadata);
         }
     }
+
     Ok(result)
 }
 
@@ -915,9 +1152,7 @@ pub fn run() {
             let model_path = resource_dir.join("resources/dncnn_gray_blind.onnx");
 
             let session = if model_path.exists() {
-                match Session::builder()
-                    .and_then(|mut b| b.commit_from_file(&model_path))
-                {
+                match Session::builder().and_then(|mut b| b.commit_from_file(&model_path)) {
                     Ok(s) => {
                         eprintln!("DnCNN model loaded from {:?}", model_path);
                         Some(s)

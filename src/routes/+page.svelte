@@ -319,7 +319,7 @@
             const result = await HologramAPI.scanFolder(
                 folderPath,
                 (data: ThumbnailReady) => {
-                    photoStore.setThumbnail(data.id, data.thumbnail);
+                    photoStore.setThumbnail(data.id, data.thumbnail, data.embedded_jpeg_preview);
                 },
             );
             photoStore.setPhotos(result.photos);

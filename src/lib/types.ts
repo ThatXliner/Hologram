@@ -167,6 +167,7 @@ export interface ScanResult {
 export interface ThumbnailReady {
   id: string;
   thumbnail: string;
+  embedded_jpeg_preview?: EmbeddedJpegPreview | null;
 }
 
 export interface ScanProgress {

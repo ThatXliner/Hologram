@@ -28,6 +28,18 @@ pub struct EmbeddedJpegPreview {
     pub byte_size: usize,
 }
 
+#[derive(Debug, Clone)]
+pub struct RawPreview {
+    pub data: Vec<u8>,
+    pub embedded_jpeg_preview: Option<EmbeddedJpegPreview>,
+}
+
+#[derive(Debug, Clone)]
+pub struct GeneratedThumbnail {
+    pub thumbnail: String,
+    pub embedded_jpeg_preview: Option<EmbeddedJpegPreview>,
+}
+
 struct EmbeddedJpegPreviewData {
     info: EmbeddedJpegPreview,
     data: Vec<u8>,
@@ -47,36 +59,57 @@ fn extension_matches(path: &Path, extensions: &[&str]) -> bool {
         .is_some_and(|ext| extensions.contains(&ext.to_lowercase().as_str()))
 }
 
-/// Convert a RAW file to JPEG bytes using LibRaw.
-/// Results are cached on disk keyed by file path + mtime + dimension.
-pub fn convert_raw_to_jpeg(file_path: &Path, max_dimension: u32) -> Result<Vec<u8>> {
+/// Convert a RAW file to browser-friendly JPEG bytes.
+/// This prefers the camera's embedded JPEG preview and only falls back to a
+/// full LibRaw render when the file has no usable embedded JPEG.
+pub fn convert_raw_preview_to_jpeg(file_path: &Path, max_dimension: u32) -> Result<RawPreview> {
     let cache_dir = raw_preview_cache_dir();
-    let cache_key = raw_preview_cache_key(file_path, max_dimension);
+    let cache_key = raw_preview_cache_key(file_path, max_dimension, "preview");
     let cache_path = cache_dir.join(&cache_key);
 
-    if cache_path.exists() {
-        if let Ok(data) = fs::read(&cache_path) {
-            if !data.is_empty() {
-                return Ok(data);
-            }
-        }
+    if let Some(data) = read_cached_jpeg(&cache_path) {
+        return Ok(RawPreview {
+            data,
+            embedded_jpeg_preview: read_cached_preview_info(&cache_path),
+        });
     }
 
-    let data = if max_dimension <= 1024 {
-        extract_embedded_raw_preview(file_path, max_dimension)
-            .or_else(|_| render_raw_with_libraw(file_path, max_dimension))?
-    } else {
-        render_raw_with_libraw(file_path, max_dimension)?
-    };
+    let preview = extract_embedded_raw_preview(file_path, max_dimension).or_else(|_| {
+        render_raw_with_libraw(file_path, max_dimension).map(|data| RawPreview {
+            data,
+            embedded_jpeg_preview: None,
+        })
+    })?;
 
-    let _ = fs::write(&cache_path, &data);
+    write_cached_jpeg(&cache_path, &preview.data);
+    write_cached_preview_info(&cache_path, preview.embedded_jpeg_preview.as_ref());
+    Ok(preview)
+}
+
+/// Render RAW pixels through LibRaw. This is intentionally separate from the
+/// preview path so editing/exporting can request a true render without being
+/// served a cached embedded JPEG preview.
+pub fn render_raw_to_jpeg(file_path: &Path, max_dimension: u32) -> Result<Vec<u8>> {
+    let cache_dir = raw_preview_cache_dir();
+    let cache_key = raw_preview_cache_key(file_path, max_dimension, "render");
+    let cache_path = cache_dir.join(&cache_key);
+
+    if let Some(data) = read_cached_jpeg(&cache_path) {
+        return Ok(data);
+    }
+
+    let data = render_raw_with_libraw(file_path, max_dimension)?;
+    write_cached_jpeg(&cache_path, &data);
     Ok(data)
 }
 
-pub fn generate_thumbnail(file_path: &Path) -> Result<String> {
+pub fn generate_thumbnail_with_info(file_path: &Path) -> Result<GeneratedThumbnail> {
     if is_raw_file(file_path) {
-        let data = convert_raw_to_jpeg(file_path, 400)?;
-        return Ok(base64::engine::general_purpose::STANDARD.encode(data));
+        let preview = convert_raw_preview_to_jpeg(file_path, 400)?;
+        return Ok(GeneratedThumbnail {
+            thumbnail: base64::engine::general_purpose::STANDARD.encode(preview.data),
+            embedded_jpeg_preview: preview.embedded_jpeg_preview,
+        });
     }
 
     let img = image::open(file_path)?;
@@ -84,17 +117,16 @@ pub fn generate_thumbnail(file_path: &Path) -> Result<String> {
     let thumbnail = img.thumbnail(400, 400);
     let buffer = encode_jpeg(&thumbnail, 90)?;
 
-    Ok(base64::engine::general_purpose::STANDARD.encode(buffer))
+    Ok(GeneratedThumbnail {
+        thumbnail: base64::engine::general_purpose::STANDARD.encode(buffer),
+        embedded_jpeg_preview: None,
+    })
 }
 
 pub fn generate_embedded_thumbnail(file_path: &Path) -> Option<String> {
     extract_embedded_jpeg_thumbnail(file_path)
         .ok()
         .map(|data| base64::engine::general_purpose::STANDARD.encode(data))
-}
-
-pub fn inspect_embedded_jpeg_preview(file_path: &Path) -> Result<EmbeddedJpegPreview> {
-    Ok(extract_largest_embedded_jpeg_preview(file_path)?.info)
 }
 
 fn read_exif(file_path: &Path) -> Result<Exif> {
@@ -184,11 +216,12 @@ fn raw_preview_cache_dir() -> PathBuf {
     dir
 }
 
-/// Generate a cache key from file path + modification time + max dimension.
-fn raw_preview_cache_key(file_path: &Path, max_dimension: u32) -> String {
+/// Generate a cache key from mode + file path + modification time + max dimension.
+fn raw_preview_cache_key(file_path: &Path, max_dimension: u32, cache_kind: &str) -> String {
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    cache_kind.hash(&mut hasher);
     file_path.hash(&mut hasher);
     if let Ok(meta) = fs::metadata(file_path) {
         if let Ok(modified) = meta.modified() {
@@ -197,6 +230,36 @@ fn raw_preview_cache_key(file_path: &Path, max_dimension: u32) -> String {
     }
     max_dimension.hash(&mut hasher);
     format!("{:x}.jpeg", hasher.finish())
+}
+
+fn read_cached_jpeg(cache_path: &Path) -> Option<Vec<u8>> {
+    fs::read(cache_path).ok().filter(|data| !data.is_empty())
+}
+
+fn write_cached_jpeg(cache_path: &Path, data: &[u8]) {
+    let _ = fs::write(cache_path, data);
+}
+
+fn preview_info_cache_path(cache_path: &Path) -> PathBuf {
+    cache_path.with_extension("json")
+}
+
+fn read_cached_preview_info(cache_path: &Path) -> Option<EmbeddedJpegPreview> {
+    let info_path = preview_info_cache_path(cache_path);
+    fs::read(info_path)
+        .ok()
+        .and_then(|data| serde_json::from_slice(&data).ok())
+}
+
+fn write_cached_preview_info(cache_path: &Path, info: Option<&EmbeddedJpegPreview>) {
+    let info_path = preview_info_cache_path(cache_path);
+    if let Some(info) = info {
+        if let Ok(data) = serde_json::to_vec(info) {
+            let _ = fs::write(info_path, data);
+        }
+    } else {
+        let _ = fs::remove_file(info_path);
+    }
 }
 
 fn encode_jpeg(image: &DynamicImage, quality: u8) -> Result<Vec<u8>> {
@@ -238,11 +301,14 @@ fn extract_largest_embedded_jpeg_preview(file_path: &Path) -> Result<EmbeddedJpe
     })
 }
 
-fn extract_embedded_raw_preview(file_path: &Path, max_dimension: u32) -> Result<Vec<u8>> {
+fn extract_embedded_raw_preview(file_path: &Path, max_dimension: u32) -> Result<RawPreview> {
     let preview = extract_largest_embedded_jpeg_preview(file_path)?;
     let image = image::load_from_memory(&preview.data)?;
     let image = apply_exif_orientation(image, read_exif_orientation_from_bytes(&preview.data));
-    bounded_jpeg_from_image(image, max_dimension)
+    Ok(RawPreview {
+        data: bounded_jpeg_from_image(image, max_dimension)?,
+        embedded_jpeg_preview: Some(preview.info),
+    })
 }
 
 fn render_raw_with_libraw(file_path: &Path, max_dimension: u32) -> Result<Vec<u8>> {

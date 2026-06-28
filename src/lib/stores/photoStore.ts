@@ -1,5 +1,13 @@
 import { writable, derived } from "svelte/store";
-import type { CullFlag, Photo, PhotoFilter, PhotoStats, AppState, ScanProgress } from "../types.ts";
+import type {
+  CullFlag,
+  EmbeddedJpegPreview,
+  Photo,
+  PhotoFilter,
+  PhotoStats,
+  AppState,
+  ScanProgress,
+} from "../types.ts";
 import { HologramAPI } from "../api.ts";
 
 const RAW_FILE_TYPES = new Set([
@@ -33,7 +41,12 @@ function createPhotoStore() {
   }
 
   // Batch thumbnail updates: accumulate then flush in one store update
-  let pendingThumbnails = new Map<string, string>();
+  type PendingThumbnail = {
+    thumbnail: string;
+    embeddedJpegPreview?: EmbeddedJpegPreview | null;
+  };
+
+  let pendingThumbnails = new Map<string, PendingThumbnail>();
   let flushScheduled = false;
 
   function normalizeRating(rating: number | undefined): number {
@@ -52,20 +65,55 @@ function createPhotoStore() {
     pendingThumbnails = new Map();
 
     update((state) => {
-      for (const [id, thumbnail] of batch) {
+      const photos = [...state.photos];
+      const filteredPhotos = [...state.filteredPhotos];
+
+      for (const [id, patch] of batch) {
         const pi = photoIndex.get(id);
-        if (pi !== undefined) {
-          state.photos[pi] = { ...state.photos[pi], thumbnail };
-        }
         const fi = filteredIndex.get(id);
+        const source = pi !== undefined ? photos[pi] : fi !== undefined ? filteredPhotos[fi] : null;
+        const pairedId = source?.paired_with;
+
+        if (pi !== undefined) {
+          photos[pi] = {
+            ...photos[pi],
+            thumbnail: patch.thumbnail,
+            ...(patch.embeddedJpegPreview !== undefined
+              ? { embedded_jpeg_preview: patch.embeddedJpegPreview }
+              : {}),
+          };
+        }
         if (fi !== undefined) {
-          state.filteredPhotos[fi] = { ...state.filteredPhotos[fi], thumbnail };
+          filteredPhotos[fi] = {
+            ...filteredPhotos[fi],
+            thumbnail: patch.thumbnail,
+            ...(patch.embeddedJpegPreview !== undefined
+              ? { embedded_jpeg_preview: patch.embeddedJpegPreview }
+              : {}),
+          };
+        }
+
+        if (patch.embeddedJpegPreview !== undefined && pairedId) {
+          const pairedPi = photoIndex.get(pairedId);
+          if (pairedPi !== undefined) {
+            photos[pairedPi] = {
+              ...photos[pairedPi],
+              paired_raw_embedded_jpeg_preview: patch.embeddedJpegPreview,
+            };
+          }
+          const pairedFi = filteredIndex.get(pairedId);
+          if (pairedFi !== undefined) {
+            filteredPhotos[pairedFi] = {
+              ...filteredPhotos[pairedFi],
+              paired_raw_embedded_jpeg_preview: patch.embeddedJpegPreview,
+            };
+          }
         }
       }
       return {
         ...state,
-        photos: [...state.photos],
-        filteredPhotos: [...state.filteredPhotos],
+        photos,
+        filteredPhotos,
       };
     });
   }
@@ -131,8 +179,12 @@ function createPhotoStore() {
         rebuildIndex(newState);
         return newState;
       }),
-    setThumbnail: (id: string, thumbnail: string) => {
-      pendingThumbnails.set(id, thumbnail);
+    setThumbnail: (
+      id: string,
+      thumbnail: string,
+      embeddedJpegPreview?: EmbeddedJpegPreview | null,
+    ) => {
+      pendingThumbnails.set(id, { thumbnail, embeddedJpegPreview });
       if (!flushScheduled) {
         flushScheduled = true;
         requestAnimationFrame(flushThumbnails);

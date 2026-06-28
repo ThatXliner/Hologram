@@ -22,8 +22,8 @@ use zip::{CompressionMethod, ZipWriter};
 
 mod raw_preview;
 use raw_preview::{
-    convert_raw_to_jpeg, generate_embedded_thumbnail, generate_thumbnail,
-    inspect_embedded_jpeg_preview, is_raw_file, is_supported_file, EmbeddedJpegPreview,
+    convert_raw_preview_to_jpeg, generate_embedded_thumbnail, generate_thumbnail_with_info,
+    is_raw_file, is_supported_file, render_raw_to_jpeg, EmbeddedJpegPreview,
 };
 
 /// Managed state holding the DnCNN ONNX session for AI denoising.
@@ -96,6 +96,7 @@ pub struct ScanProgress {
 pub struct ThumbnailReady {
     pub id: String,
     pub thumbnail: String,
+    pub embedded_jpeg_preview: Option<EmbeddedJpegPreview>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -322,13 +323,7 @@ fn collect_photo_metadata(path: &Path) -> Option<Photo> {
         .unwrap_or("unknown")
         .to_uppercase();
 
-    let is_raw = is_raw_file(path);
     let exif_data = extract_exif_data(path).unwrap_or_default();
-    let embedded_jpeg_preview = if is_raw {
-        inspect_embedded_jpeg_preview(path).ok()
-    } else {
-        None
-    };
     let thumbnail = if is_browser_preview_file(path) {
         generate_embedded_thumbnail(path)
     } else {
@@ -346,7 +341,7 @@ fn collect_photo_metadata(path: &Path) -> Option<Photo> {
         created_at: Utc::now(),
         modified_at,
         paired_with: None,
-        embedded_jpeg_preview,
+        embedded_jpeg_preview: None,
         paired_raw_embedded_jpeg_preview: None,
         tags: None,
         notes: None,
@@ -465,13 +460,15 @@ fn is_browser_preview_file(path: &Path) -> bool {
 }
 
 fn load_full_resolution_image(file_path: &Path) -> Response {
-    // For RAW files, render a browser-friendly JPEG through LibRaw.
+    const RAW_VIEWER_PREVIEW_MAX_DIMENSION: u32 = 4096;
+
+    // For RAW files, prefer the camera's embedded JPEG preview. A full LibRaw
+    // render is still available to editing/export paths, but it is too slow for
+    // every viewer navigation and preload.
     if is_raw_file(file_path) {
-        if let Ok(data) = convert_raw_to_jpeg(file_path, 8192) {
-            return tauri::ipc::Response::new(data);
-        }
-        // If LibRaw fails, fall through to raw bytes.
-        let data = fs::read(file_path).unwrap_or_default();
+        let data = convert_raw_preview_to_jpeg(file_path, RAW_VIEWER_PREVIEW_MAX_DIMENSION)
+            .map(|preview| preview.data)
+            .unwrap_or_default();
         return tauri::ipc::Response::new(data);
     }
 
@@ -535,10 +532,11 @@ async fn generate_thumbnails(photos: Vec<Photo>, app: AppHandle) -> Result<(), S
     tokio::task::spawn_blocking(move || {
         items.par_iter().for_each(|(id, file_path)| {
             let path = Path::new(file_path);
-            if let Ok(thumb) = generate_thumbnail(path) {
+            if let Ok(generated) = generate_thumbnail_with_info(path) {
                 let event = ThumbnailReady {
                     id: id.clone(),
-                    thumbnail: thumb,
+                    thumbnail: generated.thumbnail,
+                    embedded_jpeg_preview: generated.embedded_jpeg_preview,
                 };
                 let _ = app.emit("thumbnail-ready", &event);
             }
@@ -962,7 +960,7 @@ async fn apply_edits_and_save(
 
     // Load the full-res image (handle RAW via LibRaw conversion)
     let image_bytes = if is_raw_file(path) {
-        convert_raw_to_jpeg(path, 8192).map_err(|e| format!("RAW conversion failed: {}", e))?
+        render_raw_to_jpeg(path, 8192).map_err(|e| format!("RAW conversion failed: {}", e))?
     } else {
         fs::read(path).map_err(|e| format!("Failed to read file: {}", e))?
     };

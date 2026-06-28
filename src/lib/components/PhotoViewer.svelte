@@ -46,6 +46,11 @@
         fullRes: boolean;
     };
     type EmbeddedPreview = NonNullable<Photo["embedded_jpeg_preview"]>;
+    type CompareCandidate = {
+        photo: Photo;
+        distance: number;
+        index: number;
+    };
 
     let { photos, allPhotos, startIndex = 0 }: Props = $props();
 
@@ -76,12 +81,18 @@
     let editedPreviewUrl = $state<string | null>(null);
     let autoAdvance = $state(true);
     let compareMode = $state(false);
+    let comparePhotoId = $state<string | null>(null);
     let customPresets = $state<RawProcessingPreset[]>([]);
     let selectedPresetId = $state("builtin-neutral");
     let presetInput: HTMLInputElement | undefined = $state();
     const allPresets = $derived([...builtInRawPresets, ...customPresets]);
     const activePreset = $derived(allPresets.find((preset) => preset.id === selectedPresetId) ?? allPresets[0] ?? null);
-    const comparePhoto = $derived(pairedPhoto ?? photos[currentIndex + 1] ?? photos[currentIndex - 1] ?? null);
+    const compareCandidates = $derived(getCompareCandidates());
+    const comparePhoto = $derived(
+        compareCandidates.find((candidate) => candidate.photo.id === comparePhotoId)?.photo ??
+            compareCandidates[0]?.photo ??
+            null,
+    );
 
     let imageViewport = $state<HTMLDivElement | null>(null);
     let viewportWidth = $state(0);
@@ -106,6 +117,18 @@
 
     $effect(() => {
         notesValue = activePhoto?.notes ?? "";
+    });
+
+    $effect(() => {
+        const fallbackId = compareCandidates[0]?.photo.id ?? null;
+        const hasSelection = compareCandidates.some((candidate) => candidate.photo.id === comparePhotoId);
+
+        if (!hasSelection) {
+            comparePhotoId = fallbackId;
+        }
+        if (!fallbackId && compareMode) {
+            compareMode = false;
+        }
     });
 
     $effect(() => {
@@ -280,6 +303,45 @@
 
     function navigateNext() {
         if (hasNext) navigateTo(currentIndex + 1);
+    }
+
+    function isSamePhotoSet(item: Photo | undefined): boolean {
+        if (!item || !photo) return false;
+
+        const currentIds = new Set<string>([photo.id]);
+        if (photo.paired_with) currentIds.add(photo.paired_with);
+        if (pairedPhoto?.id) currentIds.add(pairedPhoto.id);
+        if (pairedPhoto?.paired_with) currentIds.add(pairedPhoto.paired_with);
+
+        return currentIds.has(item.id) || (!!item.paired_with && currentIds.has(item.paired_with));
+    }
+
+    function getCompareCandidates(): CompareCandidate[] {
+        const candidates: CompareCandidate[] = [];
+
+        for (let index = 0; index < photos.length; index += 1) {
+            const item = photos[index];
+            if (!item || isSamePhotoSet(item)) continue;
+            candidates.push({
+                photo: item,
+                index,
+                distance: Math.abs(index - currentIndex),
+            });
+        }
+
+        return candidates.sort((a, b) => a.distance - b.distance || a.index - b.index);
+    }
+
+    function compareOptionLabel(candidate: CompareCandidate): string {
+        const direction =
+            candidate.index > currentIndex ? `+${candidate.index - currentIndex}` : `${candidate.index - currentIndex}`;
+        return `${direction}  ${candidate.photo.file_name}`;
+    }
+
+    function handleCompareSelectionChange(event: Event) {
+        const select = event.currentTarget as HTMLSelectElement;
+        comparePhotoId = select.value || null;
+        compareMode = !!comparePhotoId;
     }
 
     async function toggleRawJpeg() {
@@ -935,11 +997,26 @@
                         compareMode = !!comparePhoto && !compareMode;
                     }}
                     disabled={!comparePhoto}
-                    title="Diff mode"
+                    title={comparePhoto ? `Compare with ${comparePhoto.file_name}` : "No other photo to compare"}
                 >
                     <Columns2 size={14} />
-                    Diff
+                    Compare
                 </button>
+                {#if compareCandidates.length > 0}
+                    <select
+                        class="h-8 w-32 max-w-[28vw] rounded-md border border-white/10 bg-white/10 px-2 text-xs font-semibold text-white/75 outline-none transition-colors hover:bg-white/15 focus:border-primary sm:w-48 md:w-64"
+                        bind:value={comparePhotoId}
+                        onclick={(event) => event.stopPropagation()}
+                        onchange={handleCompareSelectionChange}
+                        title="Choose comparison photo"
+                    >
+                        {#each compareCandidates as candidate (candidate.photo.id)}
+                            <option class="bg-black text-white" value={candidate.photo.id}>
+                                {compareOptionLabel(candidate)}
+                            </option>
+                        {/each}
+                    </select>
+                {/if}
                 <button
                     class="inline-flex h-8 items-center gap-1.5 rounded-md bg-white/10 px-3 text-xs font-semibold text-white/70 transition-colors hover:bg-white/15 hover:text-white"
                     onclick={(event) => {
@@ -1022,6 +1099,9 @@
                                     onload={(event) => handleActiveImageLoad(event, activePhoto.id)}
                                     onerror={(event) => void handleActiveImageError(event, activePhoto.id)}
                                 />
+                                <div class="absolute inset-x-3 bottom-3 truncate rounded-full bg-black/70 px-2 py-0.5 text-center text-xs text-white/65">
+                                    {activePhoto.file_name}
+                                </div>
                             </div>
                             <div class="relative flex min-w-0 items-center justify-center overflow-hidden bg-black">
                                 <div class="absolute left-3 top-3 z-10 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white/75">

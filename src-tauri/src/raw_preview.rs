@@ -4,6 +4,7 @@ use exif::{Exif, In, Reader, Tag, Value};
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, RgbImage};
 use rsraw::{ImageFormat as RawImageFormat, RawImage, ThumbFormat, BIT_DEPTH_8};
+use serde::{Deserialize, Serialize};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -19,6 +20,18 @@ static SUPPORTED_EXTENSIONS: &[&str] = &[
     "mos", "mrw", "nef", "nrw", "obm", "orf", "pef", "ptx", "pxn", "raf", "raw", "rw2", "rwl",
     "rwz", "sr2", "srf", "srw", "x3f",
 ];
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct EmbeddedJpegPreview {
+    pub width: u32,
+    pub height: u32,
+    pub byte_size: usize,
+}
+
+struct EmbeddedJpegPreviewData {
+    info: EmbeddedJpegPreview,
+    data: Vec<u8>,
+}
 
 pub fn is_supported_file(path: &Path) -> bool {
     extension_matches(path, SUPPORTED_EXTENSIONS)
@@ -78,6 +91,10 @@ pub fn generate_embedded_thumbnail(file_path: &Path) -> Option<String> {
     extract_embedded_jpeg_thumbnail(file_path)
         .ok()
         .map(|data| base64::engine::general_purpose::STANDARD.encode(data))
+}
+
+pub fn inspect_embedded_jpeg_preview(file_path: &Path) -> Result<EmbeddedJpegPreview> {
+    Ok(extract_largest_embedded_jpeg_preview(file_path)?.info)
 }
 
 fn read_exif(file_path: &Path) -> Result<Exif> {
@@ -195,7 +212,7 @@ fn bounded_jpeg_from_image(image: DynamicImage, max_dimension: u32) -> Result<Ve
     encode_jpeg(&preview, 90)
 }
 
-fn extract_embedded_raw_preview(file_path: &Path, max_dimension: u32) -> Result<Vec<u8>> {
+fn extract_largest_embedded_jpeg_preview(file_path: &Path) -> Result<EmbeddedJpegPreviewData> {
     let raw_bytes = fs::read(file_path)?;
     let mut raw_image = RawImage::open(&raw_bytes)?;
     let preview = raw_image
@@ -206,10 +223,23 @@ fn extract_embedded_raw_preview(file_path: &Path, max_dimension: u32) -> Result<
                 && thumbnail.width > 0
                 && thumbnail.height > 0
                 && !thumbnail.data.is_empty()
+                && thumbnail.data.starts_with(&[0xFF, 0xD8])
         })
         .max_by_key(|thumbnail| u64::from(thumbnail.width) * u64::from(thumbnail.height))
         .ok_or_else(|| anyhow::anyhow!("RAW file does not contain a JPEG preview"))?;
 
+    Ok(EmbeddedJpegPreviewData {
+        info: EmbeddedJpegPreview {
+            width: preview.width,
+            height: preview.height,
+            byte_size: preview.data.len(),
+        },
+        data: preview.data,
+    })
+}
+
+fn extract_embedded_raw_preview(file_path: &Path, max_dimension: u32) -> Result<Vec<u8>> {
+    let preview = extract_largest_embedded_jpeg_preview(file_path)?;
     let image = image::load_from_memory(&preview.data)?;
     let image = apply_exif_orientation(image, read_exif_orientation_from_bytes(&preview.data));
     bounded_jpeg_from_image(image, max_dimension)

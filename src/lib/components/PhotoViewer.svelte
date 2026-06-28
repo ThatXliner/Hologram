@@ -13,21 +13,27 @@
         ChevronRight,
         Circle,
         Clock,
+        Columns2,
         ExternalLink,
         FileImage,
         Image,
         Loader2,
+        Info,
         MapPin,
         Maximize2,
         Monitor,
         SlidersHorizontal,
         Star,
+        Trash2,
+        Upload,
         X,
         XCircle,
         ZoomIn,
         ZoomOut,
     } from "@lucide/svelte";
     import ImageEditor from "./ImageEditor.svelte";
+    import { builtInRawPresets, parseRawPresetFile, presetSummary } from "../presets.ts";
+    import type { RawProcessingPreset } from "../types.ts";
 
     interface Props {
         photos: Photo[];
@@ -39,6 +45,7 @@
         url: string;
         fullRes: boolean;
     };
+    type EmbeddedPreview = NonNullable<Photo["embedded_jpeg_preview"]>;
 
     let { photos, allPhotos, startIndex = 0 }: Props = $props();
 
@@ -50,6 +57,7 @@
     const pairedPhoto = $derived(isPaired ? allPhotos.find((item) => item.id === photo.paired_with) : null);
     let viewingRaw = $state(false);
     const activePhoto = $derived(viewingRaw && pairedPhoto ? pairedPhoto : photo);
+    const activeEmbeddedPreview = $derived(embeddedPreviewInfo(activePhoto));
 
     let currentBlobUrl = $state<string | null>(null);
     let currentBlobPhotoId = $state<string | null>(null);
@@ -67,6 +75,13 @@
     let showEditor = $state(false);
     let editedPreviewUrl = $state<string | null>(null);
     let autoAdvance = $state(true);
+    let compareMode = $state(false);
+    let customPresets = $state<RawProcessingPreset[]>([]);
+    let selectedPresetId = $state("builtin-neutral");
+    let presetInput: HTMLInputElement | undefined = $state();
+    const allPresets = $derived([...builtInRawPresets, ...customPresets]);
+    const activePreset = $derived(allPresets.find((preset) => preset.id === selectedPresetId) ?? allPresets[0] ?? null);
+    const comparePhoto = $derived(pairedPhoto ?? photos[currentIndex + 1] ?? photos[currentIndex - 1] ?? null);
 
     let imageViewport = $state<HTMLDivElement | null>(null);
     let viewportWidth = $state(0);
@@ -109,6 +124,7 @@
     });
 
     onMount(() => {
+        loadCustomPresets();
         photoStore.setSelectedIndex(currentIndex);
         void loadCurrentPhoto();
     });
@@ -197,6 +213,52 @@
     function clearEditedPreview() {
         revokeBlobUrl(editedPreviewUrl);
         editedPreviewUrl = null;
+    }
+
+    function loadCustomPresets() {
+        try {
+            const raw = localStorage.getItem("hologram.rawPresets");
+            customPresets = raw ? JSON.parse(raw) : [];
+        } catch {
+            customPresets = [];
+        }
+    }
+
+    function saveCustomPresets(next: RawProcessingPreset[]) {
+        customPresets = next;
+        localStorage.setItem("hologram.rawPresets", JSON.stringify(next));
+    }
+
+    async function importPreset(event: Event) {
+        const input = event.currentTarget as HTMLInputElement;
+        const file = input.files?.[0];
+        if (!file) return;
+        try {
+            const text = await file.text();
+            const preset = parseRawPresetFile(file.name, text);
+            saveCustomPresets([preset, ...customPresets.filter((item) => item.name !== preset.name)]);
+            selectedPresetId = preset.id;
+            showEditor = true;
+        } catch (error) {
+            console.error("Failed to import preset:", error);
+        } finally {
+            input.value = "";
+        }
+    }
+
+    function deletePreset(id: string) {
+        saveCustomPresets(customPresets.filter((preset) => preset.id !== id));
+        if (selectedPresetId === id) selectedPresetId = "builtin-neutral";
+    }
+
+    function applySelectedPreset() {
+        if (!activePreset) return;
+        showEditor = true;
+    }
+
+    function handlePresetSaved(preset: RawProcessingPreset) {
+        saveCustomPresets([preset, ...customPresets.filter((item) => item.name !== preset.name)]);
+        selectedPresetId = preset.id;
     }
 
     function navigateTo(index: number) {
@@ -290,6 +352,11 @@
             case "E":
                 event.preventDefault();
                 showEditor = !showEditor;
+                break;
+            case "d":
+            case "D":
+                event.preventDefault();
+                compareMode = !!comparePhoto && !compareMode;
                 break;
             case "o":
             case "O":
@@ -725,6 +792,62 @@
         return `${coordinates} / ${Math.round(altitude)}m`;
     }
 
+    function embeddedPreviewInfo(item: Photo | undefined): EmbeddedPreview | null {
+        return item?.embedded_jpeg_preview ?? item?.paired_raw_embedded_jpeg_preview ?? null;
+    }
+
+    function formatEmbeddedPreview(preview: EmbeddedPreview): string {
+        const dimensions = preview.width && preview.height ? `${preview.width} x ${preview.height}` : "JPEG";
+        const size = preview.byte_size ? ` / ${formatFileSize(preview.byte_size)}` : "";
+        return `${dimensions}${size}`;
+    }
+
+    function embeddedPreviewTitle(preview: EmbeddedPreview): string {
+        return `RAW includes an embedded JPEG preview (${formatEmbeddedPreview(preview)}). Consider shooting RAW only instead of RAW+JPEG.`;
+    }
+
+    function metadataRows(item: Photo) {
+        const embeddedPreview = embeddedPreviewInfo(item);
+        return [
+            ["File name", item.file_name],
+            ["Path", item.file_path],
+            ["Type", item.file_type],
+            ["Size", formatFileSize(item.file_size)],
+            ["Embedded JPEG preview", embeddedPreview ? formatEmbeddedPreview(embeddedPreview) : undefined],
+            ["Modified", formatDate(item.modified_at)],
+            ["Camera make", item.exif.camera_make],
+            ["Camera model", item.exif.camera_model],
+            ["Lens", item.exif.lens_model],
+            ["Focal length", formatFocalLength(item.exif.focal_length)],
+            ["Aperture", formatAperture(item.exif.aperture)],
+            ["Shutter", item.exif.shutter_speed],
+            ["ISO", item.exif.iso?.toString()],
+            ["Exposure bias", formatEv(item.exif.exposure_bias)],
+            ["EV100", formatEv100(item.exif.ev100)],
+            ["Exposure mode", item.exif.exposure_mode],
+            ["Flash", item.exif.flash],
+            ["White balance", item.exif.white_balance],
+            ["Date taken", item.exif.date_taken ? formatDate(item.exif.date_taken) : undefined],
+            ["Dimensions", item.exif.width && item.exif.height ? `${item.exif.width} x ${item.exif.height}` : undefined],
+            ["Orientation", item.exif.orientation?.toString()],
+            ["Location", formatLocation(item.exif.latitude, item.exif.longitude, item.exif.altitude)],
+            ["Rating", item.rating != null ? `${item.rating} stars` : undefined],
+            ["Flag", item.flag],
+            ["Tags", (item.tags ?? []).join(", ")],
+            ["Notes", item.notes],
+        ].filter(([, value]) => value != null && value !== "") as [string, string][];
+    }
+
+    function compareLabel(item: Photo | null, fallback: string): string {
+        if (!item) return fallback;
+        if (pairedPhoto?.id === item.id) return is_raw_file_label(item) ? "RAW" : "JPEG";
+        return fallback;
+    }
+
+    function is_raw_file_label(item: Photo): boolean {
+        return !["JPEG", "JPG", "PNG", "WEBP", "GIF"].includes(item.file_type.toUpperCase());
+    }
+
     function ratingButtonClass(active: boolean): string {
         return [
             "grid h-8 w-8 place-items-center rounded-md transition-colors",
@@ -764,6 +887,16 @@
                     </button>
                 {/if}
 
+                {#if activeEmbeddedPreview}
+                    <span
+                        class="grid h-7 w-7 place-items-center rounded-full bg-primary/90 text-primary-foreground"
+                        title={embeddedPreviewTitle(activeEmbeddedPreview)}
+                        aria-label="RAW includes embedded JPEG preview"
+                    >
+                        <Info size={14} />
+                    </span>
+                {/if}
+
                 {#if activePhoto.flag === "pick"}
                     <span class="inline-flex items-center gap-1 rounded-full bg-pick px-2 py-0.5 text-xs font-bold text-black">
                         <Check size={12} />
@@ -793,6 +926,20 @@
                     {/each}
                 </div>
 
+                <button
+                    class="inline-flex h-8 items-center gap-1.5 rounded-md bg-white/10 px-3 text-xs font-semibold text-white/70 transition-colors hover:bg-white/15 hover:text-white"
+                    class:bg-primary={compareMode}
+                    class:text-primary-foreground={compareMode}
+                    onclick={(event) => {
+                        event.stopPropagation();
+                        compareMode = !!comparePhoto && !compareMode;
+                    }}
+                    disabled={!comparePhoto}
+                    title="Diff mode"
+                >
+                    <Columns2 size={14} />
+                    Diff
+                </button>
                 <button
                     class="inline-flex h-8 items-center gap-1.5 rounded-md bg-white/10 px-3 text-xs font-semibold text-white/70 transition-colors hover:bg-white/15 hover:text-white"
                     onclick={(event) => {
@@ -860,6 +1007,42 @@
                     {#if loadError && !getImageSrc()}
                         <div class="rounded-lg border border-white/10 bg-white/5 p-6 text-center text-white/55">
                             <p>{loadError}</p>
+                        </div>
+                    {:else if compareMode && comparePhoto}
+                        <div class="grid h-full w-full grid-cols-2 gap-px bg-white/10">
+                            <div class="relative flex min-w-0 items-center justify-center overflow-hidden bg-black">
+                                <div class="absolute left-3 top-3 z-10 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white/75">
+                                    {compareLabel(activePhoto, "Active")}
+                                </div>
+                                <img
+                                    src={getImageSrc()}
+                                    alt={activePhoto.file_name}
+                                    class="photo-preview-image max-h-full max-w-full object-contain"
+                                    draggable="false"
+                                    onload={(event) => handleActiveImageLoad(event, activePhoto.id)}
+                                    onerror={(event) => void handleActiveImageError(event, activePhoto.id)}
+                                />
+                            </div>
+                            <div class="relative flex min-w-0 items-center justify-center overflow-hidden bg-black">
+                                <div class="absolute left-3 top-3 z-10 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white/75">
+                                    {compareLabel(comparePhoto, "Compare")}
+                                </div>
+                                {#if getVisiblePreviewSrc(comparePhoto)}
+                                    <img
+                                        src={getVisiblePreviewSrc(comparePhoto)}
+                                        alt={comparePhoto.file_name}
+                                        class="photo-preview-image max-h-full max-w-full object-contain"
+                                        draggable="false"
+                                    />
+                                {:else}
+                                    <div class="rounded-lg border border-white/10 bg-white/5 p-6 text-center text-white/55">
+                                        <p>No preview</p>
+                                    </div>
+                                {/if}
+                                <div class="absolute inset-x-3 bottom-3 truncate rounded-full bg-black/70 px-2 py-0.5 text-center text-xs text-white/65">
+                                    {comparePhoto.file_name}
+                                </div>
+                            </div>
                         </div>
                     {:else}
                         <img
@@ -958,10 +1141,67 @@
                     </div>
                 </section>
 
+                <section class="mb-5 rounded-lg border border-border bg-background p-3">
+                    <div class="mb-3 flex items-center justify-between gap-2">
+                        <h3 class="text-xs font-bold uppercase text-foreground">RAW Presets</h3>
+                        <button
+                            class="grid h-7 w-7 place-items-center rounded-md bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            onclick={() => presetInput?.click()}
+                            title="Import preset"
+                        >
+                            <Upload size={13} />
+                        </button>
+                        <input
+                            bind:this={presetInput}
+                            type="file"
+                            accept=".xmp,.cube,.json"
+                            class="hidden"
+                            onchange={(event) => void importPreset(event)}
+                        />
+                    </div>
+                    <div class="space-y-2">
+                        <div class="flex gap-2">
+                            <select
+                                class="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/40"
+                                bind:value={selectedPresetId}
+                            >
+                                {#each allPresets as preset (preset.id)}
+                                    <option value={preset.id}>{preset.name}</option>
+                                {/each}
+                            </select>
+                            <button
+                                class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-primary px-2 text-xs font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+                                onclick={applySelectedPreset}
+                            >
+                                Apply
+                            </button>
+                            {#if activePreset && activePreset.source !== "built-in"}
+                                <button
+                                    class="grid h-8 w-8 place-items-center rounded-md bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-reject"
+                                    onclick={() => deletePreset(activePreset!.id)}
+                                    title="Delete preset"
+                                >
+                                    <Trash2 size={13} />
+                                </button>
+                            {/if}
+                        </div>
+                        {#if activePreset}
+                            <div class="rounded-md bg-secondary p-2 text-[11px] text-muted-foreground">
+                                <div class="font-semibold text-foreground">{presetSummary(activePreset)}</div>
+                                {#if activePreset.notes}
+                                    <div class="mt-1">{activePreset.notes}</div>
+                                {/if}
+                            </div>
+                        {/if}
+                    </div>
+                </section>
+
                 {#if showEditor}
                     <ImageEditor
                         imageSrc={getOriginalSrc()}
                         filePath={activePhoto.file_path}
+                        preset={activePreset}
+                        onPresetSaved={handlePresetSaved}
                         onPreview={(url) => {
                             revokeBlobUrl(editedPreviewUrl);
                             editedPreviewUrl = url;
@@ -1076,6 +1316,18 @@
                             </div>
                         </div>
                     {/if}
+
+                    <div>
+                        <h3 class="mb-2 text-xs font-bold uppercase text-foreground">Full Metadata</h3>
+                        <div class="max-h-72 overflow-y-auto rounded-md border border-border">
+                            {#each metadataRows(activePhoto) as [label, value]}
+                                <div class="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-2 border-b border-border px-2 py-1.5 text-xs last:border-b-0">
+                                    <div class="text-muted-foreground">{label}</div>
+                                    <div class="min-w-0 break-words font-mono text-[11px] text-foreground">{value}</div>
+                                </div>
+                            {/each}
+                        </div>
+                    </div>
 
                     <div class="border-t border-border pt-4">
                         <h3 class="mb-2 text-xs font-bold uppercase text-foreground">Tags & Notes</h3>

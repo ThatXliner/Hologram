@@ -1,7 +1,17 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { CullFlag, Photo, PhotoFilter, PhotoMetadata, PhotoStats, ScanResult, ThumbnailReady } from "./types.ts";
+import type {
+  CullFlag,
+  ExportOptions,
+  ExportResult,
+  Photo,
+  PhotoFilter,
+  PhotoMetadata,
+  PhotoStats,
+  ScanResult,
+  ThumbnailReady,
+} from "./types.ts";
 
 export class HologramAPI {
   private static activeFolderPath: string | null = null;
@@ -24,6 +34,20 @@ export class HologramAPI {
       return result;
     } catch (error) {
       console.error("Error selecting folder:", error);
+      return null;
+    }
+  }
+
+  static async selectExportFolder(): Promise<string | null> {
+    try {
+      const result = await open({
+        directory: true,
+        multiple: false,
+        title: "Select Export Destination",
+      });
+      return result;
+    } catch (error) {
+      console.error("Error selecting export folder:", error);
       return null;
     }
   }
@@ -171,5 +195,17 @@ export class HologramAPI {
       throw new Error(`Failed to load full resolution image: ${imageData}`);
     }
     return imageData;
+  }
+
+  static async exportPhotos(
+    photos: Photo[],
+    allPhotos: Photo[],
+    options: ExportOptions,
+  ): Promise<ExportResult> {
+    return await invoke<ExportResult>("export_photos", {
+      photos,
+      allPhotos,
+      options,
+    });
   }
 }

@@ -13,14 +13,17 @@
         Diamond,
         Sparkles,
     } from "@lucide/svelte";
+    import type { ImageAdjustmentSettings, RawProcessingPreset } from "../types.ts";
 
     interface Props {
         imageSrc: string;
         filePath: string;
         onPreview: (blobUrl: string | null) => void;
+        preset?: RawProcessingPreset | null;
+        onPresetSaved?: (preset: RawProcessingPreset) => void;
     }
 
-    let { imageSrc, filePath, onPreview }: Props = $props();
+    let { imageSrc, filePath, onPreview, preset = null, onPresetSaved = () => {} }: Props = $props();
 
     // --- Adjustment state ---
     let exposure = $state(0);
@@ -46,6 +49,8 @@
 
     let isSaving = $state(false);
     let saveMessage = $state<string | null>(null);
+    let appliedPresetId = $state<string | null>(null);
+    let presetName = $state("");
 
     // Source image data (loaded once, downscaled for preview)
     let sourceCanvas: HTMLCanvasElement | null = null;
@@ -148,6 +153,27 @@
             renderPreview();
         }
     });
+
+    $effect(() => {
+        if (!preset || preset.id === appliedPresetId) return;
+        applyAdjustmentSettings(preset.adjustments);
+        appliedPresetId = preset.id;
+    });
+
+    function applyAdjustmentSettings(settings: ImageAdjustmentSettings) {
+        exposure = settings.exposure ?? 0;
+        contrast = settings.contrast ?? 0;
+        saturation = settings.saturation ?? 0;
+        temperature = settings.temperature ?? 0;
+        highlights = settings.highlights ?? 0;
+        shadows = settings.shadows ?? 0;
+        sharpen = settings.sharpen ?? 0;
+        curvePoints = (settings.curve_points?.length ? settings.curve_points : [[0, 0], [255, 255]])
+            .map(([x, y]) => ({ x, y }));
+        denoise = 0;
+        denoisedImageData = null;
+        lastDenoiseStrength = 0;
+    }
 
     // --- Tone curve LUT ---
     function buildCurveLUT(): Uint8Array {
@@ -535,6 +561,7 @@
         denoise = 0;
         denoisedImageData = null;
         lastDenoiseStrength = 0;
+        appliedPresetId = null;
         curvePoints = [
             { x: 0, y: 0 },
             { x: 255, y: 255 },
@@ -563,6 +590,22 @@
         } finally {
             isSaving = false;
         }
+    }
+
+    function savePreset() {
+        const name = presetName.trim() || preset?.name || "Custom Preset";
+        const savedPreset: RawProcessingPreset = {
+            id: `manual-${Date.now()}`,
+            name,
+            source: "manual",
+            adjustments: getAdjustments(),
+            notes: "Saved from Hologram adjustments.",
+            created_at: new Date().toISOString(),
+        };
+        onPresetSaved(savedPreset);
+        presetName = name;
+        saveMessage = "Preset saved";
+        setTimeout(() => (saveMessage = null), 2200);
     }
 
     interface Slider {
@@ -723,6 +766,29 @@
             <p class="text-[10px] text-muted-foreground text-center mt-1.5">
                 Click to add points. Drag to adjust. Double-click to remove.
             </p>
+        </div>
+
+        <div class="pt-2 border-t border-border">
+            <div class="mb-2 flex items-center justify-between">
+                <h3 class="section-heading text-xs font-bold text-foreground uppercase tracking-wide">
+                    Preset
+                </h3>
+            </div>
+            <div class="flex gap-2">
+                <input
+                    class="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/40"
+                    placeholder="Preset name"
+                    bind:value={presetName}
+                />
+                <button
+                    class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    onclick={savePreset}
+                    title="Save preset"
+                >
+                    <Save size={13} />
+                    Save
+                </button>
+            </div>
         </div>
 
         <!-- Save Button -->

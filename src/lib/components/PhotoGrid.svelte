@@ -3,7 +3,7 @@
     import { onDestroy, onMount, tick } from "svelte";
     import { photoStore, selectedIndex } from "../stores/photoStore.ts";
     import type { CullFlag, Photo } from "../types.ts";
-    import { Check, FileImage, ImageOff, Star, XCircle } from "@lucide/svelte";
+    import { Check, FileImage, ImageOff, Info, Star, XCircle } from "@lucide/svelte";
 
     interface Props {
         photos: Photo[];
@@ -19,6 +19,8 @@
     let failedPreviewIds = $state<Set<string>>(new Set());
     let lastPhotoSetKey = $state("");
     let observer: IntersectionObserver | undefined;
+
+    type EmbeddedPreview = NonNullable<Photo["embedded_jpeg_preview"]>;
 
     const visiblePhotos = $derived(photos.slice(0, visibleCount));
 
@@ -101,6 +103,15 @@
             photo.exif.shutter_speed,
             photo.exif.iso ? `ISO ${photo.exif.iso}` : "",
         ].filter(Boolean).join("  ");
+    }
+
+    function embeddedPreviewInfo(photo: Photo): EmbeddedPreview | null {
+        return photo.embedded_jpeg_preview ?? photo.paired_raw_embedded_jpeg_preview ?? null;
+    }
+
+    function embeddedPreviewTitle(preview: EmbeddedPreview): string {
+        const dimensions = preview.width && preview.height ? `${preview.width} x ${preview.height}` : "JPEG";
+        return `RAW includes an embedded JPEG preview (${dimensions}). Consider shooting RAW only instead of RAW+JPEG.`;
     }
 
     function relatedIds(photo: Photo): string[] {
@@ -256,6 +267,7 @@
     <div class={gridClass()}>
         {#each visiblePhotos as photo, i (photo.id)}
             {@const previewSrc = getPreviewSrc(photo)}
+            {@const embeddedPreview = embeddedPreviewInfo(photo)}
             <div
                 class={tileClass(photo, i)}
                 data-photo-card
@@ -293,6 +305,15 @@
                                 <span class="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold uppercase text-primary-foreground">
                                     <FileImage size={11} />
                                     Pair
+                                </span>
+                            {/if}
+                            {#if embeddedPreview}
+                                <span
+                                    class="grid h-5 w-5 place-items-center rounded-full bg-primary/90 text-primary-foreground shadow-sm"
+                                    title={embeddedPreviewTitle(embeddedPreview)}
+                                    aria-label="RAW includes embedded JPEG preview"
+                                >
+                                    <Info size={12} />
                                 </span>
                             {/if}
                             {#if photo.flag === "pick"}

@@ -8,19 +8,22 @@ use ort::session::Session;
 use rayon::prelude::*;
 use rusqlite;
 use serde::{Deserialize, Serialize};
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 use std::fs;
-use std::path::Path;
+use std::io::{self, Write};
+use std::path::{Path, PathBuf};
 use std::sync::{Arc, Mutex};
 use tauri::ipc::Response;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
 use walkdir::WalkDir;
+use zip::write::SimpleFileOptions;
+use zip::{CompressionMethod, ZipWriter};
 
 mod raw_preview;
 use raw_preview::{
-    convert_raw_to_jpeg, generate_embedded_thumbnail, generate_thumbnail, is_raw_file,
-    is_supported_file,
+    convert_raw_to_jpeg, generate_embedded_thumbnail, generate_thumbnail,
+    inspect_embedded_jpeg_preview, is_raw_file, is_supported_file, EmbeddedJpegPreview,
 };
 
 /// Managed state holding the DnCNN ONNX session for AI denoising.
@@ -38,6 +41,12 @@ pub struct Photo {
     pub created_at: DateTime<Utc>,
     pub modified_at: DateTime<Utc>,
     pub paired_with: Option<String>, // ID of paired RAW/JPEG
+    pub embedded_jpeg_preview: Option<EmbeddedJpegPreview>,
+    pub paired_raw_embedded_jpeg_preview: Option<EmbeddedJpegPreview>,
+    pub tags: Option<Vec<String>>,
+    pub notes: Option<String>,
+    pub rating: Option<u8>,
+    pub flag: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
@@ -101,8 +110,28 @@ pub struct PhotoStats {
     pub raw_count: usize,
     pub jpeg_count: usize,
     pub paired_count: usize,
+    pub raw_embedded_jpeg_preview_count: usize,
+    pub raw_jpeg_redundancy_count: usize,
     pub cameras: HashMap<String, usize>,
     pub lenses: HashMap<String, usize>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportOptions {
+    pub destination_path: String,
+    pub mode: String,
+    pub pair_mode: String,
+    pub organize_by: String,
+    pub rename_pattern: Option<String>,
+    pub include_metadata: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ExportResult {
+    pub exported_count: usize,
+    pub skipped_count: usize,
+    pub output_path: String,
+    pub metadata_path: Option<String>,
 }
 
 fn first_exif_u32(value: &kamadak_exif::Value) -> Option<u32> {
@@ -163,7 +192,11 @@ fn gps_coordinate(
     Some(coordinate)
 }
 
-fn exposure_ev100(aperture: Option<f64>, exposure_seconds: Option<f64>, iso: Option<u32>) -> Option<f64> {
+fn exposure_ev100(
+    aperture: Option<f64>,
+    exposure_seconds: Option<f64>,
+    iso: Option<u32>,
+) -> Option<f64> {
     let aperture = aperture.filter(|value| *value > 0.0)?;
     let exposure_seconds = exposure_seconds.filter(|value| *value > 0.0)?;
     let iso = f64::from(iso.filter(|value| *value > 0)?);
@@ -289,7 +322,13 @@ fn collect_photo_metadata(path: &Path) -> Option<Photo> {
         .unwrap_or("unknown")
         .to_uppercase();
 
+    let is_raw = is_raw_file(path);
     let exif_data = extract_exif_data(path).unwrap_or_default();
+    let embedded_jpeg_preview = if is_raw {
+        inspect_embedded_jpeg_preview(path).ok()
+    } else {
+        None
+    };
     let thumbnail = if is_browser_preview_file(path) {
         generate_embedded_thumbnail(path)
     } else {
@@ -307,6 +346,12 @@ fn collect_photo_metadata(path: &Path) -> Option<Photo> {
         created_at: Utc::now(),
         modified_at,
         paired_with: None,
+        embedded_jpeg_preview,
+        paired_raw_embedded_jpeg_preview: None,
+        tags: None,
+        notes: None,
+        rating: None,
+        flag: None,
     })
 }
 
@@ -322,12 +367,21 @@ fn stable_photo_id(path: &Path) -> String {
 fn compute_stats(photos: &[Photo]) -> PhotoStats {
     let mut raw_count = 0;
     let mut paired_count = 0;
+    let mut raw_embedded_jpeg_preview_count = 0;
+    let mut raw_jpeg_redundancy_count = 0;
     let mut cameras: HashMap<String, usize> = HashMap::new();
     let mut lenses: HashMap<String, usize> = HashMap::new();
 
     for photo in photos {
-        if is_raw_file(Path::new(&photo.file_path)) {
+        let is_raw = is_raw_file(Path::new(&photo.file_path));
+        if is_raw {
             raw_count += 1;
+            if photo.embedded_jpeg_preview.is_some() {
+                raw_embedded_jpeg_preview_count += 1;
+                if photo.paired_with.is_some() {
+                    raw_jpeg_redundancy_count += 1;
+                }
+            }
         }
         if photo.paired_with.is_some() {
             paired_count += 1;
@@ -346,6 +400,8 @@ fn compute_stats(photos: &[Photo]) -> PhotoStats {
         raw_count,
         jpeg_count: total_photos - raw_count,
         paired_count,
+        raw_embedded_jpeg_preview_count,
+        raw_jpeg_redundancy_count,
         cameras,
         lenses,
     }
@@ -387,9 +443,11 @@ fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
             if let (Some(raw), Some(jpeg)) = (raw_idx, jpeg_idx) {
                 let raw_id = photos[raw].id.clone();
                 let jpeg_id = photos[jpeg].id.clone();
+                let raw_embedded_jpeg_preview = photos[raw].embedded_jpeg_preview.clone();
 
                 photos[raw].paired_with = Some(jpeg_id);
                 photos[jpeg].paired_with = Some(raw_id);
+                photos[jpeg].paired_raw_embedded_jpeg_preview = raw_embedded_jpeg_preview;
             }
         }
     }
@@ -1135,6 +1193,393 @@ fn get_photo_metadata(
     Ok(result)
 }
 
+fn sanitize_path_component(value: &str) -> String {
+    let cleaned: String = value
+        .chars()
+        .map(|ch| {
+            if ch.is_ascii_alphanumeric() || matches!(ch, ' ' | '-' | '_' | '.') {
+                ch
+            } else {
+                '_'
+            }
+        })
+        .collect();
+    let trimmed = cleaned.trim_matches(|ch: char| ch == ' ' || ch == '.' || ch == '_');
+    if trimmed.is_empty() {
+        "Untitled".to_string()
+    } else {
+        trimmed.to_string()
+    }
+}
+
+fn photo_date(photo: &Photo) -> &DateTime<Utc> {
+    photo.exif.date_taken.as_ref().unwrap_or(&photo.modified_at)
+}
+
+fn export_relative_dir(photo: &Photo, organize_by: &str) -> PathBuf {
+    match organize_by {
+        "date" => {
+            let date = photo_date(photo);
+            PathBuf::from(date.format("%Y").to_string())
+                .join(date.format("%m").to_string())
+                .join(date.format("%d").to_string())
+        }
+        "camera" => {
+            let camera = photo
+                .exif
+                .camera_model
+                .as_deref()
+                .or(photo.exif.camera_make.as_deref())
+                .unwrap_or("Unknown Camera");
+            PathBuf::from(sanitize_path_component(camera))
+        }
+        _ => PathBuf::new(),
+    }
+}
+
+fn export_file_name(photo: &Photo, index: usize, pattern: Option<&str>) -> String {
+    let original = Path::new(&photo.file_name);
+    let stem = original
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("photo");
+    let ext = original
+        .extension()
+        .and_then(|value| value.to_str())
+        .unwrap_or("");
+    let date = photo_date(photo).format("%Y%m%d").to_string();
+    let camera = photo
+        .exif
+        .camera_model
+        .as_deref()
+        .or(photo.exif.camera_make.as_deref())
+        .unwrap_or("camera");
+
+    let base = pattern
+        .filter(|value| !value.trim().is_empty())
+        .map(|value| {
+            value
+                .replace("{index}", &format!("{:04}", index + 1))
+                .replace("{name}", stem)
+                .replace("{date}", &date)
+                .replace("{camera}", camera)
+                .replace("{type}", &photo.file_type)
+        })
+        .unwrap_or_else(|| stem.to_string());
+
+    let safe_base = sanitize_path_component(&base);
+    if ext.is_empty() {
+        safe_base
+    } else {
+        format!("{safe_base}.{}", sanitize_path_component(ext))
+    }
+}
+
+fn unique_path(path: PathBuf) -> PathBuf {
+    if !path.exists() {
+        return path;
+    }
+
+    let parent = path.parent().map(Path::to_path_buf).unwrap_or_default();
+    let stem = path
+        .file_stem()
+        .and_then(|value| value.to_str())
+        .unwrap_or("photo")
+        .to_string();
+    let ext = path
+        .extension()
+        .and_then(|value| value.to_str())
+        .map(|value| value.to_string());
+
+    for idx in 2..10_000 {
+        let candidate_name = if let Some(ext) = &ext {
+            format!("{stem}-{idx}.{ext}")
+        } else {
+            format!("{stem}-{idx}")
+        };
+        let candidate = parent.join(candidate_name);
+        if !candidate.exists() {
+            return candidate;
+        }
+    }
+
+    path
+}
+
+fn resolve_export_items(photos: Vec<Photo>, all_photos: Vec<Photo>, pair_mode: &str) -> Vec<Photo> {
+    let mut by_id: HashMap<String, Photo> = HashMap::new();
+    for photo in all_photos.into_iter().chain(photos.clone()) {
+        by_id.insert(photo.id.clone(), photo);
+    }
+
+    let mut selected = Vec::new();
+    let mut seen_paths = HashSet::new();
+    let add_photo = |photo: &Photo, selected: &mut Vec<Photo>, seen_paths: &mut HashSet<String>| {
+        if seen_paths.insert(photo.file_path.clone()) {
+            selected.push(photo.clone());
+        }
+    };
+
+    for photo in &photos {
+        let paired = photo.paired_with.as_ref().and_then(|id| by_id.get(id));
+        match pair_mode {
+            "both" => {
+                add_photo(photo, &mut selected, &mut seen_paths);
+                if let Some(pair) = paired {
+                    add_photo(pair, &mut selected, &mut seen_paths);
+                }
+            }
+            "raw" => {
+                if is_raw_file(Path::new(&photo.file_path)) {
+                    add_photo(photo, &mut selected, &mut seen_paths);
+                } else if let Some(pair) =
+                    paired.filter(|item| is_raw_file(Path::new(&item.file_path)))
+                {
+                    add_photo(pair, &mut selected, &mut seen_paths);
+                }
+            }
+            "jpeg" => {
+                if !is_raw_file(Path::new(&photo.file_path)) {
+                    add_photo(photo, &mut selected, &mut seen_paths);
+                } else if let Some(pair) =
+                    paired.filter(|item| !is_raw_file(Path::new(&item.file_path)))
+                {
+                    add_photo(pair, &mut selected, &mut seen_paths);
+                }
+            }
+            _ => add_photo(photo, &mut selected, &mut seen_paths),
+        }
+    }
+
+    selected
+}
+
+fn csv_escape(value: &str) -> String {
+    if value.contains(',') || value.contains('"') || value.contains('\n') || value.contains('\r') {
+        format!("\"{}\"", value.replace('"', "\"\""))
+    } else {
+        value.to_string()
+    }
+}
+
+fn xml_escape(value: &str) -> String {
+    value
+        .replace('&', "&amp;")
+        .replace('<', "&lt;")
+        .replace('>', "&gt;")
+        .replace('"', "&quot;")
+        .replace('\'', "&apos;")
+}
+
+fn metadata_csv(rows: &[(Photo, String)]) -> String {
+    let mut csv = String::from("file_name,relative_path,original_path,rating,flag,tags,notes\n");
+    for (photo, relative_path) in rows {
+        let tags = photo.tags.clone().unwrap_or_default().join("|");
+        let rating = photo.rating.unwrap_or(0).min(5).to_string();
+        let flag = photo.flag.clone().unwrap_or_else(|| "none".to_string());
+        let notes = photo.notes.clone().unwrap_or_default();
+        let fields = [
+            photo.file_name.as_str(),
+            relative_path.as_str(),
+            photo.file_path.as_str(),
+            rating.as_str(),
+            flag.as_str(),
+            tags.as_str(),
+            notes.as_str(),
+        ];
+        csv.push_str(
+            &fields
+                .iter()
+                .map(|value| csv_escape(value))
+                .collect::<Vec<_>>()
+                .join(","),
+        );
+        csv.push('\n');
+    }
+    csv
+}
+
+fn lightroom_xmp(photo: &Photo) -> String {
+    let rating = photo.rating.unwrap_or(0).min(5);
+    let flag = photo.flag.as_deref().unwrap_or("none");
+    let label = match flag {
+        "pick" => "Pick",
+        "reject" => "Reject",
+        _ => "",
+    };
+    let tags = photo.tags.clone().unwrap_or_default();
+    let notes = photo.notes.clone().unwrap_or_default();
+    let tag_items = tags
+        .iter()
+        .map(|tag| format!("<rdf:li>{}</rdf:li>", xml_escape(tag)))
+        .collect::<String>();
+
+    format!(
+        r#"<?xpacket begin="" id="W5M0MpCehiHzreSzNTczkc9d"?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description rdf:about=""
+      xmlns:xmp="http://ns.adobe.com/xap/1.0/"
+      xmlns:dc="http://purl.org/dc/elements/1.1/"
+      xmp:Rating="{rating}"
+      xmp:Label="{label}">
+      <dc:subject>
+        <rdf:Bag>{tag_items}</rdf:Bag>
+      </dc:subject>
+      <dc:description>
+        <rdf:Alt>
+          <rdf:li xml:lang="x-default">{notes}</rdf:li>
+        </rdf:Alt>
+      </dc:description>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>
+<?xpacket end="w"?>"#,
+        rating = rating,
+        label = xml_escape(label),
+        tag_items = tag_items,
+        notes = xml_escape(&notes)
+    )
+}
+
+fn relative_zip_name(path: &Path) -> String {
+    path.components()
+        .filter_map(|component| component.as_os_str().to_str())
+        .collect::<Vec<_>>()
+        .join("/")
+}
+
+#[tauri::command]
+async fn export_photos(
+    photos: Vec<Photo>,
+    all_photos: Vec<Photo>,
+    options: ExportOptions,
+) -> Result<ExportResult, String> {
+    tokio::task::spawn_blocking(move || -> Result<ExportResult, String> {
+        let selected = resolve_export_items(photos, all_photos, &options.pair_mode);
+        if selected.is_empty() {
+            return Err("No photos selected for export".to_string());
+        }
+
+        let destination = PathBuf::from(&options.destination_path);
+        let mode = options.mode.as_str();
+        let output_path = match mode {
+            "zip" => {
+                if destination.extension().and_then(|value| value.to_str()) == Some("zip") {
+                    destination
+                } else {
+                    destination.join("hologram-export.zip")
+                }
+            }
+            "lightroom" => destination.join("hologram-lightroom-export"),
+            _ => destination,
+        };
+
+        let mut rows: Vec<(Photo, String)> = Vec::new();
+        let mut skipped_count = 0usize;
+
+        if mode == "zip" {
+            if let Some(parent) = output_path.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            let file = fs::File::create(&output_path).map_err(|e| e.to_string())?;
+            let mut zip = ZipWriter::new(file);
+            let file_options = SimpleFileOptions::default()
+                .compression_method(CompressionMethod::Deflated)
+                .unix_permissions(0o644);
+
+            for (idx, photo) in selected.iter().enumerate() {
+                let src = Path::new(&photo.file_path);
+                if !src.is_file() {
+                    skipped_count += 1;
+                    continue;
+                }
+                let relative = export_relative_dir(photo, &options.organize_by).join(
+                    export_file_name(photo, idx, options.rename_pattern.as_deref()),
+                );
+                let relative_name = relative_zip_name(&relative);
+                zip.start_file(&relative_name, file_options)
+                    .map_err(|e| e.to_string())?;
+                let mut input = fs::File::open(src).map_err(|e| e.to_string())?;
+                io::copy(&mut input, &mut zip).map_err(|e| e.to_string())?;
+                rows.push((photo.clone(), relative_name));
+            }
+
+            if options.include_metadata {
+                zip.start_file("hologram-metadata.csv", file_options)
+                    .map_err(|e| e.to_string())?;
+                zip.write_all(metadata_csv(&rows).as_bytes())
+                    .map_err(|e| e.to_string())?;
+            }
+
+            zip.finish().map_err(|e| e.to_string())?;
+            return Ok(ExportResult {
+                exported_count: rows.len(),
+                skipped_count,
+                output_path: output_path.to_string_lossy().to_string(),
+                metadata_path: if options.include_metadata {
+                    Some("hologram-metadata.csv".to_string())
+                } else {
+                    None
+                },
+            });
+        }
+
+        fs::create_dir_all(&output_path).map_err(|e| e.to_string())?;
+
+        for (idx, photo) in selected.iter().enumerate() {
+            let src = Path::new(&photo.file_path);
+            if !src.is_file() {
+                skipped_count += 1;
+                continue;
+            }
+            let relative = export_relative_dir(photo, &options.organize_by).join(export_file_name(
+                photo,
+                idx,
+                options.rename_pattern.as_deref(),
+            ));
+            let dest = unique_path(output_path.join(&relative));
+            if let Some(parent) = dest.parent() {
+                fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+            }
+            fs::copy(src, &dest).map_err(|e| e.to_string())?;
+            let relative_to_output = dest
+                .strip_prefix(&output_path)
+                .unwrap_or(&dest)
+                .to_string_lossy()
+                .to_string();
+            rows.push((photo.clone(), relative_to_output.clone()));
+
+            if mode == "lightroom" {
+                let xmp_path = dest.with_extension(format!(
+                    "{}.xmp",
+                    dest.extension()
+                        .and_then(|value| value.to_str())
+                        .unwrap_or("photo")
+                ));
+                fs::write(xmp_path, lightroom_xmp(photo)).map_err(|e| e.to_string())?;
+            }
+        }
+
+        let metadata_path = if options.include_metadata || mode == "lightroom" {
+            let csv_path = output_path.join("hologram-metadata.csv");
+            fs::write(&csv_path, metadata_csv(&rows)).map_err(|e| e.to_string())?;
+            Some(csv_path.to_string_lossy().to_string())
+        } else {
+            None
+        };
+
+        Ok(ExportResult {
+            exported_count: rows.len(),
+            skipped_count,
+            output_path: output_path.to_string_lossy().to_string(),
+            metadata_path,
+        })
+    })
+    .await
+    .map_err(|e| format!("Export failed: {}", e))?
+}
+
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
     tauri::Builder::default()
@@ -1179,7 +1624,8 @@ pub fn run() {
             apply_edits_and_save,
             denoise_image,
             set_photo_metadata,
-            get_photo_metadata
+            get_photo_metadata,
+            export_photos
         ])
         .run(tauri::generate_context!())
         .expect("error while running tauri application");

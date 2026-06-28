@@ -1,15 +1,20 @@
 <script lang="ts">
     import { photoStore, stats } from "../stores/photoStore.ts";
     import { HologramAPI } from "../api.ts";
-    import type { ExifData, Photo, PhotoFilter, ThumbnailReady } from "../types.ts";
+    import type { ExifData, Photo, PhotoFilter, SavedSearch, SmartCollection, ThumbnailReady } from "../types.ts";
+    import ExportPanel from "./ExportPanel.svelte";
     import {
         BarChart3,
+        Bookmark,
         Camera,
+        CalendarRange,
         Check,
         Filter,
         FolderOpen,
+        Info,
         Plus,
         Star,
+        Trash2,
         X,
         XCircle,
     } from "@lucide/svelte";
@@ -17,15 +22,36 @@
     interface Props {
         photos: Photo[];
         allPhotos: Photo[];
+        filter?: PhotoFilter;
+        savedSearches?: SavedSearch[];
+        activeSavedSearchId?: string | null;
+        smartCollections?: SmartCollection[];
+        activeSmartCollectionId?: string | null;
         onFilter: (filter: PhotoFilter) => void;
+        onSavedSearchSelect?: (id: string) => void;
+        onSavedSearchDelete?: (id: string) => void;
+        onSmartCollectionSelect?: (id: string | null) => void;
     }
 
-    let { photos, allPhotos, onFilter }: Props = $props();
+    let {
+        photos,
+        allPhotos,
+        filter = {},
+        savedSearches = [],
+        activeSavedSearchId = null,
+        smartCollections = [],
+        activeSmartCollectionId = null,
+        onFilter,
+        onSavedSearchSelect = () => {},
+        onSavedSearchDelete = () => {},
+        onSmartCollectionSelect = () => {},
+    }: Props = $props();
 
     let activeFilter = $state<PhotoFilter>({});
     let showFilters = $state(false);
     let showAddFilter = $state(false);
     let tagFilterInput = $state("");
+    let lastExternalFilter = $state("");
 
     const pickedCount = $derived(allPhotos.filter((photo) => photo.flag === "pick").length);
     const rejectedCount = $derived(allPhotos.filter((photo) => photo.flag === "reject").length);
@@ -34,6 +60,7 @@
         allPhotos.filter((photo) => photo.flag === "pick" || photo.flag === "reject" || (photo.rating ?? 0) > 0).length,
     );
     const reviewPct = $derived(allPhotos.length ? Math.round((reviewedCount / allPhotos.length) * 100) : 0);
+    const rawJpegRedundancyCount = $derived($stats?.raw_jpeg_redundancy_count ?? 0);
 
     const selectFields: { exifKey: keyof ExifData; label: string; filterKey: keyof PhotoFilter }[] = [
         { exifKey: "camera_model", label: "Camera Model", filterKey: "camera_model" },
@@ -99,6 +126,17 @@
     );
 
     const inputClass = "h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/40";
+
+    $effect(() => {
+        const key = JSON.stringify(filter ?? {});
+        if (key === lastExternalFilter) return;
+        lastExternalFilter = key;
+        activeFilter = { ...(filter ?? {}) };
+        const keys = Object.keys(activeFilter).filter((key) => !["search", "rating_gte", "flag"].includes(key));
+        if (keys.length > 0) {
+            addedFilterKeys = new Set([...addedFilterKeys, ...keys]);
+        }
+    });
 
     async function importFolder() {
         const folderPath = await HologramAPI.selectFolder();
@@ -278,6 +316,20 @@
                         <span class="text-xs text-muted-foreground">JPEG</span>
                     </div>
                 </div>
+
+                {#if rawJpegRedundancyCount > 0}
+                    <div class="mt-3 flex gap-2 rounded-lg border border-primary/25 bg-primary/10 p-3">
+                        <Info size={15} class="mt-0.5 shrink-0 text-primary" />
+                        <div class="min-w-0">
+                            <div class="text-xs font-semibold text-foreground">Embedded previews found</div>
+                            <p class="mt-1 text-xs leading-5 text-muted-foreground">
+                                {formatNumber(rawJpegRedundancyCount)}
+                                RAW+JPEG {rawJpegRedundancyCount === 1 ? "pair has" : "pairs have"} a JPEG preview inside the RAW.
+                                Consider switching the camera to RAW only.
+                            </p>
+                        </div>
+                    </div>
+                {/if}
             </section>
         {/if}
 
@@ -315,6 +367,71 @@
                     </div>
                 </div>
             </section>
+        {/if}
+
+        {#if smartCollections.length > 0}
+            <section class="border-b border-sidebar-border p-4">
+                <div class="mb-3 flex items-center gap-2">
+                    <CalendarRange size={14} class="text-primary" />
+                    <h2 class="text-xs font-bold uppercase text-foreground">Smart Collections</h2>
+                </div>
+                <div class="space-y-1">
+                    <button
+                        class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {activeSmartCollectionId == null ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                        onclick={() => onSmartCollectionSelect(null)}
+                    >
+                        <span class="truncate font-semibold">All Photos</span>
+                        <span class="tabular-nums">{allPhotos.length}</span>
+                    </button>
+                    {#each smartCollections.slice(0, 12) as collection (collection.id)}
+                        <button
+                            class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {activeSmartCollectionId === collection.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                            onclick={() => onSmartCollectionSelect(collection.id)}
+                            title={collection.detail}
+                        >
+                            <span class="min-w-0">
+                                <span class="block truncate font-semibold">{collection.name}</span>
+                                <span class="block truncate text-[10px] opacity-75">{collection.detail}</span>
+                            </span>
+                            <span class="shrink-0 tabular-nums">{collection.photo_ids.length}</span>
+                        </button>
+                    {/each}
+                </div>
+            </section>
+        {/if}
+
+        {#if savedSearches.length > 0}
+            <section class="border-b border-sidebar-border p-4">
+                <div class="mb-3 flex items-center gap-2">
+                    <Bookmark size={14} class="text-primary" />
+                    <h2 class="text-xs font-bold uppercase text-foreground">Saved Searches</h2>
+                </div>
+                <div class="space-y-1">
+                    {#each savedSearches as saved (saved.id)}
+                        <div class="flex items-center gap-1">
+                            <button
+                                class="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left text-xs transition-colors {activeSavedSearchId === saved.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                onclick={() => onSavedSearchSelect(saved.id)}
+                                title={saved.name}
+                            >
+                                <span class="block truncate font-semibold">{saved.name}</span>
+                                <span class="block truncate text-[10px] opacity-75">{saved.search || "Filtered set"}</span>
+                            </button>
+                            <button
+                                class="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-reject"
+                                onclick={() => onSavedSearchDelete(saved.id)}
+                                title="Delete saved search"
+                            >
+                                <Trash2 size={13} />
+                            </button>
+                        </div>
+                    {/each}
+                </div>
+            </section>
+        {/if}
+
+        {#if photos.length > 0}
+            <ExportPanel photos={photos} allPhotos={allPhotos} />
         {/if}
 
         {#if $stats && Object.keys($stats.cameras).length > 0}

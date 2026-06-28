@@ -10,11 +10,15 @@
         selectedIndex,
     } from "../lib/stores/photoStore.ts";
     import PhotoGrid from "../lib/components/PhotoGrid.svelte";
+    import TimelineView from "../lib/components/TimelineView.svelte";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import PhotoViewer from "../lib/components/PhotoViewer.svelte";
     import { HologramAPI } from "../lib/api.ts";
-    import type { CullFlag, Photo, PhotoFilter, ThumbnailReady } from "../lib/types.ts";
+    import { buildSmartCollections } from "../lib/collections.ts";
+    import type { CullFlag, Photo, PhotoFilter, SavedSearch, ThumbnailReady } from "../lib/types.ts";
     import {
+        Bookmark,
+        CalendarRange,
         Check,
         Circle,
         FolderOpen,
@@ -22,6 +26,7 @@
         Keyboard,
         Loader2,
         Search,
+        Save,
         SlidersHorizontal,
         Star,
         XCircle,
@@ -29,6 +34,7 @@
 
     type CullFilter = "all" | CullFlag;
     type Density = "compact" | "balanced" | "large";
+    type LibraryView = "grid" | "timeline";
 
     let searchQuery = $state("");
     let sidebarFilter = $state<PhotoFilter>({});
@@ -36,6 +42,11 @@
     let minRating = $state(0);
     let hideRejects = $state(false);
     let density = $state<Density>("balanced");
+    let libraryView = $state<LibraryView>("grid");
+    let savedSearches = $state<SavedSearch[]>([]);
+    let activeSavedSearchId = $state<string | null>(null);
+    let savedSearchName = $state("");
+    let activeSmartCollectionId = $state<string | null>(null);
     let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
     const searchCache = new Map<string, { key: string; text: string }>();
@@ -47,8 +58,10 @@
     const unmarkedCount = $derived(
         $displayPhotos.filter((photo) => (photo.flag ?? "none") === "none" && (photo.rating ?? 0) === 0).length,
     );
+    const smartCollections = $derived(buildSmartCollections($photos));
 
     onMount(() => {
+        loadSavedSearches();
         if (import.meta.env.DEV) {
             (window as any).__photoStore__ = photoStore;
             const seedHandler = ((e: CustomEvent) => {
@@ -72,26 +85,91 @@
 
     function handleSidebarFilter(filter: PhotoFilter) {
         sidebarFilter = filter;
+        activeSavedSearchId = null;
         applyAllFilters();
     }
 
     function handleSearchInput() {
         if (searchTimer) clearTimeout(searchTimer);
+        activeSavedSearchId = null;
         searchTimer = setTimeout(applyAllFilters, 140);
     }
 
     function setCullFilter(next: CullFilter) {
         cullFilter = next;
+        activeSavedSearchId = null;
         applyAllFilters();
     }
 
     function setMinRating(next: number) {
         minRating = next;
+        activeSavedSearchId = null;
         applyAllFilters();
     }
 
     function toggleHideRejects() {
         hideRejects = !hideRejects;
+        activeSavedSearchId = null;
+        applyAllFilters();
+    }
+
+    function loadSavedSearches() {
+        try {
+            const raw = localStorage.getItem("hologram.savedSearches");
+            savedSearches = raw ? JSON.parse(raw) : [];
+        } catch {
+            savedSearches = [];
+        }
+    }
+
+    function persistSavedSearches(next: SavedSearch[]) {
+        savedSearches = next;
+        localStorage.setItem("hologram.savedSearches", JSON.stringify(next));
+    }
+
+    function saveCurrentSearch() {
+        const now = new Date().toISOString();
+        const existing = activeSavedSearchId ? savedSearches.find((search) => search.id === activeSavedSearchId) : undefined;
+        const name = savedSearchName.trim() || searchQuery.trim() || existing?.name || `Search ${savedSearches.length + 1}`;
+        const saved: SavedSearch = {
+            id: existing?.id ?? crypto.randomUUID(),
+            name,
+            filter: sidebarFilter,
+            search: searchQuery,
+            cull_filter: cullFilter,
+            min_rating: minRating,
+            hide_rejects: hideRejects,
+            created_at: existing?.created_at ?? now,
+            updated_at: now,
+        };
+        persistSavedSearches([saved, ...savedSearches.filter((item) => item.id !== saved.id)]);
+        activeSavedSearchId = saved.id;
+        savedSearchName = saved.name;
+    }
+
+    function selectSavedSearch(id: string) {
+        const saved = savedSearches.find((item) => item.id === id);
+        if (!saved) return;
+        activeSavedSearchId = saved.id;
+        savedSearchName = saved.name;
+        sidebarFilter = { ...saved.filter };
+        searchQuery = saved.search;
+        cullFilter = saved.cull_filter;
+        minRating = saved.min_rating;
+        hideRejects = saved.hide_rejects;
+        applyAllFilters();
+    }
+
+    function deleteSavedSearch(id: string) {
+        persistSavedSearches(savedSearches.filter((item) => item.id !== id));
+        if (activeSavedSearchId === id) {
+            activeSavedSearchId = null;
+            savedSearchName = "";
+        }
+    }
+
+    function selectSmartCollection(id: string | null) {
+        activeSmartCollectionId = id;
         applyAllFilters();
     }
 
@@ -125,12 +203,17 @@
             flag: cullFilter !== "all" ? cullFilter : undefined,
         };
         const allPhotos = photoStore.photos || [];
+        const activeCollection = activeSmartCollectionId
+            ? smartCollections.find((collection) => collection.id === activeSmartCollectionId)
+            : null;
+        const smartPhotoIds = activeCollection ? new Set(activeCollection.photo_ids) : null;
         photoStore.setFilter(filter);
 
         const filtered = allPhotos.filter((photo) => {
             const flag = photo.flag ?? "none";
             const rating = photo.rating ?? 0;
 
+            if (smartPhotoIds && !smartPhotoIds.has(photo.id) && !(photo.paired_with && smartPhotoIds.has(photo.paired_with))) return false;
             if (hideRejects && filter.flag !== "reject" && flag === "reject") return false;
             if (filter.flag && flag !== filter.flag) return false;
             if (filter.rating_gte && rating < filter.rating_gte) return false;
@@ -249,7 +332,19 @@
 </svelte:head>
 
 <div class="flex h-screen overflow-hidden bg-background text-foreground">
-    <Sidebar photos={$filteredPhotos} allPhotos={$photos} onFilter={handleSidebarFilter} />
+    <Sidebar
+        photos={$displayPhotos}
+        allPhotos={$photos}
+        filter={sidebarFilter}
+        savedSearches={savedSearches}
+        activeSavedSearchId={activeSavedSearchId}
+        smartCollections={smartCollections}
+        activeSmartCollectionId={activeSmartCollectionId}
+        onFilter={handleSidebarFilter}
+        onSavedSearchSelect={selectSavedSearch}
+        onSavedSearchDelete={deleteSavedSearch}
+        onSmartCollectionSelect={selectSmartCollection}
+    />
 
     {#if !hasLibrary}
         <main class="flex min-w-0 flex-1 flex-col">
@@ -306,6 +401,29 @@
                             bind:value={searchQuery}
                             oninput={handleSearchInput}
                         />
+                    </div>
+
+                    <div class="hidden items-center gap-1 lg:flex" aria-label="View mode">
+                        <button class={segmentClass(libraryView === "grid")} onclick={() => (libraryView = "grid")}>
+                            <Grid size={14} />
+                            Grid
+                        </button>
+                        <button class={segmentClass(libraryView === "timeline")} onclick={() => (libraryView = "timeline")}>
+                            <CalendarRange size={14} />
+                            Timeline
+                        </button>
+                    </div>
+
+                    <div class="hidden min-w-[14rem] items-center gap-1 2xl:flex" aria-label="Saved search">
+                        <Bookmark size={14} class="shrink-0 text-muted-foreground" />
+                        <input
+                            class="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/40"
+                            placeholder="Search name"
+                            bind:value={savedSearchName}
+                        />
+                        <button class={iconButtonClass(false)} onclick={saveCurrentSearch} title="Save search">
+                            <Save size={14} />
+                        </button>
                     </div>
 
                     <div class="hidden items-center gap-1 lg:flex" aria-label="Cull status filters">
@@ -374,7 +492,11 @@
                     </div>
                 {:else}
                     <div class="min-h-0 flex-1 overflow-y-auto bg-background">
-                        <PhotoGrid photos={$displayPhotos} density={density} />
+                        {#if libraryView === "timeline"}
+                            <TimelineView photos={$displayPhotos} density={density} />
+                        {:else}
+                            <PhotoGrid photos={$displayPhotos} density={density} />
+                        {/if}
                     </div>
 
                     <div class="flex h-12 shrink-0 items-center justify-between gap-4 border-t border-border bg-card/80 px-5">

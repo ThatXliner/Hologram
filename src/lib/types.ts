@@ -101,28 +101,84 @@ export interface SavedSearch {
 export interface SmartCollection {
   id: string;
   name: string;
-  kind: "object" | "scene" | "visual";
+  kind: "memory" | "object" | "scene" | "visual";
   detail: string;
   photo_ids: string[];
+  cover_photo_ids?: string[];
+  confidence?: number;
+  label?: string;
+  accent?: string;
 }
 
 export interface VisualIndexLabel {
   label: string;
-  kind: "object" | "scene" | "visual";
+  kind: "memory" | "object" | "scene" | "visual";
   confidence: number;
-  source: "image" | "metadata";
+  source: "image" | "metadata" | "model";
+  reason?: string;
+  evidence?: string[];
+  boxes?: ObjectDetectionBox[];
+}
+
+export interface ObjectDetectionBox {
+  id: string;
+  label: string;
+  confidence: number;
+  source: "model";
+  model_id: string;
+  box: {
+    x: number;
+    y: number;
+    width: number;
+    height: number;
+  };
 }
 
 export interface VisualIndexEntry {
   photo_id: string;
   labels: VisualIndexLabel[];
+  detections?: ObjectDetectionBox[];
   indexed_at: string;
+  detector_model_id?: string;
 }
 
 export interface VisualIndexProgress {
   current: number;
   total: number;
   current_file?: string;
+}
+
+export interface ObjectDetectionModelManifest {
+  id: string;
+  name: string;
+  repository: string;
+  version: string;
+  source_name: string;
+  source_url: string;
+  download_url: string;
+  approximate_size_bytes: number;
+  license: string;
+  dtype: string;
+  storage_label: string;
+}
+
+export type ObjectDetectionModelStatus = "not_downloaded" | "downloading" | "ready" | "error";
+
+export interface ObjectDetectionModelState {
+  status: ObjectDetectionModelStatus;
+  manifest_id: string;
+  version: string;
+  downloaded_at?: string;
+  bytes?: number;
+  cache_key?: string;
+  last_error?: string;
+}
+
+export interface ObjectDetectionModelProgress {
+  phase: "requesting" | "downloading" | "storing" | "ready" | "error";
+  received_bytes: number;
+  total_bytes: number;
+  percent: number;
 }
 
 export interface ExportOptions {

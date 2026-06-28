@@ -32,7 +32,7 @@ See [here](https://github.com/ThatXliner/Hologram/issues/6)
 
 ## Long Description
 
-Hologram is for photographers who want clarity and control—who shoot in full manual, wrestle with dynamic range, and compare in-camera JPEGs to flat RAWs with clinical curiosity. Built for those who reject the Apple Photos “let the algorithm do it” model (and also want easy access to their RAWs), Hologram provides a professional file-first view of your work.
+Hologram is for photographers who want clarity and control—who shoot in full manual, wrestle with dynamic range, and compare in-camera JPEGs to flat RAWs with clinical curiosity. Built for those who want easy access to their RAWs "just on the filesystem", Hologram provides a professional file-first view of your work.
 
 Organize by folder, EXIF, camera, or custom rules. Compare your technique over time. Track when you nailed a shot manually versus let the camera decide. Pair JPEG previews with RAW originals and see how your vision evolved.
 

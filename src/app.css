@@ -167,3 +167,38 @@
 input[type="range"] {
   accent-color: var(--color-primary);
 }
+
+.grid-zoom-slider {
+  appearance: none;
+  background: transparent;
+}
+
+.grid-zoom-slider::-webkit-slider-runnable-track {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--color-accent);
+}
+
+.grid-zoom-slider::-webkit-slider-thumb {
+  appearance: none;
+  width: 14px;
+  height: 14px;
+  margin-top: -5.5px;
+  border-radius: 999px;
+  background: var(--color-foreground);
+  box-shadow: 0 0 0 2px var(--color-background);
+}
+
+.grid-zoom-slider::-moz-range-track {
+  height: 3px;
+  border-radius: 999px;
+  background: var(--color-accent);
+}
+
+.grid-zoom-slider::-moz-range-thumb {
+  width: 14px;
+  height: 14px;
+  border: 2px solid var(--color-background);
+  border-radius: 999px;
+  background: var(--color-foreground);
+}

@@ -20,15 +20,14 @@
     import {
         Bookmark,
         CalendarRange,
-        Captions,
         Check,
         Circle,
         FolderOpen,
         Grid,
         Image as ImageIcon,
         Loader2,
-        Maximize2,
-        Minimize2,
+        Minus,
+        Plus,
         Rows3,
         Search,
         Save,
@@ -445,6 +444,15 @@
         ].join(" ");
     }
 
+    function displaySegmentClass(active: boolean): string {
+        return [
+            "grid h-8 w-9 place-items-center border-r border-border text-xs transition-colors last:border-r-0",
+            active
+                ? "bg-primary text-primary-foreground"
+                : "text-muted-foreground hover:bg-accent hover:text-foreground",
+        ].join(" ");
+    }
+
     function formatAperture(value?: number): string {
         if (!value) return "";
         return `f/${value.toFixed(value % 1 === 0 ? 0 : 1)}`;
@@ -643,19 +651,19 @@
                         </div>
 
                         {#if libraryView === "grid"}
-                            <div class="hidden shrink-0 items-center gap-2 lg:flex" aria-label="Grid style controls">
-                                <div class="flex items-center gap-1" aria-label="Grid size">
+                            <div class="hidden shrink-0 items-center gap-4 lg:flex" aria-label="Grid display controls">
+                                <div class="flex items-center gap-2 text-muted-foreground" aria-label="Thumbnail zoom">
                                     <button
-                                        class={`${iconButtonClass(false)} disabled:pointer-events-none disabled:opacity-40`}
+                                        class="grid h-7 w-7 place-items-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
                                         onclick={() => adjustGridZoom(-1)}
                                         disabled={gridZoomLevel === 0}
                                         title="Zoom out"
                                         aria-label="Zoom out"
                                     >
-                                        <Minimize2 size={14} />
+                                        <Minus size={14} />
                                     </button>
                                     <input
-                                        class="h-8 w-28"
+                                        class="grid-zoom-slider h-7 w-32"
                                         type="range"
                                         min="0"
                                         max={maxGridZoomLevel}
@@ -666,26 +674,44 @@
                                         aria-label="Grid thumbnail size"
                                     />
                                     <button
-                                        class={`${iconButtonClass(false)} disabled:pointer-events-none disabled:opacity-40`}
+                                        class="grid h-7 w-7 place-items-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
                                         onclick={() => adjustGridZoom(1)}
                                         disabled={gridZoomLevel === maxGridZoomLevel}
                                         title="Zoom in"
                                         aria-label="Zoom in"
                                     >
-                                        <Maximize2 size={14} />
+                                        <Plus size={14} />
                                     </button>
                                 </div>
 
                                 <div class="h-5 w-px bg-border"></div>
 
-                                <div class="flex items-center gap-1" aria-label="Grid details">
-                                    <button class={iconButtonClass(gridDetailMode === "image")} onclick={() => setGridDetailMode("image")} title="Images only" aria-label="Images only">
+                                <div class="inline-flex h-8 overflow-hidden rounded-md border border-border bg-background" aria-label="Grid details">
+                                    <button
+                                        class={displaySegmentClass(gridDetailMode === "image")}
+                                        onclick={() => setGridDetailMode("image")}
+                                        title="Images only"
+                                        aria-label="Images only"
+                                        aria-pressed={gridDetailMode === "image"}
+                                    >
                                         <ImageIcon size={14} />
                                     </button>
-                                    <button class={iconButtonClass(gridDetailMode === "essentials")} onclick={() => setGridDetailMode("essentials")} title="Title and stars" aria-label="Title and stars">
-                                        <Captions size={14} />
+                                    <button
+                                        class={displaySegmentClass(gridDetailMode === "essentials")}
+                                        onclick={() => setGridDetailMode("essentials")}
+                                        title="Title and stars"
+                                        aria-label="Title and stars"
+                                        aria-pressed={gridDetailMode === "essentials"}
+                                    >
+                                        <Star size={14} fill={gridDetailMode === "essentials" ? "currentColor" : "none"} />
                                     </button>
-                                    <button class={iconButtonClass(gridDetailMode === "metadata")} onclick={() => setGridDetailMode("metadata")} title="Full metadata" aria-label="Full metadata">
+                                    <button
+                                        class={displaySegmentClass(gridDetailMode === "metadata")}
+                                        onclick={() => setGridDetailMode("metadata")}
+                                        title="Full metadata"
+                                        aria-label="Full metadata"
+                                        aria-pressed={gridDetailMode === "metadata"}
+                                    >
                                         <Rows3 size={14} />
                                     </button>
                                 </div>

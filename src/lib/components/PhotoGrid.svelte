@@ -273,7 +273,7 @@
                             src={previewSrc}
                             alt={photo.file_name}
                             class="photo-preview-image h-full w-full bg-black object-contain"
-                            loading="lazy"
+                            loading={i < 30 ? "eager" : "lazy"}
                             decoding="async"
                             onerror={() => markPreviewFailed(photo)}
                         />

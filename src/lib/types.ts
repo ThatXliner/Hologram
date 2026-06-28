@@ -29,6 +29,11 @@ export interface ExifData {
   flash?: string;
   white_balance?: string;
   date_taken?: string;
+  exposure_bias?: number;
+  ev100?: number;
+  latitude?: number;
+  longitude?: number;
+  altitude?: number;
   width?: number;
   height?: number;
   orientation?: number;

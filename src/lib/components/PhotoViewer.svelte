@@ -17,6 +17,7 @@
         FileImage,
         Image,
         Loader2,
+        MapPin,
         Maximize2,
         Monitor,
         SlidersHorizontal,
@@ -34,6 +35,11 @@
         startIndex?: number;
     }
 
+    type LoadedImage = {
+        url: string;
+        fullRes: boolean;
+    };
+
     let { photos, allPhotos, startIndex = 0 }: Props = $props();
 
     let currentIndex = $state<number>(startIndex);
@@ -46,24 +52,36 @@
     const activePhoto = $derived(viewingRaw && pairedPhoto ? pairedPhoto : photo);
 
     let currentBlobUrl = $state<string | null>(null);
+    let currentBlobPhotoId = $state<string | null>(null);
+    let fullResCandidatePhotoId = $state<string | null>(null);
     let isLoadingFullRes = $state(false);
     let hasFullRes = $state(false);
+    const activeFullResLoaded = $derived(!!activePhoto && hasFullRes && currentBlobPhotoId === activePhoto.id);
     let loadError = $state<string | null>(null);
     let failedPreviewIds = $state<Set<string>>(new Set());
-    const preloadCache = new Map<string, string>();
+    let failedThumbnailIds = $state<Set<string>>(new Set());
+    const failedImageRetryKeys = new Set<string>();
+    const preloadCache = new Map<string, LoadedImage>();
     const preloadingSet = new Set<string>();
 
     let showEditor = $state(false);
     let editedPreviewUrl = $state<string | null>(null);
     let autoAdvance = $state(true);
 
+    let imageViewport = $state<HTMLDivElement | null>(null);
+    let viewportWidth = $state(0);
+    let viewportHeight = $state(0);
+    let loadedImagePhotoId = $state<string | null>(null);
+    let loadedImageUrl = $state<string | null>(null);
+    let loadedImageWidth = $state(0);
+    let loadedImageHeight = $state(0);
     let zoomLevel = $state(1);
     let panX = $state(0);
     let panY = $state(0);
     let isPanning = $state(false);
     let panStartX = 0;
     let panStartY = 0;
-    const ZOOM_STEPS = [0.5, 0.75, 1, 1.5, 2, 3, 4, 6];
+    const ZOOM_STEPS = [0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12];
     const zoomPercent = $derived(Math.round(zoomLevel * 100));
 
     let tagInput = $state("");
@@ -75,6 +93,21 @@
         notesValue = activePhoto?.notes ?? "";
     });
 
+    $effect(() => {
+        const node = imageViewport;
+        if (!node) return;
+
+        const updateViewportSize = () => {
+            viewportWidth = node.clientWidth;
+            viewportHeight = node.clientHeight;
+        };
+
+        updateViewportSize();
+        const observer = new ResizeObserver(updateViewportSize);
+        observer.observe(node);
+        return () => observer.disconnect();
+    });
+
     onMount(() => {
         photoStore.setSelectedIndex(currentIndex);
         void loadCurrentPhoto();
@@ -83,8 +116,8 @@
     onDestroy(() => {
         revokeBlobUrl(currentBlobUrl);
         revokeBlobUrl(editedPreviewUrl);
-        for (const url of preloadCache.values()) {
-            revokeBlobUrl(url);
+        for (const image of preloadCache.values()) {
+            revokeBlobUrl(image.url);
         }
         preloadCache.clear();
     });
@@ -140,6 +173,18 @@
         if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
     }
 
+    function clearCurrentImageState() {
+        revokeBlobUrl(currentBlobUrl);
+        currentBlobUrl = null;
+        currentBlobPhotoId = null;
+        fullResCandidatePhotoId = null;
+        loadedImagePhotoId = null;
+        loadedImageUrl = null;
+        loadedImageWidth = 0;
+        loadedImageHeight = 0;
+        hasFullRes = false;
+    }
+
     function closeViewer() {
         photoStore.setSelectedIndex(currentIndex);
         photoStore.setViewMode("grid");
@@ -158,6 +203,9 @@
         if (index < 0 || index >= photos.length) return;
         viewingRaw = false;
         clearEditedPreview();
+        clearCurrentImageState();
+        isLoadingFullRes = true;
+        loadError = null;
         resetZoom();
         currentIndex = index;
         photoStore.setSelectedIndex(currentIndex);
@@ -176,6 +224,9 @@
         if (!isPaired) return;
         viewingRaw = !viewingRaw;
         clearEditedPreview();
+        clearCurrentImageState();
+        isLoadingFullRes = true;
+        loadError = null;
         await tick();
         void loadPhotoByRef(activePhoto);
     }
@@ -266,8 +317,8 @@
         return !!item && ["JPEG", "JPG", "PNG", "WEBP", "GIF"].includes(item.file_type.toUpperCase());
     }
 
-    function getBrowserFileSrc(item: Photo | undefined): string {
-        if (!item || failedPreviewIds.has(item.id) || !canUseOriginalAsPreview(item)) return "";
+    function getBrowserFileSrcRaw(item: Photo | undefined): string {
+        if (!item || !canUseOriginalAsPreview(item)) return "";
         try {
             return convertFileSrc(item.file_path);
         } catch {
@@ -275,17 +326,33 @@
         }
     }
 
-    function getThumbnailDataSrc(item: Photo | undefined): string {
+    function getBrowserFileSrc(item: Photo | undefined): string {
+        if (!item || failedPreviewIds.has(item.id)) return "";
+        return getBrowserFileSrcRaw(item);
+    }
+
+    function getThumbnailDataSrcRaw(item: Photo | undefined): string {
         if (!item?.thumbnail) return "";
         const mime = item.thumbnail.startsWith("iVBOR") ? "image/png" : "image/jpeg";
         return `data:${mime};base64,${item.thumbnail}`;
     }
 
+    function getThumbnailDataSrc(item: Photo | undefined): string {
+        if (!item || failedThumbnailIds.has(item.id)) return "";
+        return getThumbnailDataSrcRaw(item);
+    }
+
     function getPreviewSrc(item: Photo | undefined): string {
         if (!item) return "";
-        const browserFileSrc = getBrowserFileSrc(item);
-        if (browserFileSrc) return browserFileSrc;
-        return getThumbnailDataSrc(item);
+        return getThumbnailDataSrc(item) || getBrowserFileSrc(item);
+    }
+
+    function getVisiblePreviewSrc(item: Photo | undefined): string {
+        if (!item) return "";
+        if (item.id === activePhoto?.id && viewingRaw && photo && photo.id !== item.id) {
+            return getPreviewSrc(photo) || getPreviewSrc(item);
+        }
+        return getPreviewSrc(item);
     }
 
     function getFilmstripSrc(item: Photo | undefined): string {
@@ -297,20 +364,152 @@
         failedPreviewIds = new Set([...failedPreviewIds, item.id]);
     }
 
-    function handleActiveImageError() {
-        markPreviewFailed(activePhoto);
-        if (currentBlobUrl && !currentBlobUrl.startsWith("blob:")) {
-            currentBlobUrl = null;
-            hasFullRes = false;
+    function markThumbnailFailed(item: Photo | undefined) {
+        if (!item || failedThumbnailIds.has(item.id)) return;
+        failedThumbnailIds = new Set([...failedThumbnailIds, item.id]);
+    }
+
+    function getImageFailureKey(item: Photo, failedUrl: string): string {
+        if (failedUrl === getThumbnailDataSrcRaw(item)) return `${item.id}:thumbnail`;
+        if (failedUrl === getBrowserFileSrcRaw(item)) return `${item.id}:browser-file`;
+        if (failedUrl === currentBlobUrl) return `${item.id}:full-resolution`;
+        return `${item.id}:unknown:${failedUrl.slice(0, 96)}`;
+    }
+
+    function markFailedImageSource(item: Photo, failedUrl: string) {
+        if (failedUrl === getThumbnailDataSrcRaw(item)) {
+            markThumbnailFailed(item);
         }
-        if (!activePhoto?.thumbnail) {
+        if (failedUrl === getBrowserFileSrcRaw(item)) {
+            markPreviewFailed(item);
+        }
+    }
+
+    function expectedDimensions(item: Photo | undefined): { width: number; height: number } | null {
+        const width = item?.exif.width;
+        const height = item?.exif.height;
+        if (!width || !height) return null;
+        return { width, height };
+    }
+
+    function matchesExpectedDimensions(
+        naturalWidth: number,
+        naturalHeight: number,
+        expected: { width: number; height: number },
+    ): boolean {
+        const tolerance = 2;
+        const direct =
+            Math.abs(naturalWidth - expected.width) <= tolerance &&
+            Math.abs(naturalHeight - expected.height) <= tolerance;
+        const rotated =
+            Math.abs(naturalWidth - expected.height) <= tolerance &&
+            Math.abs(naturalHeight - expected.width) <= tolerance;
+        return direct || rotated;
+    }
+
+    function getLoadedImageDimensions(): { width: number; height: number } | null {
+        if (
+            loadedImagePhotoId !== activePhoto?.id ||
+            loadedImageUrl !== getImageSrc() ||
+            loadedImageWidth <= 0 ||
+            loadedImageHeight <= 0
+        ) {
+            return null;
+        }
+        return { width: loadedImageWidth, height: loadedImageHeight };
+    }
+
+    function getImageRenderStyle(): string {
+        const dims = getLoadedImageDimensions();
+        const transition = isPanning ? "none" : "transform 0.15s ease-out";
+
+        if (!dims || viewportWidth <= 0 || viewportHeight <= 0) {
+            return [
+                "max-width: 100%",
+                "max-height: 100%",
+                `transform: translate(${panX}px, ${panY}px)`,
+                "transform-origin: center center",
+                `transition: ${transition}`,
+            ].join("; ");
+        }
+
+        const fitScale = Math.min(viewportWidth / dims.width, viewportHeight / dims.height, 1);
+        const renderedWidth = Math.max(1, Math.round(dims.width * fitScale * zoomLevel));
+        const renderedHeight = Math.max(1, Math.round(dims.height * fitScale * zoomLevel));
+
+        return [
+            `width: ${renderedWidth}px`,
+            `height: ${renderedHeight}px`,
+            "max-width: none",
+            "max-height: none",
+            `transform: translate(${panX}px, ${panY}px)`,
+            "transform-origin: center center",
+            `transition: ${transition}`,
+        ].join("; ");
+    }
+
+    function handleActiveImageLoad(event: Event, photoId: string) {
+        const loadedPhoto = activePhoto?.id === photoId ? activePhoto : undefined;
+        if (!loadedPhoto) return;
+
+        const image = event.currentTarget as HTMLImageElement | null;
+        const loadedUrl = image?.currentSrc || image?.src || "";
+        if (image && loadedUrl) {
+            loadedImagePhotoId = loadedPhoto.id;
+            loadedImageUrl = loadedUrl;
+            loadedImageWidth = image.naturalWidth;
+            loadedImageHeight = image.naturalHeight;
+        }
+
+        if (!image || loadedUrl !== currentBlobUrl || currentBlobPhotoId !== loadedPhoto.id) {
+            return;
+        }
+
+        if (fullResCandidatePhotoId !== loadedPhoto.id) {
+            hasFullRes = false;
+            isLoadingFullRes = false;
+            return;
+        }
+
+        const expected = expectedDimensions(loadedPhoto);
+        hasFullRes = expected
+            ? matchesExpectedDimensions(image.naturalWidth, image.naturalHeight, expected)
+            : canUseOriginalAsPreview(loadedPhoto);
+        isLoadingFullRes = false;
+    }
+
+    async function handleActiveImageError(event: Event, photoId: string) {
+        const failedPhoto = activePhoto?.id === photoId ? activePhoto : undefined;
+        if (!failedPhoto) return;
+
+        const image = event.currentTarget as HTMLImageElement | null;
+        const failedUrl = image?.currentSrc || image?.src || "";
+
+        if (failedUrl === currentBlobUrl && currentBlobPhotoId === failedPhoto.id && currentBlobUrl?.startsWith("blob:")) {
+            clearCurrentImageState();
+            loadError = "Failed to load full-resolution image";
+            isLoadingFullRes = false;
+            return;
+        }
+
+        const failureKey = getImageFailureKey(failedPhoto, failedUrl);
+        if (failedImageRetryKeys.has(failureKey)) {
+            markFailedImageSource(failedPhoto, failedUrl);
+            isLoadingFullRes = false;
             loadError = "Failed to load image";
+            return;
+        }
+
+        failedImageRetryKeys.add(failureKey);
+        markFailedImageSource(failedPhoto, failedUrl);
+        if (failedPhoto && !isLoadingFullRes) {
+            await loadPhotoByRef(failedPhoto);
         }
     }
 
     function getOriginalSrc(): string {
-        if (currentBlobUrl) return currentBlobUrl;
-        return getPreviewSrc(activePhoto);
+        if (currentBlobUrl && currentBlobPhotoId === activePhoto?.id) return currentBlobUrl;
+        return getVisiblePreviewSrc(activePhoto);
     }
 
     function getImageSrc(): string {
@@ -318,22 +517,26 @@
         return getOriginalSrc();
     }
 
-    async function loadImageForPhoto(item: Photo): Promise<{ url: string | null; fullRes: boolean }> {
-        const browserFileSrc = getBrowserFileSrc(item);
-        if (browserFileSrc) {
-            return { url: browserFileSrc, fullRes: true };
-        }
+    function getFullResMime(item: Photo): string {
+        const type = item.file_type.toUpperCase();
+        if (type === "PNG") return "image/png";
+        if (type === "WEBP") return "image/webp";
+        if (type === "GIF") return "image/gif";
+        if (type === "TIF" || type === "TIFF") return "image/tiff";
+        return "image/jpeg";
+    }
 
+    async function loadImageForPhoto(item: Photo): Promise<{ url: string | null; fullRes: boolean }> {
         try {
             const imageData = await HologramAPI.loadFullResolutionImage(item.file_path);
             if (imageData.byteLength === 0) {
-                return { url: getPreviewSrc(item) || null, fullRes: false };
+                return { url: getVisiblePreviewSrc(item) || null, fullRes: false };
             }
             const uint8Array = new Uint8Array(imageData);
-            const blob = new Blob([uint8Array], { type: "image/jpeg" });
+            const blob = new Blob([uint8Array], { type: getFullResMime(item) });
             return { url: URL.createObjectURL(blob), fullRes: true };
         } catch {
-            return { url: getPreviewSrc(item) || null, fullRes: false };
+            return { url: getVisiblePreviewSrc(item) || null, fullRes: false };
         }
     }
 
@@ -342,16 +545,21 @@
         const cached = preloadCache.get(item.id);
         if (cached) {
             revokeBlobUrl(currentBlobUrl);
-            currentBlobUrl = cached;
+            currentBlobUrl = cached.url;
+            currentBlobPhotoId = item.id;
+            fullResCandidatePhotoId = cached.fullRes ? item.id : null;
             preloadCache.delete(item.id);
-            hasFullRes = cached.startsWith("blob:") || canUseOriginalAsPreview(item);
-            isLoadingFullRes = false;
+            hasFullRes = false;
+            isLoadingFullRes = cached.fullRes;
             loadError = null;
             return;
         }
 
         isLoadingFullRes = true;
         loadError = null;
+        if (currentBlobPhotoId !== item.id) {
+            clearCurrentImageState();
+        }
 
         const result = await loadImageForPhoto(item);
         if (item.id !== activePhoto?.id) {
@@ -362,12 +570,17 @@
         if (result.url) {
             revokeBlobUrl(currentBlobUrl);
             currentBlobUrl = result.url;
-            hasFullRes = result.fullRes;
+            currentBlobPhotoId = item.id;
+            fullResCandidatePhotoId = result.fullRes ? item.id : null;
+            hasFullRes = false;
+            isLoadingFullRes = result.fullRes;
         } else {
             loadError = "Failed to load image";
+            currentBlobPhotoId = null;
+            fullResCandidatePhotoId = null;
             hasFullRes = false;
+            isLoadingFullRes = false;
         }
-        isLoadingFullRes = false;
     }
 
     async function loadCurrentPhoto() {
@@ -376,10 +589,10 @@
     }
 
     function preloadAdjacent() {
-        for (const [key, url] of preloadCache) {
+        for (const [key, image] of preloadCache) {
             const idx = photos.findIndex((item) => item.id === key);
             if (idx === -1 || Math.abs(idx - currentIndex) > 3) {
-                revokeBlobUrl(url);
+                revokeBlobUrl(image.url);
                 preloadCache.delete(key);
             }
         }
@@ -397,7 +610,7 @@
                 if (!result.url) return;
                 const currentIdx = photos.findIndex((candidate) => candidate.id === item.id);
                 if (Math.abs(currentIdx - currentIndex) <= 3) {
-                    preloadCache.set(item.id, result.url);
+                    preloadCache.set(item.id, { url: result.url, fullRes: result.fullRes });
                 } else {
                     revokeBlobUrl(result.url);
                 }
@@ -486,6 +699,30 @@
     function formatFocalLength(value?: number): string {
         if (!value) return "";
         return `${Math.round(value)}mm`;
+    }
+
+    function formatEv(value?: number): string {
+        if (value == null) return "";
+        const rounded = Math.abs(value) < 0.05 ? 0 : value;
+        const sign = rounded > 0 ? "+" : "";
+        return `${sign}${rounded.toFixed(1)} EV`;
+    }
+
+    function formatEv100(value?: number): string {
+        if (value == null) return "";
+        return `EV ${value.toFixed(1)}`;
+    }
+
+    function formatMegapixels(width?: number, height?: number): string {
+        if (!width || !height) return "";
+        return `${((width * height) / 1_000_000).toFixed(1)} MP`;
+    }
+
+    function formatLocation(latitude?: number, longitude?: number, altitude?: number): string {
+        if (latitude == null || longitude == null) return "";
+        const coordinates = `${latitude.toFixed(5)}, ${longitude.toFixed(5)}`;
+        if (altitude == null) return coordinates;
+        return `${coordinates} / ${Math.round(altitude)}m`;
     }
 
     function ratingButtonClass(active: boolean): string {
@@ -604,6 +841,7 @@
 
                 <!-- svelte-ignore a11y_no_static_element_interactions -->
                 <div
+                    bind:this={imageViewport}
                     class="relative flex h-full w-full items-center justify-center overflow-hidden"
                     onwheel={handleWheel}
                     onpointerdown={handlePointerDown}
@@ -627,11 +865,12 @@
                         <img
                             src={getImageSrc()}
                             alt={activePhoto.file_name}
-                            class="photo-preview-image max-h-full max-w-full select-none object-contain"
-                            class:opacity-55={isLoadingFullRes && !hasFullRes}
+                            class="photo-preview-image block shrink-0 select-none object-contain"
+                            class:opacity-55={isLoadingFullRes && !activeFullResLoaded}
                             draggable="false"
-                            onerror={handleActiveImageError}
-                            style="transform: scale({zoomLevel}) translate({panX / zoomLevel}px, {panY / zoomLevel}px); transform-origin: center center; transition: {isPanning ? 'none' : 'transform 0.15s ease-out'};"
+                            onload={(event) => handleActiveImageLoad(event, activePhoto.id)}
+                            onerror={(event) => void handleActiveImageError(event, activePhoto.id)}
+                            style={getImageRenderStyle()}
                         />
                     {/if}
 
@@ -657,7 +896,7 @@
                                 RAW+JPEG
                             </span>
                         {/if}
-                        {#if hasFullRes}
+                        {#if activeFullResLoaded}
                             <span class="rounded-full bg-pick px-2 py-0.5 text-xs font-bold text-black">Full Res</span>
                         {/if}
                     </div>
@@ -791,14 +1030,49 @@
                                     <div class="font-semibold text-foreground">{formatFocalLength(activePhoto.exif.focal_length)}</div>
                                 </div>
                             {/if}
+                            {#if activePhoto.exif.exposure_bias != null}
+                                <div class="rounded-md bg-secondary p-2">
+                                    <div class="text-xs text-muted-foreground">Bias</div>
+                                    <div class="font-semibold text-foreground">{formatEv(activePhoto.exif.exposure_bias)}</div>
+                                </div>
+                            {/if}
+                            {#if activePhoto.exif.ev100 != null}
+                                <div class="rounded-md bg-secondary p-2">
+                                    <div class="text-xs text-muted-foreground">EV100</div>
+                                    <div class="font-semibold text-foreground">{formatEv100(activePhoto.exif.ev100)}</div>
+                                </div>
+                            {/if}
                         </div>
                     </div>
 
                     {#if activePhoto.exif.width && activePhoto.exif.height}
                         <div>
                             <h3 class="mb-2 text-xs font-bold uppercase text-foreground">Dimensions</h3>
-                            <div class="font-mono text-sm tabular-nums text-muted-foreground">
-                                {activePhoto.exif.width} x {activePhoto.exif.height}
+                            <div class="grid grid-cols-2 gap-2 text-sm">
+                                <div class="rounded-md bg-secondary p-2">
+                                    <div class="text-xs text-muted-foreground">Pixels</div>
+                                    <div class="font-mono text-sm tabular-nums text-foreground">
+                                        {activePhoto.exif.width} x {activePhoto.exif.height}
+                                    </div>
+                                </div>
+                                <div class="rounded-md bg-secondary p-2">
+                                    <div class="text-xs text-muted-foreground">Megapixels</div>
+                                    <div class="font-semibold text-foreground">
+                                        {formatMegapixels(activePhoto.exif.width, activePhoto.exif.height)}
+                                    </div>
+                                </div>
+                            </div>
+                        </div>
+                    {/if}
+
+                    {#if activePhoto.exif.latitude != null && activePhoto.exif.longitude != null}
+                        <div>
+                            <h3 class="mb-2 text-xs font-bold uppercase text-foreground">Location</h3>
+                            <div class="flex items-center gap-2 text-sm text-muted-foreground">
+                                <MapPin size={14} class="shrink-0" />
+                                <span class="font-mono tabular-nums">
+                                    {formatLocation(activePhoto.exif.latitude, activePhoto.exif.longitude, activePhoto.exif.altitude)}
+                                </span>
                             </div>
                         </div>
                     {/if}

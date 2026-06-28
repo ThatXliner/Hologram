@@ -5,18 +5,18 @@
     import type { CullFlag, Photo } from "../types.ts";
     import { Check, FileImage, ImageOff, Info, Star, XCircle } from "@lucide/svelte";
 
-    type GridDensity = "compact" | "balanced" | "large" | "lightbox";
     type GridDetails = "image" | "essentials" | "metadata";
+    const DEFAULT_TILE_MIN_WIDTH = 220;
 
     interface Props {
         photos: Photo[];
-        density?: GridDensity;
+        tileMinWidth?: number;
         detailMode?: GridDetails;
     }
 
-    let { photos, density = "balanced", detailMode = "metadata" }: Props = $props();
+    let { photos, tileMinWidth = DEFAULT_TILE_MIN_WIDTH, detailMode = "metadata" }: Props = $props();
 
-    let visibleCount = $state(initialVisibleCount(density));
+    let visibleCount = $state(initialVisibleCount(tileMinWidth));
     let sentinel: HTMLDivElement | undefined = $state();
     let gridEl: HTMLDivElement | undefined = $state();
     let failedPreviewIds = $state<Set<string>>(new Set());
@@ -26,14 +26,15 @@
     type EmbeddedPreview = NonNullable<Photo["embedded_jpeg_preview"]>;
 
     const visiblePhotos = $derived(photos.slice(0, visibleCount));
+    const normalizedTileMinWidth = $derived(Math.max(120, Math.min(520, Math.round(tileMinWidth))));
 
     $effect(() => {
         const firstId = photos[0]?.id ?? "";
         const lastId = photos[photos.length - 1]?.id ?? "";
-        const photoSetKey = `${density}:${photos.length}:${firstId}:${lastId}`;
+        const photoSetKey = `${normalizedTileMinWidth}:${photos.length}:${firstId}:${lastId}`;
         if (photoSetKey !== lastPhotoSetKey) {
             lastPhotoSetKey = photoSetKey;
-            visibleCount = initialVisibleCount(density);
+            visibleCount = initialVisibleCount(normalizedTileMinWidth);
         }
     });
 
@@ -41,7 +42,7 @@
         observer = new IntersectionObserver(
             (entries) => {
                 if (entries[0]?.isIntersecting && visibleCount < photos.length) {
-                    visibleCount = Math.min(visibleCount + batchSize(density), photos.length);
+                    visibleCount = Math.min(visibleCount + batchSize(normalizedTileMinWidth), photos.length);
                 }
             },
             { rootMargin: "700px" },
@@ -147,17 +148,18 @@
         toggleFlag(photo, flag);
     }
 
-    function initialVisibleCount(size: GridDensity): number {
-        if (size === "compact") return 144;
-        if (size === "balanced") return 96;
-        if (size === "large") return 60;
+    function initialVisibleCount(tileWidth: number): number {
+        if (tileWidth <= 150) return 144;
+        if (tileWidth <= 220) return 96;
+        if (tileWidth <= 340) return 60;
+        if (tileWidth <= 430) return 40;
         return 28;
     }
 
-    function batchSize(size: GridDensity): number {
-        if (size === "compact") return 96;
-        if (size === "balanced") return 72;
-        if (size === "large") return 48;
+    function batchSize(tileWidth: number): number {
+        if (tileWidth <= 150) return 96;
+        if (tileWidth <= 220) return 72;
+        if (tileWidth <= 340) return 48;
         return 24;
     }
 
@@ -165,7 +167,7 @@
         if (!gridEl) return 1;
         const firstCard = gridEl.querySelector<HTMLElement>("[data-photo-card]");
         if (!firstCard) return 1;
-        const gap = density === "compact" ? 8 : density === "lightbox" ? 16 : 12;
+        const gap = normalizedTileMinWidth <= 150 ? 8 : normalizedTileMinWidth >= 430 ? 16 : 12;
         return Math.max(1, Math.floor((gridEl.clientWidth + gap) / (firstCard.offsetWidth + gap)));
     }
 
@@ -174,7 +176,7 @@
         const next = Math.max(0, Math.min(photos.length - 1, $selectedIndex + delta));
         photoStore.setSelectedIndex(next);
         if (next >= visibleCount - 8) {
-            visibleCount = Math.min(photos.length, next + batchSize(density));
+            visibleCount = Math.min(photos.length, next + batchSize(normalizedTileMinWidth));
         }
         await tick();
         gridEl?.querySelector(`[data-photo-index="${next}"]`)?.scrollIntoView({
@@ -249,10 +251,10 @@
     }
 
     function gridClass(): string {
-        if (density === "compact") return "grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 p-3";
-        if (density === "large") return "grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-3 p-4";
-        if (density === "lightbox") return "mx-auto grid max-w-[1500px] grid-cols-1 gap-4 p-4 lg:grid-cols-2";
-        return "grid grid-cols-[repeat(auto-fill,minmax(205px,1fr))] gap-2.5 p-3";
+        if (normalizedTileMinWidth <= 150) return "grid grid-cols-[repeat(auto-fill,minmax(var(--grid-tile-min),1fr))] gap-2 p-3";
+        if (normalizedTileMinWidth >= 430) return "grid grid-cols-[repeat(auto-fill,minmax(var(--grid-tile-min),1fr))] gap-4 p-4";
+        if (normalizedTileMinWidth >= 270) return "grid grid-cols-[repeat(auto-fill,minmax(var(--grid-tile-min),1fr))] gap-3 p-4";
+        return "grid grid-cols-[repeat(auto-fill,minmax(var(--grid-tile-min),1fr))] gap-2.5 p-3";
     }
 
     function bottomPanelClass(): string {
@@ -289,7 +291,7 @@
     role="grid"
     aria-label="Photo lighttable"
 >
-    <div class={gridClass()}>
+    <div class={gridClass()} style={`--grid-tile-min: ${normalizedTileMinWidth}px`}>
         {#each visiblePhotos as photo, i (photo.id)}
             {@const previewSrc = getPreviewSrc(photo)}
             {@const embeddedPreview = embeddedPreviewInfo(photo)}

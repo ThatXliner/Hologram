@@ -26,7 +26,6 @@
         FolderOpen,
         Grid,
         Image as ImageIcon,
-        Images,
         Loader2,
         Maximize2,
         Minimize2,
@@ -39,17 +38,19 @@
     } from "@lucide/svelte";
 
     type CullFilter = "all" | CullFlag;
-    type Density = "compact" | "balanced" | "large" | "lightbox";
+    type LegacyDensity = "compact" | "balanced" | "large" | "lightbox";
     type GridDetails = "image" | "essentials" | "metadata";
     type LibraryView = "grid" | "timeline";
     const GRID_PREFERENCES_KEY = "hologram.gridPreferences";
+    const GRID_ZOOM_STEPS = [120, 150, 180, 220, 270, 340, 430, 520] as const;
+    const DEFAULT_GRID_ZOOM_LEVEL = 3;
 
     let searchQuery = $state("");
     let sidebarFilter = $state<PhotoFilter>({});
     let cullFilter = $state<CullFilter>("all");
     let minRating = $state(0);
     let hideRejects = $state(false);
-    let density = $state<Density>("balanced");
+    let gridZoomLevel = $state(DEFAULT_GRID_ZOOM_LEVEL);
     let gridDetailMode = $state<GridDetails>("metadata");
     let libraryView = $state<LibraryView>("grid");
     let savedSearches = $state<SavedSearch[]>([]);
@@ -77,6 +78,8 @@
     const smartCollections = $derived(
         smartCollectionsEnabled ? buildSmartCollections($photos, visualIndex) : [],
     );
+    const gridTileSize = $derived(GRID_ZOOM_STEPS[gridZoomLevel] ?? GRID_ZOOM_STEPS[DEFAULT_GRID_ZOOM_LEVEL]);
+    const maxGridZoomLevel = GRID_ZOOM_STEPS.length - 1;
 
     onMount(() => {
         loadSavedSearches();
@@ -100,7 +103,7 @@
         if (!didLoadGridPreferences) return;
         localStorage.setItem(
             GRID_PREFERENCES_KEY,
-            JSON.stringify({ density, detailMode: gridDetailMode }),
+            JSON.stringify({ zoomLevel: gridZoomLevel, detailMode: gridDetailMode }),
         );
     });
 
@@ -149,15 +152,19 @@
         applyAllFilters();
     }
 
-    function setDensity(next: Density) {
-        density = next;
+    function setGridZoomLevel(next: number) {
+        gridZoomLevel = Math.max(0, Math.min(maxGridZoomLevel, Math.round(next)));
+    }
+
+    function adjustGridZoom(delta: number) {
+        setGridZoomLevel(gridZoomLevel + delta);
     }
 
     function setGridDetailMode(next: GridDetails) {
         gridDetailMode = next;
     }
 
-    function isDensity(value: unknown): value is Density {
+    function isLegacyDensity(value: unknown): value is LegacyDensity {
         return value === "compact" || value === "balanced" || value === "large" || value === "lightbox";
     }
 
@@ -165,15 +172,28 @@
         return value === "image" || value === "essentials" || value === "metadata";
     }
 
+    function zoomLevelFromDensity(value: unknown): number | null {
+        if (!isLegacyDensity(value)) return null;
+        if (value === "compact") return 1;
+        if (value === "large") return 4;
+        if (value === "lightbox") return maxGridZoomLevel;
+        return DEFAULT_GRID_ZOOM_LEVEL;
+    }
+
     function loadGridPreferences() {
         try {
             const raw = localStorage.getItem(GRID_PREFERENCES_KEY);
             if (!raw) return;
-            const saved = JSON.parse(raw) as { density?: unknown; detailMode?: unknown };
-            if (isDensity(saved.density)) density = saved.density;
+            const saved = JSON.parse(raw) as { zoomLevel?: unknown; density?: unknown; detailMode?: unknown };
+            if (typeof saved.zoomLevel === "number") {
+                setGridZoomLevel(saved.zoomLevel);
+            } else {
+                const migratedZoomLevel = zoomLevelFromDensity(saved.density);
+                if (migratedZoomLevel != null) setGridZoomLevel(migratedZoomLevel);
+            }
             if (isGridDetails(saved.detailMode)) gridDetailMode = saved.detailMode;
         } catch {
-            density = "balanced";
+            gridZoomLevel = DEFAULT_GRID_ZOOM_LEVEL;
             gridDetailMode = "metadata";
         }
     }
@@ -603,9 +623,9 @@
                 {:else}
                     <div class="min-h-0 flex-1 overflow-y-auto bg-background">
                         {#if libraryView === "timeline"}
-                            <TimelineView photos={$displayPhotos} density={density} />
+                            <TimelineView photos={$displayPhotos} tileMinWidth={gridTileSize} />
                         {:else}
-                            <PhotoGrid photos={$displayPhotos} density={density} detailMode={gridDetailMode} />
+                            <PhotoGrid photos={$displayPhotos} tileMinWidth={gridTileSize} detailMode={gridDetailMode} />
                         {/if}
                     </div>
 
@@ -625,16 +645,33 @@
                         {#if libraryView === "grid"}
                             <div class="hidden shrink-0 items-center gap-2 lg:flex" aria-label="Grid style controls">
                                 <div class="flex items-center gap-1" aria-label="Grid size">
-                                    <button class={iconButtonClass(density === "compact")} onclick={() => setDensity("compact")} title="Small thumbnails" aria-label="Small thumbnails">
+                                    <button
+                                        class={`${iconButtonClass(false)} disabled:pointer-events-none disabled:opacity-40`}
+                                        onclick={() => adjustGridZoom(-1)}
+                                        disabled={gridZoomLevel === 0}
+                                        title="Zoom out"
+                                        aria-label="Zoom out"
+                                    >
                                         <Minimize2 size={14} />
                                     </button>
-                                    <button class={iconButtonClass(density === "balanced")} onclick={() => setDensity("balanced")} title="Medium thumbnails" aria-label="Medium thumbnails">
-                                        <Grid size={14} />
-                                    </button>
-                                    <button class={iconButtonClass(density === "large")} onclick={() => setDensity("large")} title="Large thumbnails" aria-label="Large thumbnails">
-                                        <Images size={14} />
-                                    </button>
-                                    <button class={iconButtonClass(density === "lightbox")} onclick={() => setDensity("lightbox")} title="Lightbox grid" aria-label="Lightbox grid">
+                                    <input
+                                        class="h-8 w-28"
+                                        type="range"
+                                        min="0"
+                                        max={maxGridZoomLevel}
+                                        step="1"
+                                        value={gridZoomLevel}
+                                        oninput={(event) => setGridZoomLevel(Number(event.currentTarget.value))}
+                                        title={`Grid thumbnail size ${gridTileSize}px`}
+                                        aria-label="Grid thumbnail size"
+                                    />
+                                    <button
+                                        class={`${iconButtonClass(false)} disabled:pointer-events-none disabled:opacity-40`}
+                                        onclick={() => adjustGridZoom(1)}
+                                        disabled={gridZoomLevel === maxGridZoomLevel}
+                                        title="Zoom in"
+                                        aria-label="Zoom in"
+                                    >
                                         <Maximize2 size={14} />
                                     </button>
                                 </div>

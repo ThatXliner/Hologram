@@ -6,20 +6,14 @@
 
     interface Props {
         photos: Photo[];
-        density?: "compact" | "balanced" | "large" | "lightbox";
+        tileMinWidth?: number;
     }
 
-    let { photos, density = "balanced" }: Props = $props();
+    let { photos, tileMinWidth = 220 }: Props = $props();
 
     type EmbeddedPreview = NonNullable<Photo["embedded_jpeg_preview"]>;
 
-    const tileClass = $derived(
-        density === "compact"
-            ? "grid-cols-[repeat(auto-fill,minmax(7rem,1fr))]"
-            : density === "large" || density === "lightbox"
-                ? "grid-cols-[repeat(auto-fill,minmax(15rem,1fr))]"
-                : "grid-cols-[repeat(auto-fill,minmax(11rem,1fr))]",
-    );
+    const timelineTileMinWidth = $derived(Math.max(112, Math.min(240, Math.round(tileMinWidth * 0.55))));
 
     const groupedPhotos = $derived(groupByDay(photos));
 
@@ -99,7 +93,10 @@
                     <span class="text-xs tabular-nums text-muted-foreground">{group.items.length} frames</span>
                 </div>
 
-                <div class={`grid gap-3 ${tileClass}`}>
+                <div
+                    class="grid grid-cols-[repeat(auto-fill,minmax(var(--timeline-tile-min),1fr))] gap-3"
+                    style={`--timeline-tile-min: ${timelineTileMinWidth}px`}
+                >
                     {#each group.items as photo (photo.id)}
                         {@const previewSrc = getPreviewSrc(photo)}
                         {@const embeddedPreview = embeddedPreviewInfo(photo)}

@@ -5,15 +5,18 @@
     import type { CullFlag, Photo } from "../types.ts";
     import { Check, FileImage, ImageOff, Info, Star, XCircle } from "@lucide/svelte";
 
+    type GridDensity = "compact" | "balanced" | "large" | "lightbox";
+    type GridDetails = "image" | "essentials" | "metadata";
+
     interface Props {
         photos: Photo[];
-        density?: "compact" | "balanced" | "large";
+        density?: GridDensity;
+        detailMode?: GridDetails;
     }
 
-    let { photos, density = "balanced" }: Props = $props();
+    let { photos, density = "balanced", detailMode = "metadata" }: Props = $props();
 
-    let visibleCount = $state(96);
-    const BATCH_SIZE = 72;
+    let visibleCount = $state(initialVisibleCount(density));
     let sentinel: HTMLDivElement | undefined = $state();
     let gridEl: HTMLDivElement | undefined = $state();
     let failedPreviewIds = $state<Set<string>>(new Set());
@@ -30,7 +33,7 @@
         const photoSetKey = `${density}:${photos.length}:${firstId}:${lastId}`;
         if (photoSetKey !== lastPhotoSetKey) {
             lastPhotoSetKey = photoSetKey;
-            visibleCount = density === "compact" ? 144 : density === "balanced" ? 96 : 60;
+            visibleCount = initialVisibleCount(density);
         }
     });
 
@@ -38,7 +41,7 @@
         observer = new IntersectionObserver(
             (entries) => {
                 if (entries[0]?.isIntersecting && visibleCount < photos.length) {
-                    visibleCount = Math.min(visibleCount + BATCH_SIZE, photos.length);
+                    visibleCount = Math.min(visibleCount + batchSize(density), photos.length);
                 }
             },
             { rootMargin: "700px" },
@@ -144,11 +147,25 @@
         toggleFlag(photo, flag);
     }
 
+    function initialVisibleCount(size: GridDensity): number {
+        if (size === "compact") return 144;
+        if (size === "balanced") return 96;
+        if (size === "large") return 60;
+        return 28;
+    }
+
+    function batchSize(size: GridDensity): number {
+        if (size === "compact") return 96;
+        if (size === "balanced") return 72;
+        if (size === "large") return 48;
+        return 24;
+    }
+
     function estimateColumns(): number {
         if (!gridEl) return 1;
         const firstCard = gridEl.querySelector<HTMLElement>("[data-photo-card]");
         if (!firstCard) return 1;
-        const gap = density === "compact" ? 8 : 12;
+        const gap = density === "compact" ? 8 : density === "lightbox" ? 16 : 12;
         return Math.max(1, Math.floor((gridEl.clientWidth + gap) / (firstCard.offsetWidth + gap)));
     }
 
@@ -157,7 +174,7 @@
         const next = Math.max(0, Math.min(photos.length - 1, $selectedIndex + delta));
         photoStore.setSelectedIndex(next);
         if (next >= visibleCount - 8) {
-            visibleCount = Math.min(photos.length, next + BATCH_SIZE);
+            visibleCount = Math.min(photos.length, next + batchSize(density));
         }
         await tick();
         gridEl?.querySelector(`[data-photo-index="${next}"]`)?.scrollIntoView({
@@ -234,7 +251,15 @@
     function gridClass(): string {
         if (density === "compact") return "grid grid-cols-[repeat(auto-fill,minmax(150px,1fr))] gap-2 p-3";
         if (density === "large") return "grid grid-cols-[repeat(auto-fill,minmax(270px,1fr))] gap-3 p-4";
+        if (density === "lightbox") return "mx-auto grid max-w-[1500px] grid-cols-1 gap-4 p-4 lg:grid-cols-2";
         return "grid grid-cols-[repeat(auto-fill,minmax(205px,1fr))] gap-2.5 p-3";
+    }
+
+    function bottomPanelClass(): string {
+        return [
+            "absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-2",
+            detailMode === "essentials" ? "pt-10" : "pt-12",
+        ].join(" ");
     }
 
     function tileClass(photo: Photo, index: number): string {
@@ -299,86 +324,94 @@
                         </div>
                     {/if}
 
-                    <div class="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2">
-                        <div class="flex min-w-0 flex-wrap gap-1">
-                            {#if photo.paired_with}
-                                <span class="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold uppercase text-primary-foreground">
-                                    <FileImage size={11} />
-                                    Pair
-                                </span>
-                            {/if}
-                            {#if embeddedPreview && i === $selectedIndex}
-                                <span
-                                    class="grid h-5 w-5 place-items-center rounded-full bg-primary/90 text-primary-foreground shadow-sm"
-                                    title={embeddedPreviewTitle(embeddedPreview)}
-                                    aria-label="RAW includes embedded JPEG preview"
-                                >
-                                    <Info size={12} />
-                                </span>
-                            {/if}
-                            {#if photo.flag === "pick"}
-                                <span class="inline-flex items-center gap-1 rounded-full bg-pick px-2 py-0.5 text-[10px] font-bold uppercase text-black">
-                                    <Check size={11} />
-                                    Pick
-                                </span>
-                            {:else if photo.flag === "reject"}
-                                <span class="inline-flex items-center gap-1 rounded-full bg-reject px-2 py-0.5 text-[10px] font-bold uppercase text-white">
-                                    <XCircle size={11} />
-                                    Reject
-                                </span>
-                            {/if}
+                    {#if detailMode === "metadata"}
+                        <div class="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2">
+                            <div class="flex min-w-0 flex-wrap gap-1">
+                                {#if photo.paired_with}
+                                    <span class="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-[10px] font-bold uppercase text-primary-foreground">
+                                        <FileImage size={11} />
+                                        Pair
+                                    </span>
+                                {/if}
+                                {#if embeddedPreview && i === $selectedIndex}
+                                    <span
+                                        class="grid h-5 w-5 place-items-center rounded-full bg-primary/90 text-primary-foreground shadow-sm"
+                                        title={embeddedPreviewTitle(embeddedPreview)}
+                                        aria-label="RAW includes embedded JPEG preview"
+                                    >
+                                        <Info size={12} />
+                                    </span>
+                                {/if}
+                                {#if photo.flag === "pick"}
+                                    <span class="inline-flex items-center gap-1 rounded-full bg-pick px-2 py-0.5 text-[10px] font-bold uppercase text-black">
+                                        <Check size={11} />
+                                        Pick
+                                    </span>
+                                {:else if photo.flag === "reject"}
+                                    <span class="inline-flex items-center gap-1 rounded-full bg-reject px-2 py-0.5 text-[10px] font-bold uppercase text-white">
+                                        <XCircle size={11} />
+                                        Reject
+                                    </span>
+                                {/if}
+                            </div>
+                            <span class="rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-bold uppercase text-white/85">
+                                {photo.file_type}
+                            </span>
                         </div>
-                        <span class="rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-bold uppercase text-white/85">
-                            {photo.file_type}
-                        </span>
-                    </div>
+                    {/if}
 
-                    <div class="absolute inset-x-0 bottom-0 bg-gradient-to-t from-black/95 via-black/70 to-transparent p-2 pt-12">
-                        <div class="mb-1 min-w-0">
-                            <div class="truncate text-xs font-semibold text-white">{photo.file_name}</div>
-                            <div class="mt-0.5 truncate text-[11px] text-white/65">
-                                {photo.exif.camera_model ?? "Unknown camera"}
-                                {#if exposureSummary(photo)}
-                                    <span class="text-white/35"> / </span>{exposureSummary(photo)}
+                    {#if detailMode !== "image"}
+                        <div class={bottomPanelClass()}>
+                            <div class="mb-1 min-w-0">
+                                <div class="truncate text-xs font-semibold text-white">{photo.file_name}</div>
+                                {#if detailMode === "metadata"}
+                                    <div class="mt-0.5 truncate text-[11px] text-white/65">
+                                        {photo.exif.camera_model ?? "Unknown camera"}
+                                        {#if exposureSummary(photo)}
+                                            <span class="text-white/35"> / </span>{exposureSummary(photo)}
+                                        {/if}
+                                    </div>
+                                {/if}
+                            </div>
+                            <div class="flex items-center {detailMode === 'metadata' ? 'justify-between' : 'justify-start'} gap-2">
+                                <div class="flex items-center gap-0.5">
+                                    {#each [1, 2, 3, 4, 5] as rating}
+                                        <button
+                                            type="button"
+                                            class={ratingClass((photo.rating ?? 0) >= rating)}
+                                            onclick={(event) => handleRatingClick(event, photo, rating)}
+                                            title={`${rating} stars`}
+                                            aria-label={`${rating} stars`}
+                                        >
+                                            <Star size={13} fill="currentColor" />
+                                        </button>
+                                    {/each}
+                                </div>
+                                {#if detailMode === "metadata"}
+                                    <div class="flex items-center gap-1 opacity-75 transition-opacity group-hover:opacity-100">
+                                        <button
+                                            type="button"
+                                            class="grid h-6 w-6 place-items-center rounded-md bg-black/45 text-white/60 transition-colors hover:bg-pick hover:text-black"
+                                            onclick={(event) => handleFlagClick(event, photo, "pick")}
+                                            title="Pick"
+                                            aria-label="Pick"
+                                        >
+                                            <Check size={13} />
+                                        </button>
+                                        <button
+                                            type="button"
+                                            class="grid h-6 w-6 place-items-center rounded-md bg-black/45 text-white/60 transition-colors hover:bg-reject hover:text-white"
+                                            onclick={(event) => handleFlagClick(event, photo, "reject")}
+                                            title="Reject"
+                                            aria-label="Reject"
+                                        >
+                                            <XCircle size={13} />
+                                        </button>
+                                    </div>
                                 {/if}
                             </div>
                         </div>
-                        <div class="flex items-center justify-between gap-2">
-                            <div class="flex items-center gap-0.5">
-                                {#each [1, 2, 3, 4, 5] as rating}
-                                    <button
-                                        type="button"
-                                        class={ratingClass((photo.rating ?? 0) >= rating)}
-                                        onclick={(event) => handleRatingClick(event, photo, rating)}
-                                        title={`${rating} stars`}
-                                        aria-label={`${rating} stars`}
-                                    >
-                                        <Star size={13} fill="currentColor" />
-                                    </button>
-                                {/each}
-                            </div>
-                            <div class="flex items-center gap-1 opacity-75 transition-opacity group-hover:opacity-100">
-                                <button
-                                    type="button"
-                                    class="grid h-6 w-6 place-items-center rounded-md bg-black/45 text-white/60 transition-colors hover:bg-pick hover:text-black"
-                                    onclick={(event) => handleFlagClick(event, photo, "pick")}
-                                    title="Pick"
-                                    aria-label="Pick"
-                                >
-                                    <Check size={13} />
-                                </button>
-                                <button
-                                    type="button"
-                                    class="grid h-6 w-6 place-items-center rounded-md bg-black/45 text-white/60 transition-colors hover:bg-reject hover:text-white"
-                                    onclick={(event) => handleFlagClick(event, photo, "reject")}
-                                    title="Reject"
-                                    aria-label="Reject"
-                                >
-                                    <XCircle size={13} />
-                                </button>
-                            </div>
-                        </div>
-                    </div>
+                    {/if}
                 </div>
             </div>
         {/each}

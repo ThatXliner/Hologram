@@ -6,7 +6,7 @@
 
     interface Props {
         photos: Photo[];
-        density?: "compact" | "balanced" | "large";
+        density?: "compact" | "balanced" | "large" | "lightbox";
     }
 
     let { photos, density = "balanced" }: Props = $props();
@@ -16,7 +16,7 @@
     const tileClass = $derived(
         density === "compact"
             ? "grid-cols-[repeat(auto-fill,minmax(7rem,1fr))]"
-            : density === "large"
+            : density === "large" || density === "lightbox"
                 ? "grid-cols-[repeat(auto-fill,minmax(15rem,1fr))]"
                 : "grid-cols-[repeat(auto-fill,minmax(11rem,1fr))]",
     );

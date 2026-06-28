@@ -19,22 +19,28 @@
     import {
         Bookmark,
         CalendarRange,
+        Captions,
         Check,
         Circle,
         FolderOpen,
         Grid,
-        Keyboard,
+        Image as ImageIcon,
+        Images,
         Loader2,
+        Maximize2,
+        Minimize2,
+        Rows3,
         Search,
         Save,
-        SlidersHorizontal,
         Star,
         XCircle,
     } from "@lucide/svelte";
 
     type CullFilter = "all" | CullFlag;
-    type Density = "compact" | "balanced" | "large";
+    type Density = "compact" | "balanced" | "large" | "lightbox";
+    type GridDetails = "image" | "essentials" | "metadata";
     type LibraryView = "grid" | "timeline";
+    const GRID_PREFERENCES_KEY = "hologram.gridPreferences";
 
     let searchQuery = $state("");
     let sidebarFilter = $state<PhotoFilter>({});
@@ -42,11 +48,13 @@
     let minRating = $state(0);
     let hideRejects = $state(false);
     let density = $state<Density>("balanced");
+    let gridDetailMode = $state<GridDetails>("metadata");
     let libraryView = $state<LibraryView>("grid");
     let savedSearches = $state<SavedSearch[]>([]);
     let activeSavedSearchId = $state<string | null>(null);
     let savedSearchName = $state("");
     let activeSmartCollectionId = $state<string | null>(null);
+    let didLoadGridPreferences = $state(false);
     let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
     const searchCache = new Map<string, { key: string; text: string }>();
@@ -62,6 +70,8 @@
 
     onMount(() => {
         loadSavedSearches();
+        loadGridPreferences();
+        didLoadGridPreferences = true;
         if (import.meta.env.DEV) {
             (window as any).__photoStore__ = photoStore;
             const seedHandler = ((e: CustomEvent) => {
@@ -73,6 +83,14 @@
             window.addEventListener("__hologram_seed__", seedHandler);
             return () => window.removeEventListener("__hologram_seed__", seedHandler);
         }
+    });
+
+    $effect(() => {
+        if (!didLoadGridPreferences) return;
+        localStorage.setItem(
+            GRID_PREFERENCES_KEY,
+            JSON.stringify({ density, detailMode: gridDetailMode }),
+        );
     });
 
     $effect(() => {
@@ -111,6 +129,35 @@
         hideRejects = !hideRejects;
         activeSavedSearchId = null;
         applyAllFilters();
+    }
+
+    function setDensity(next: Density) {
+        density = next;
+    }
+
+    function setGridDetailMode(next: GridDetails) {
+        gridDetailMode = next;
+    }
+
+    function isDensity(value: unknown): value is Density {
+        return value === "compact" || value === "balanced" || value === "large" || value === "lightbox";
+    }
+
+    function isGridDetails(value: unknown): value is GridDetails {
+        return value === "image" || value === "essentials" || value === "metadata";
+    }
+
+    function loadGridPreferences() {
+        try {
+            const raw = localStorage.getItem(GRID_PREFERENCES_KEY);
+            if (!raw) return;
+            const saved = JSON.parse(raw) as { density?: unknown; detailMode?: unknown };
+            if (isDensity(saved.density)) density = saved.density;
+            if (isGridDetails(saved.detailMode)) gridDetailMode = saved.detailMode;
+        } catch {
+            density = "balanced";
+            gridDetailMode = "metadata";
+        }
     }
 
     function loadSavedSearches() {
@@ -414,7 +461,7 @@
                         </button>
                     </div>
 
-                    <div class="hidden min-w-[14rem] items-center gap-1 2xl:flex" aria-label="Saved search">
+                    <div class="hidden min-w-[14rem] items-center gap-1 min-[1850px]:flex" aria-label="Saved search">
                         <Bookmark size={14} class="shrink-0 text-muted-foreground" />
                         <input
                             class="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/40"
@@ -461,18 +508,6 @@
                         {/each}
                     </div>
 
-                    <div class="hidden items-center gap-1 2xl:flex" aria-label="Thumbnail density">
-                        {#each ["compact", "balanced", "large"] as size}
-                            <button
-                                class={iconButtonClass(density === size)}
-                                onclick={() => (density = size as Density)}
-                                title={`${size} thumbnails`}
-                            >
-                                {size === "compact" ? "S" : size === "balanced" ? "M" : "L"}
-                            </button>
-                        {/each}
-                    </div>
-
                     <button
                         class={segmentClass(hideRejects)}
                         onclick={toggleHideRejects}
@@ -495,12 +530,12 @@
                         {#if libraryView === "timeline"}
                             <TimelineView photos={$displayPhotos} density={density} />
                         {:else}
-                            <PhotoGrid photos={$displayPhotos} density={density} />
+                            <PhotoGrid photos={$displayPhotos} density={density} detailMode={gridDetailMode} />
                         {/if}
                     </div>
 
                     <div class="flex h-12 shrink-0 items-center justify-between gap-4 border-t border-border bg-card/80 px-5">
-                        <div class="flex min-w-0 items-center gap-3">
+                        <div class="flex min-w-0 flex-1 items-center gap-3">
                             {#if cursorPhoto}
                                 <span class="truncate text-sm font-semibold text-foreground">{cursorPhoto.file_name}</span>
                                 <span class="hidden truncate text-xs text-muted-foreground md:inline">
@@ -511,6 +546,40 @@
                                 </span>
                             {/if}
                         </div>
+
+                        {#if libraryView === "grid"}
+                            <div class="hidden shrink-0 items-center gap-2 lg:flex" aria-label="Grid style controls">
+                                <div class="flex items-center gap-1" aria-label="Grid size">
+                                    <button class={iconButtonClass(density === "compact")} onclick={() => setDensity("compact")} title="Small thumbnails" aria-label="Small thumbnails">
+                                        <Minimize2 size={14} />
+                                    </button>
+                                    <button class={iconButtonClass(density === "balanced")} onclick={() => setDensity("balanced")} title="Medium thumbnails" aria-label="Medium thumbnails">
+                                        <Grid size={14} />
+                                    </button>
+                                    <button class={iconButtonClass(density === "large")} onclick={() => setDensity("large")} title="Large thumbnails" aria-label="Large thumbnails">
+                                        <Images size={14} />
+                                    </button>
+                                    <button class={iconButtonClass(density === "lightbox")} onclick={() => setDensity("lightbox")} title="Lightbox grid" aria-label="Lightbox grid">
+                                        <Maximize2 size={14} />
+                                    </button>
+                                </div>
+
+                                <div class="h-5 w-px bg-border"></div>
+
+                                <div class="flex items-center gap-1" aria-label="Grid details">
+                                    <button class={iconButtonClass(gridDetailMode === "image")} onclick={() => setGridDetailMode("image")} title="Images only" aria-label="Images only">
+                                        <ImageIcon size={14} />
+                                    </button>
+                                    <button class={iconButtonClass(gridDetailMode === "essentials")} onclick={() => setGridDetailMode("essentials")} title="Title and stars" aria-label="Title and stars">
+                                        <Captions size={14} />
+                                    </button>
+                                    <button class={iconButtonClass(gridDetailMode === "metadata")} onclick={() => setGridDetailMode("metadata")} title="Full metadata" aria-label="Full metadata">
+                                        <Rows3 size={14} />
+                                    </button>
+                                </div>
+                            </div>
+                        {/if}
+
                         <div class="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
                             <span class="tabular-nums">{pickedCount} picks</span>
                             <span class="tabular-nums">{rejectedCount} rejects</span>

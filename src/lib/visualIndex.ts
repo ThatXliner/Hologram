@@ -1,5 +1,11 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
-import type { Photo, VisualIndexEntry, VisualIndexLabel, VisualIndexProgress } from "./types.ts";
+import type { ObjectDetectionBox, Photo, VisualIndexEntry, VisualIndexLabel, VisualIndexProgress } from "./types.ts";
+
+type VisualIndexOptions = {
+  detectorReady?: boolean;
+  detectorModelId?: string;
+  detectObjects?: (photo: Photo) => Promise<ObjectDetectionBox[]>;
+};
 
 type LabelSeed = {
   label: string;
@@ -37,27 +43,71 @@ function addLabel(labels: Map<string, VisualIndexLabel>, label: VisualIndexLabel
   }
 }
 
+function addDetectionLabels(labels: Map<string, VisualIndexLabel>, detections: ObjectDetectionBox[]) {
+  const grouped = new Map<string, ObjectDetectionBox[]>();
+  for (const detection of detections) {
+    grouped.set(detection.label, [...(grouped.get(detection.label) ?? []), detection]);
+  }
+
+  for (const [label, boxes] of grouped) {
+    const best = boxes.reduce((max, box) => Math.max(max, box.confidence), 0);
+    addLabel(labels, {
+      label,
+      kind: "object",
+      confidence: best,
+      source: "model",
+      reason: `The local object detector found ${boxes.length} ${label.toLowerCase()} ${boxes.length === 1 ? "box" : "boxes"} in the frame.`,
+      evidence: boxes.map((box) => `${Math.round(box.confidence * 100)}% ${box.label}`).slice(0, 4),
+      boxes,
+    });
+  }
+}
+
 function metadataLabels(photo: Photo): VisualIndexLabel[] {
   const text = photoText(photo);
   const labels = new Map<string, VisualIndexLabel>();
   for (const seed of metadataSeeds) {
-    if (seed.tokens.some((token) => text.includes(token))) {
+    const matches = seed.tokens.filter((token) => text.includes(token));
+    if (matches.length > 0) {
       addLabel(labels, {
         label: seed.label,
         kind: seed.kind,
         confidence: 0.72,
         source: "metadata",
+        reason: "Matched filename, tags, or notes that describe the subject.",
+        evidence: matches.slice(0, 3),
       });
     }
   }
   if ((photo.exif.focal_length ?? 0) >= 85) {
-    addLabel(labels, { label: "Telephoto", kind: "visual", confidence: 0.64, source: "metadata" });
+    addLabel(labels, {
+      label: "Telephoto",
+      kind: "visual",
+      confidence: 0.64,
+      source: "metadata",
+      reason: "The EXIF focal length is in a telephoto range.",
+      evidence: [`${Math.round(photo.exif.focal_length ?? 0)}mm`],
+    });
   }
   if ((photo.exif.aperture ?? 99) <= 2.8) {
-    addLabel(labels, { label: "Shallow Depth", kind: "visual", confidence: 0.62, source: "metadata" });
+    addLabel(labels, {
+      label: "Shallow Depth",
+      kind: "visual",
+      confidence: 0.62,
+      source: "metadata",
+      reason: "The EXIF aperture suggests a shallow depth of field.",
+      evidence: [`f/${(photo.exif.aperture ?? 0).toFixed(1)}`],
+    });
   }
   if ((photo.exif.iso ?? 0) >= 3200) {
-    addLabel(labels, { label: "Low Light", kind: "scene", confidence: 0.6, source: "metadata" });
+    addLabel(labels, {
+      label: "Low Light",
+      kind: "scene",
+      confidence: 0.6,
+      source: "metadata",
+      reason: "The EXIF ISO is high enough to suggest a dim scene.",
+      evidence: [`ISO ${photo.exif.iso}`],
+    });
   }
   return Array.from(labels.values());
 }
@@ -161,19 +211,46 @@ async function imageLabels(photo: Photo): Promise<VisualIndexLabel[]> {
   const labels = new Map<string, VisualIndexLabel>();
   const avgLuma = totalLuma / total;
   const avgSat = totalSat / total;
-  const addImageLabel = (label: string, kind: VisualIndexLabel["kind"], confidence: number) => {
-    addLabel(labels, { label, kind, confidence: Math.max(0.5, Math.min(0.95, confidence)), source: "image" });
+  const addImageLabel = (
+    label: string,
+    kind: VisualIndexLabel["kind"],
+    confidence: number,
+    reason: string,
+    evidence: string[],
+  ) => {
+    addLabel(labels, {
+      label,
+      kind,
+      confidence: Math.max(0.5, Math.min(0.95, confidence)),
+      source: "image",
+      reason,
+      evidence,
+    });
   };
 
-  if (blueTop / total > 0.16) addImageLabel("Sky", "scene", 0.64 + blueTop / total);
-  if (green / total > 0.22) addImageLabel("Foliage", "scene", 0.58 + green / total);
-  if (blueLower / total > 0.18) addImageLabel("Water", "scene", 0.55 + blueLower / total);
-  if (warm / total > 0.24) addImageLabel("Warm Light", "scene", 0.58 + warm / total);
-  if (dark / total > 0.5 || avgLuma < 72) addImageLabel("Low Light", "scene", 0.68);
-  if (bright / total > 0.58 && avgSat < 0.22) addImageLabel("Snow or Fog", "scene", 0.62);
-  if (lowSat / total > 0.78 && avgSat < 0.13) addImageLabel("Black and White", "visual", 0.76);
+  if (blueTop / total > 0.16) {
+    addImageLabel("Sky", "scene", 0.64 + blueTop / total, "The upper preview contains a strong blue region.", [`${Math.round((blueTop / total) * 100)}% upper-blue pixels`]);
+  }
+  if (green / total > 0.22) {
+    addImageLabel("Foliage", "scene", 0.58 + green / total, "The preview has a large green color cluster.", [`${Math.round((green / total) * 100)}% green pixels`]);
+  }
+  if (blueLower / total > 0.18) {
+    addImageLabel("Water", "scene", 0.55 + blueLower / total, "The lower preview contains a saturated blue region.", [`${Math.round((blueLower / total) * 100)}% lower-blue pixels`]);
+  }
+  if (warm / total > 0.24) {
+    addImageLabel("Warm Light", "scene", 0.58 + warm / total, "The preview contains a warm orange or red color cast.", [`${Math.round((warm / total) * 100)}% warm pixels`]);
+  }
+  if (dark / total > 0.5 || avgLuma < 72) {
+    addImageLabel("Low Light", "scene", 0.68, "The preview is predominantly dark.", [`average luma ${Math.round(avgLuma)}`]);
+  }
+  if (bright / total > 0.58 && avgSat < 0.22) {
+    addImageLabel("Snow or Fog", "scene", 0.62, "The preview is bright with low saturation.", [`${Math.round((bright / total) * 100)}% bright pixels`, `saturation ${avgSat.toFixed(2)}`]);
+  }
+  if (lowSat / total > 0.78 && avgSat < 0.13) {
+    addImageLabel("Black and White", "visual", 0.76, "The preview is almost entirely low saturation.", [`${Math.round((lowSat / total) * 100)}% low-saturation pixels`]);
+  }
   if ((photo.exif.width ?? 0) > 0 && (photo.exif.height ?? 0) > 0 && (photo.exif.height ?? 0) > (photo.exif.width ?? 0)) {
-    addImageLabel("Portrait Orientation", "visual", 0.82);
+    addImageLabel("Portrait Orientation", "visual", 0.82, "The EXIF dimensions are taller than wide.", [`${photo.exif.width} x ${photo.exif.height}`]);
   }
 
   return Array.from(labels.values());
@@ -196,6 +273,7 @@ export async function indexPhotoVisuals(
   photos: Photo[],
   onProgress: (progress: VisualIndexProgress) => void,
   existing: Record<string, VisualIndexEntry> = {},
+  options: VisualIndexOptions = {},
 ): Promise<Record<string, VisualIndexEntry>> {
   const next: Record<string, VisualIndexEntry> = { ...existing };
   const total = photos.length;
@@ -205,22 +283,37 @@ export async function indexPhotoVisuals(
     onProgress({ current: index, total, current_file: photo.file_name });
     await idleTick();
 
-    if (next[photo.id]) {
+    const existingEntry = next[photo.id];
+    if (
+      existingEntry &&
+      (!options.detectorReady || existingEntry.detector_model_id === options.detectorModelId)
+    ) {
       continue;
     }
 
     const labels = new Map<string, VisualIndexLabel>();
+    let detections: ObjectDetectionBox[] = [];
     for (const label of metadataLabels(photo)) addLabel(labels, label);
     try {
       for (const label of await imageLabels(photo)) addLabel(labels, label);
     } catch {
       // Unsupported formats or partially generated thumbnails can be retried in a later indexing pass.
     }
+    if (options.detectorReady && options.detectObjects) {
+      try {
+        detections = await options.detectObjects(photo);
+        addDetectionLabels(labels, detections);
+      } catch {
+        detections = [];
+      }
+    }
 
     next[photo.id] = {
       photo_id: photo.id,
       labels: Array.from(labels.values()).sort((a, b) => b.confidence - a.confidence),
+      detections,
       indexed_at: new Date().toISOString(),
+      detector_model_id: options.detectorReady ? options.detectorModelId : undefined,
     };
   }
 

@@ -13,10 +13,31 @@
     import TimelineView from "../lib/components/TimelineView.svelte";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import PhotoViewer from "../lib/components/PhotoViewer.svelte";
+    import DetectionDebugModal from "../lib/components/DetectionDebugModal.svelte";
     import { HologramAPI } from "../lib/api.ts";
     import { buildSmartCollections } from "../lib/collections.ts";
+    import {
+        deleteObjectDetectionModel,
+        detectObjectsInPhoto,
+        downloadObjectDetectionModel,
+        formatModelBytes,
+        loadObjectDetectionModelState,
+        objectDetectionModelManifest,
+        validateObjectDetectionModelState,
+    } from "../lib/objectDetectionModel.ts";
     import { indexPhotoVisuals } from "../lib/visualIndex.ts";
-    import type { CullFlag, Photo, PhotoFilter, SavedSearch, ThumbnailReady, VisualIndexEntry, VisualIndexProgress } from "../lib/types.ts";
+    import type {
+        CullFlag,
+        ObjectDetectionModelProgress,
+        ObjectDetectionModelState,
+        Photo,
+        PhotoFilter,
+        SavedSearch,
+        SmartCollection,
+        ThumbnailReady,
+        VisualIndexEntry,
+        VisualIndexProgress,
+    } from "../lib/types.ts";
     import {
         Bookmark,
         CalendarRange,
@@ -31,8 +52,10 @@
         Rows3,
         Search,
         Save,
+        ShieldCheck,
         Sparkles,
         Star,
+        Trash2,
         XCircle,
     } from "@lucide/svelte";
 
@@ -63,6 +86,16 @@
     let visualIndex = $state<Record<string, VisualIndexEntry>>({});
     let visualIndexProgress = $state<VisualIndexProgress>({ current: 0, total: 0 });
     let visualIndexLibraryKey = $state("");
+    let objectDetectionModelState = $state<ObjectDetectionModelState>(loadObjectDetectionModelState());
+    let objectDetectionModelProgress = $state<ObjectDetectionModelProgress>({
+        phase: "requesting",
+        received_bytes: 0,
+        total_bytes: objectDetectionModelManifest.approximate_size_bytes,
+        percent: 0,
+    });
+    let isObjectDetectionModelDownloading = $state(false);
+    let smartCollectionError = $state("");
+    let debugSmartCollection = $state<SmartCollection | null>(null);
     let searchTimer: ReturnType<typeof setTimeout> | undefined;
 
     const searchCache = new Map<string, { key: string; text: string }>();
@@ -75,7 +108,7 @@
         $displayPhotos.filter((photo) => (photo.flag ?? "none") === "none" && (photo.rating ?? 0) === 0).length,
     );
     const smartCollections = $derived(
-        smartCollectionsEnabled ? buildSmartCollections($photos, visualIndex) : [],
+        smartCollectionsEnabled && objectDetectionModelState.status === "ready" ? buildSmartCollections($photos, visualIndex) : [],
     );
     const gridTileSize = $derived(GRID_ZOOM_STEPS[gridZoomLevel] ?? GRID_ZOOM_STEPS[DEFAULT_GRID_ZOOM_LEVEL]);
     const maxGridZoomLevel = GRID_ZOOM_STEPS.length - 1;
@@ -85,6 +118,7 @@
         loadSmartCollectionState();
         loadGridPreferences();
         didLoadGridPreferences = true;
+        void refreshObjectDetectionModelState();
         if (import.meta.env.DEV) {
             (window as any).__photoStore__ = photoStore;
             const seedHandler = ((e: CustomEvent) => {
@@ -108,7 +142,13 @@
 
     $effect(() => {
         const ids = $photos.map((photo) => photo.id).join("|");
-        if (!smartCollectionsEnabled || !ids || isVisualIndexing || ids === visualIndexLibraryKey) return;
+        if (
+            !smartCollectionsEnabled ||
+            objectDetectionModelState.status !== "ready" ||
+            !ids ||
+            isVisualIndexing ||
+            ids === visualIndexLibraryKey
+        ) return;
         visualIndexLibraryKey = ids;
         void startVisualIndexing($photos);
     });
@@ -271,17 +311,42 @@
         }
     }
 
+    async function refreshObjectDetectionModelState() {
+        objectDetectionModelState = await validateObjectDetectionModelState();
+        if (objectDetectionModelState.status !== "ready" && smartCollectionsEnabled) {
+            smartCollectionsEnabled = false;
+            localStorage.removeItem("hologram.smartCollections.enabled");
+        }
+    }
+
     function persistVisualIndex(entries: Record<string, VisualIndexEntry>) {
         visualIndex = entries;
         localStorage.setItem("hologram.visualIndex", JSON.stringify(entries));
     }
 
     function openSmartCollectionsModal() {
-        if (smartCollectionsEnabled) return;
+        smartCollectionError = "";
         showSmartCollectionsModal = true;
     }
 
-    function enableSmartCollections() {
+    async function enableSmartCollections() {
+        if (isObjectDetectionModelDownloading) return;
+        smartCollectionError = "";
+        if (objectDetectionModelState.status !== "ready") {
+            isObjectDetectionModelDownloading = true;
+            try {
+                objectDetectionModelState = await downloadObjectDetectionModel((progress) => {
+                    objectDetectionModelProgress = progress;
+                });
+            } catch (error) {
+                smartCollectionError = error instanceof Error ? error.message : String(error);
+                objectDetectionModelState = loadObjectDetectionModelState();
+                return;
+            } finally {
+                isObjectDetectionModelDownloading = false;
+            }
+        }
+
         smartCollectionsEnabled = true;
         localStorage.setItem("hologram.smartCollections.enabled", "true");
         showSmartCollectionsModal = false;
@@ -290,6 +355,27 @@
             visualIndexLibraryKey = $photos.map((photo) => photo.id).join("|");
             void startVisualIndexing($photos);
         }
+    }
+
+    function disableSmartCollections() {
+        smartCollectionsEnabled = false;
+        activeSmartCollectionId = null;
+        showSmartCollectionsModal = false;
+        visualIndexLibraryKey = "";
+        localStorage.removeItem("hologram.smartCollections.enabled");
+        applyAllFilters();
+    }
+
+    async function deleteLocalObjectDetectionModel() {
+        disableSmartCollections();
+        objectDetectionModelState = await deleteObjectDetectionModel();
+        visualIndex = {};
+        localStorage.removeItem("hologram.visualIndex");
+    }
+
+    function openSmartCollectionDebug(id: string) {
+        const collection = smartCollections.find((item) => item.id === id);
+        if (collection) debugSmartCollection = collection;
     }
 
     async function startVisualIndexing(items: Photo[]) {
@@ -303,6 +389,11 @@
                     visualIndexProgress = progress;
                 },
                 visualIndex,
+                {
+                    detectorReady: objectDetectionModelState.status === "ready",
+                    detectorModelId: objectDetectionModelManifest.id,
+                    detectObjects: detectObjectsInPhoto,
+                },
             );
             persistVisualIndex(entries);
         } finally {
@@ -489,11 +580,16 @@
         smartCollectionsEnabled={smartCollectionsEnabled}
         smartCollectionsIndexing={isVisualIndexing}
         visualIndexProgress={visualIndexProgress}
+        objectDetectionModelState={objectDetectionModelState}
+        objectDetectionModelManifest={objectDetectionModelManifest}
         onFilter={handleSidebarFilter}
         onSavedSearchSelect={selectSavedSearch}
         onSavedSearchDelete={deleteSavedSearch}
         onSmartCollectionSelect={selectSmartCollection}
         onSmartCollectionsTitleClick={openSmartCollectionsModal}
+        onSmartCollectionDebug={openSmartCollectionDebug}
+        onSmartCollectionsDisable={disableSmartCollections}
+        onObjectDetectionModelDelete={deleteLocalObjectDetectionModel}
     />
 
     {#if !hasLibrary}
@@ -731,38 +827,109 @@
 
     {#if showSmartCollectionsModal}
         <div class="fixed inset-0 z-[90] grid place-items-center bg-black/60 px-4">
-            <section class="w-full max-w-md rounded-lg border border-border bg-card p-5 shadow-xl">
+            <section class="w-full max-w-lg rounded-xl border border-border bg-card p-5 shadow-xl">
                 <div class="mb-4 flex items-start gap-3">
                     <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/15 text-primary">
-                        <Sparkles size={20} />
+                        <ShieldCheck size={20} />
                     </div>
                     <div class="min-w-0">
-                        <h2 class="text-base font-semibold text-foreground">Enable Smart Collections?</h2>
+                        <h2 class="text-base font-semibold text-foreground">Enable Local Object Detection?</h2>
                         <p class="mt-1 text-sm text-muted-foreground">
-                            Hologram will index previews locally in the background to build visual collections.
+                            Hologram will download a small object detector, run it on this Mac, and build Memories-style Smart Collections from local detections.
                         </p>
                     </div>
                 </div>
-                <div class="rounded-md border border-border bg-background p-3 text-xs text-muted-foreground">
-                    The current index uses local thumbnail analysis and existing content labels. A bundled object detector can plug into the same index later.
+
+                <div class="overflow-hidden rounded-lg border border-border bg-background">
+                    <div class="grid grid-cols-[9rem_minmax(0,1fr)] border-b border-border text-xs">
+                        <div class="bg-secondary/60 px-3 py-2 font-semibold text-muted-foreground">Model</div>
+                        <div class="min-w-0 px-3 py-2 text-foreground">{objectDetectionModelManifest.name}</div>
+                    </div>
+                    <div class="grid grid-cols-[9rem_minmax(0,1fr)] border-b border-border text-xs">
+                        <div class="bg-secondary/60 px-3 py-2 font-semibold text-muted-foreground">Source</div>
+                        <a class="min-w-0 truncate px-3 py-2 text-primary hover:underline" href={objectDetectionModelManifest.source_url} target="_blank" rel="noreferrer">
+                            {objectDetectionModelManifest.source_name}
+                        </a>
+                    </div>
+                    <div class="grid grid-cols-[9rem_minmax(0,1fr)] border-b border-border text-xs">
+                        <div class="bg-secondary/60 px-3 py-2 font-semibold text-muted-foreground">Download</div>
+                        <div class="px-3 py-2 text-foreground">About {formatModelBytes(objectDetectionModelManifest.approximate_size_bytes)}</div>
+                    </div>
+                    <div class="grid grid-cols-[9rem_minmax(0,1fr)] border-b border-border text-xs">
+                        <div class="bg-secondary/60 px-3 py-2 font-semibold text-muted-foreground">License</div>
+                        <div class="px-3 py-2 text-foreground">{objectDetectionModelManifest.license}</div>
+                    </div>
+                    <div class="grid grid-cols-[9rem_minmax(0,1fr)] text-xs">
+                        <div class="bg-secondary/60 px-3 py-2 font-semibold text-muted-foreground">Storage</div>
+                        <div class="px-3 py-2 text-foreground">{objectDetectionModelManifest.storage_label}</div>
+                    </div>
                 </div>
-                <div class="mt-5 flex justify-end gap-2">
+
+                <div class="mt-3 rounded-lg border border-border bg-background p-3 text-xs leading-5 text-muted-foreground">
+                    No model download starts until you press the primary button. Smart Collections stay off if you cancel, and detected boxes are stored locally so the debug view can show why a photo matched a category.
+                </div>
+
+                {#if isObjectDetectionModelDownloading || objectDetectionModelState.status === "downloading"}
+                    <div class="mt-4">
+                        <div class="mb-1 flex items-center justify-between text-xs text-muted-foreground">
+                            <span class="capitalize">{objectDetectionModelProgress.phase}</span>
+                            <span class="tabular-nums">{objectDetectionModelProgress.percent}%</span>
+                        </div>
+                        <div class="h-2 overflow-hidden rounded-full bg-secondary">
+                            <div class="h-full rounded-full bg-primary transition-[width]" style:width={`${objectDetectionModelProgress.percent}%`}></div>
+                        </div>
+                    </div>
+                {/if}
+
+                {#if smartCollectionError || objectDetectionModelState.status === "error"}
+                    <div class="mt-3 rounded-lg border border-reject/30 bg-reject/10 p-3 text-xs text-reject">
+                        {smartCollectionError || objectDetectionModelState.last_error}
+                    </div>
+                {/if}
+
+                <div class="mt-5 flex flex-wrap justify-end gap-2">
+                    {#if smartCollectionsEnabled}
+                        <button
+                            class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            onclick={disableSmartCollections}
+                        >
+                            Disable
+                        </button>
+                        <button
+                            class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-secondary px-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-reject"
+                            onclick={deleteLocalObjectDetectionModel}
+                        >
+                            <Trash2 size={15} />
+                            Delete Model
+                        </button>
+                    {/if}
                     <button
                         class="inline-flex h-9 items-center justify-center rounded-md bg-secondary px-3 text-sm font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                         onclick={() => (showSmartCollectionsModal = false)}
+                        disabled={isObjectDetectionModelDownloading}
                     >
                         Cancel
                     </button>
                     <button
-                        class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
+                        class="inline-flex h-9 items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-60"
                         onclick={enableSmartCollections}
+                        disabled={isObjectDetectionModelDownloading}
                     >
                         <Sparkles size={15} />
-                        Enable Indexing
+                        {objectDetectionModelState.status === "ready" ? "Enable Smart Collections" : "Download and Enable Local Object Detection"}
                     </button>
                 </div>
             </section>
         </div>
+    {/if}
+
+    {#if debugSmartCollection}
+        <DetectionDebugModal
+            collection={debugSmartCollection}
+            photos={$photos}
+            visualIndex={visualIndex}
+            onClose={() => (debugSmartCollection = null)}
+        />
     {/if}
 
     {#if $viewMode === "viewer"}

@@ -29,7 +29,7 @@ image = "0.25"
 rsraw = "0.1.1"
 walkdir = "^2"
 chrono = { version = "0.4", features = ["serde"] }
-uuid = { version = "1.0", features = ["v4", "serde"] }
+uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
 base64 = "0.22"
 tokio = { version = "1", features = ["rt", "rt-multi-thread", "macros", "sync"] }
 anyhow = "1.0"

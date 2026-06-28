@@ -97,6 +97,14 @@ pub struct PhotoStats {
     pub lenses: HashMap<String, usize>,
 }
 
+fn first_exif_u32(value: &kamadak_exif::Value) -> Option<u32> {
+    match value {
+        kamadak_exif::Value::Short(values) => values.first().map(|value| u32::from(*value)),
+        kamadak_exif::Value::Long(values) => values.first().copied(),
+        _ => None,
+    }
+}
+
 fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
     let file = fs::File::open(file_path)?;
     let mut bufreader = std::io::BufReader::new(&file);
@@ -130,28 +138,19 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
         }
         if let Some(field) = exif.get_field(kamadak_exif::Tag::PhotographicSensitivity, In::PRIMARY)
         {
-            if let kamadak_exif::Value::Short(ref vec) = field.value {
-                if let Some(iso) = vec.first() {
-                    exif_data.iso = Some(*iso as u32);
-                }
-            }
+            exif_data.iso = first_exif_u32(&field.value);
         }
         if let Some(field) = exif.get_field(kamadak_exif::Tag::ExposureTime, In::PRIMARY) {
             exif_data.shutter_speed = Some(field.display_value().to_string());
         }
         if let Some(field) = exif.get_field(kamadak_exif::Tag::ImageWidth, In::PRIMARY) {
-            if let kamadak_exif::Value::Long(ref vec) = field.value {
-                if let Some(width) = vec.first() {
-                    exif_data.width = Some(*width);
-                }
-            }
+            exif_data.width = first_exif_u32(&field.value);
         }
         if let Some(field) = exif.get_field(kamadak_exif::Tag::ImageLength, In::PRIMARY) {
-            if let kamadak_exif::Value::Long(ref vec) = field.value {
-                if let Some(height) = vec.first() {
-                    exif_data.height = Some(*height);
-                }
-            }
+            exif_data.height = first_exif_u32(&field.value);
+        }
+        if let Some(field) = exif.get_field(kamadak_exif::Tag::Orientation, In::PRIMARY) {
+            exif_data.orientation = first_exif_u32(&field.value).and_then(|value| u16::try_from(value).ok());
         }
     }
 
@@ -187,7 +186,7 @@ fn collect_photo_metadata(path: &Path) -> Option<Photo> {
     let exif_data = extract_exif_data(path).unwrap_or_default();
 
     Some(Photo {
-        id: Uuid::new_v4().to_string(),
+        id: stable_photo_id(path),
         file_path: path.to_string_lossy().to_string(),
         file_name,
         file_size,
@@ -198,6 +197,15 @@ fn collect_photo_metadata(path: &Path) -> Option<Photo> {
         modified_at,
         paired_with: None,
     })
+}
+
+fn stable_photo_id(path: &Path) -> String {
+    let canonical = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .to_string();
+    Uuid::new_v5(&Uuid::NAMESPACE_URL, canonical.as_bytes()).to_string()
 }
 
 fn compute_stats(photos: &[Photo]) -> PhotoStats {
@@ -239,8 +247,12 @@ fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
         let path = Path::new(&photo.file_path);
         if let Some(stem) = path.file_stem() {
             if let Some(stem_str) = stem.to_str() {
+                let parent = path
+                    .parent()
+                    .map(|parent| parent.to_string_lossy().into_owned())
+                    .unwrap_or_default();
                 base_names
-                    .entry(stem_str.to_string())
+                    .entry(format!("{parent}\0{stem_str}"))
                     .or_insert_with(Vec::new)
                     .push(i);
             }
@@ -270,6 +282,12 @@ fn pair_raw_jpeg(photos: &mut Vec<Photo>) {
             }
         }
     }
+}
+
+fn is_browser_preview_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_lowercase().as_str(), "jpg" | "jpeg" | "png" | "webp" | "gif"))
 }
 
 fn load_full_resolution_image(file_path: &Path) -> Response {
@@ -331,6 +349,7 @@ async fn scan_folder_fast(folder_path: String, app: AppHandle) -> Result<ScanRes
 async fn generate_thumbnails(photos: Vec<Photo>, app: AppHandle) -> Result<(), String> {
     let items: Vec<(String, String)> = photos
         .into_iter()
+        .filter(|p| !is_browser_preview_file(Path::new(&p.file_path)))
         .map(|p| (p.id, p.file_path))
         .collect();
 
@@ -840,6 +859,8 @@ async fn load_full_resolution_image_command(file_path: String) -> Response {
 pub struct PhotoMetadata {
     pub tags: Vec<String>,
     pub notes: String,
+    pub rating: u8,
+    pub flag: String,
 }
 
 fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {
@@ -853,10 +874,20 @@ fn open_db(app: &AppHandle) -> Result<rusqlite::Connection, String> {
         "CREATE TABLE IF NOT EXISTS photo_metadata (
             photo_id TEXT PRIMARY KEY,
             tags TEXT NOT NULL DEFAULT '[]',
-            notes TEXT NOT NULL DEFAULT ''
+            notes TEXT NOT NULL DEFAULT '',
+            rating INTEGER NOT NULL DEFAULT 0,
+            flag TEXT NOT NULL DEFAULT 'none'
         )",
     )
     .map_err(|e| e.to_string())?;
+    let _ = conn.execute(
+        "ALTER TABLE photo_metadata ADD COLUMN rating INTEGER NOT NULL DEFAULT 0",
+        [],
+    );
+    let _ = conn.execute(
+        "ALTER TABLE photo_metadata ADD COLUMN flag TEXT NOT NULL DEFAULT 'none'",
+        [],
+    );
     Ok(conn)
 }
 
@@ -866,13 +897,20 @@ fn set_photo_metadata(
     photo_id: String,
     tags: Vec<String>,
     notes: String,
+    rating: u8,
+    flag: String,
 ) -> Result<(), String> {
     let conn = open_db(&app)?;
     let tags_json = serde_json::to_string(&tags).map_err(|e| e.to_string())?;
+    let rating = rating.min(5);
+    let flag = match flag.as_str() {
+        "pick" | "reject" => flag,
+        _ => "none".to_string(),
+    };
     conn.execute(
-        "INSERT INTO photo_metadata (photo_id, tags, notes) VALUES (?1, ?2, ?3)
-         ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes",
-        rusqlite::params![photo_id, tags_json, notes],
+        "INSERT INTO photo_metadata (photo_id, tags, notes, rating, flag) VALUES (?1, ?2, ?3, ?4, ?5)
+         ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes, rating=excluded.rating, flag=excluded.flag",
+        rusqlite::params![photo_id, tags_json, notes, rating, flag],
     )
     .map_err(|e| e.to_string())?;
     Ok(())
@@ -886,13 +924,24 @@ fn get_photo_metadata(
     let conn = open_db(&app)?;
     let mut result = HashMap::new();
     for photo_id in &photo_ids {
-        if let Ok((tags_json, notes)) = conn.query_row(
-            "SELECT tags, notes FROM photo_metadata WHERE photo_id = ?1",
+        if let Ok((tags_json, notes, rating, flag)) = conn.query_row(
+            "SELECT tags, notes, rating, flag FROM photo_metadata WHERE photo_id = ?1",
             rusqlite::params![photo_id],
-            |row| Ok((row.get::<_, String>(0)?, row.get::<_, String>(1)?)),
+            |row| {
+                Ok((
+                    row.get::<_, String>(0)?,
+                    row.get::<_, String>(1)?,
+                    row.get::<_, u8>(2)?,
+                    row.get::<_, String>(3)?,
+                ))
+            },
         ) {
             let tags: Vec<String> = serde_json::from_str(&tags_json).unwrap_or_default();
-            result.insert(photo_id.clone(), PhotoMetadata { tags, notes });
+            let flag = match flag.as_str() {
+                "pick" | "reject" => flag,
+                _ => "none".to_string(),
+            };
+            result.insert(photo_id.clone(), PhotoMetadata { tags, notes, rating: rating.min(5), flag });
         }
     }
     Ok(result)

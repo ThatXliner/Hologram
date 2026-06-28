@@ -1,7 +1,7 @@
 import { invoke } from "@tauri-apps/api/core";
 import { listen } from "@tauri-apps/api/event";
 import { open } from "@tauri-apps/plugin-dialog";
-import type { Photo, PhotoFilter, PhotoStats, ScanResult, ThumbnailReady } from "./types.ts";
+import type { CullFlag, Photo, PhotoFilter, PhotoMetadata, PhotoStats, ScanResult, ThumbnailReady } from "./types.ts";
 
 export class HologramAPI {
   static async selectFolder(): Promise<string | null> {
@@ -121,15 +121,21 @@ export class HologramAPI {
   }
 
   static async openInEditor(filePath: string): Promise<void> {
-    const { open } = await import("@tauri-apps/plugin-opener");
-    await open(filePath);
+    const { openPath } = await import("@tauri-apps/plugin-opener");
+    await openPath(filePath);
   }
 
-  static async setPhotoMetadata(photoId: string, tags: string[], notes: string): Promise<void> {
-    await invoke("set_photo_metadata", { photoId, tags, notes });
+  static async setPhotoMetadata(
+    photoId: string,
+    tags: string[],
+    notes: string,
+    rating = 0,
+    flag: CullFlag = "none",
+  ): Promise<void> {
+    await invoke("set_photo_metadata", { photoId, tags, notes, rating, flag });
   }
 
-  static async getPhotoMetadata(photoIds: string[]): Promise<Record<string, { tags: string[]; notes: string }>> {
+  static async getPhotoMetadata(photoIds: string[]): Promise<Record<string, PhotoMetadata>> {
     return await invoke("get_photo_metadata", { photoIds });
   }
 

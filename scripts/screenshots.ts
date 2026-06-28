@@ -99,6 +99,10 @@ interface MockPhoto {
     created_at: string;
     modified_at: string;
     paired_with?: string;
+    tags?: string[];
+    notes?: string;
+    rating?: number;
+    flag?: "none" | "pick" | "reject";
 }
 
 const MOCK_PHOTOS: MockPhoto[] = [
@@ -111,6 +115,7 @@ const MOCK_PHOTOS: MockPhoto[] = [
             date_taken: "2025-11-15T08:32:00", width: 6048, height: 4024 },
         created_at: "2025-11-15T08:32:00", modified_at: "2025-11-15T08:32:00",
         paired_with: "photo-2",
+        rating: 4, flag: "pick", tags: ["keeper"],
     },
     {
         id: "photo-2", file_path: "/photos/DSC_4821.JPG", file_name: "DSC_4821.JPG",
@@ -121,6 +126,7 @@ const MOCK_PHOTOS: MockPhoto[] = [
             date_taken: "2025-11-15T08:32:00", width: 6048, height: 4024 },
         created_at: "2025-11-15T08:32:00", modified_at: "2025-11-15T08:32:00",
         paired_with: "photo-1",
+        rating: 4, flag: "pick", tags: ["keeper"],
     },
     {
         id: "photo-3", file_path: "/photos/IMG_7294.CR3", file_name: "IMG_7294.CR3",
@@ -130,6 +136,7 @@ const MOCK_PHOTOS: MockPhoto[] = [
             exposure_mode: "Manual", flash: "Off", white_balance: "Daylight",
             date_taken: "2025-11-14T16:45:00", width: 8192, height: 5464 },
         created_at: "2025-11-14T16:45:00", modified_at: "2025-11-14T16:45:00",
+        rating: 5, flag: "pick", tags: ["portfolio"],
     },
     {
         id: "photo-4", file_path: "/photos/DSC_4830.NEF", file_name: "DSC_4830.NEF",
@@ -139,6 +146,7 @@ const MOCK_PHOTOS: MockPhoto[] = [
             exposure_mode: "Aperture Priority", flash: "Off", white_balance: "Cloudy",
             date_taken: "2025-11-15T10:15:00", width: 6048, height: 4024 },
         created_at: "2025-11-15T10:15:00", modified_at: "2025-11-15T10:15:00",
+        rating: 1, flag: "reject",
     },
     {
         id: "photo-5", file_path: "/photos/IMG_7301.CR3", file_name: "IMG_7301.CR3",
@@ -268,6 +276,8 @@ async function installTauriMock(
                     if (cmd === "filter_photos") return payload.photos;
                     if (cmd === "get_photo_stats") return payload.stats;
                     if (cmd === "apply_edits_and_save") return "/tmp/edited.jpg";
+                    if (cmd === "set_photo_metadata") return null;
+                    if (cmd === "get_photo_metadata") return {};
                     if (cmd === "load_full_resolution_image_command") {
                         // Return a tiny valid image buffer
                         return new ArrayBuffer(0);
@@ -408,6 +418,17 @@ async function shot(page: Page, name: string): Promise<void> {
     await writeFile(filePath, newBytes);
 }
 
+function resolveChromiumExecutable(): string | undefined {
+    if (existsSync(chromium.executablePath())) return chromium.executablePath();
+
+    const candidates = [
+        `${process.env.HOME}/Library/Caches/ms-playwright/chromium-1208/chrome-mac-arm64/Google Chrome for Testing.app/Contents/MacOS/Google Chrome for Testing`,
+        "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome",
+        "/Applications/Chromium.app/Contents/MacOS/Chromium",
+    ];
+    return candidates.find((candidate) => existsSync(candidate));
+}
+
 // ── Scenarios ─────────────────────────────────────────────────────────────────
 
 /**
@@ -466,7 +487,7 @@ async function scenarioGrid(ctx: BrowserContext): Promise<void> {
     await page.waitForTimeout(1000);
 
     // Check if we see the photo grid (count heading)
-    const hasGrid = await page.locator("text=Photos (").isVisible().catch(() => false);
+    const hasGrid = await page.locator("text=visible").isVisible().catch(() => false);
     if (!hasGrid) {
         // Fallback: click Import Photos and mock the dialog response
         console.log("  (seeding via import button fallback)");
@@ -507,7 +528,7 @@ async function scenarioGridFiltered(ctx: BrowserContext): Promise<void> {
     await page.waitForTimeout(1000);
 
     // If no grid visible, try import fallback
-    const hasGrid = await page.locator("text=Photos (").isVisible().catch(() => false);
+    const hasGrid = await page.locator("text=visible").isVisible().catch(() => false);
     if (!hasGrid) {
         const importBtn = page.locator("text=Import Photos");
         if (await importBtn.isVisible()) {
@@ -517,7 +538,7 @@ async function scenarioGridFiltered(ctx: BrowserContext): Promise<void> {
     }
 
     // Expand filters
-    const filterToggle = page.locator("text=Filters").locator("..").locator("button").last();
+    const filterToggle = page.locator("text=Advanced Filters").locator("..").locator("button").last();
     if (await filterToggle.isVisible()) {
         await filterToggle.click();
         await page.waitForTimeout(300);
@@ -560,7 +581,7 @@ async function scenarioViewer(ctx: BrowserContext): Promise<void> {
     await page.waitForTimeout(1000);
 
     // Try import fallback if needed
-    const hasGrid = await page.locator("text=Photos (").isVisible().catch(() => false);
+    const hasGrid = await page.locator("text=visible").isVisible().catch(() => false);
     if (!hasGrid) {
         const importBtn = page.locator("text=Import Photos");
         if (await importBtn.isVisible()) {
@@ -570,14 +591,14 @@ async function scenarioViewer(ctx: BrowserContext): Promise<void> {
     }
 
     // Click the third photo card (Canon EOS R5 portrait shot)
-    const cards = page.locator("button").filter({ hasText: "IMG_7294" });
+    const cards = page.locator("[data-photo-card]").filter({ hasText: "IMG_7294" });
     if (await cards.first().isVisible()) {
-        await cards.first().click();
+        await cards.first().dblclick();
     } else {
         // Fallback: click any photo card
-        const anyCard = page.locator("button").filter({ hasText: /\.(NEF|CR3|ARW|JPG)/ }).first();
+        const anyCard = page.locator("[data-photo-card]").filter({ hasText: /\.(NEF|CR3|ARW|JPG)/ }).first();
         if (await anyCard.isVisible()) {
-            await anyCard.click();
+            await anyCard.dblclick();
         }
     }
 
@@ -609,7 +630,7 @@ async function scenarioViewerPaired(ctx: BrowserContext): Promise<void> {
     );
     await page.waitForTimeout(1000);
 
-    const hasGrid = await page.locator("text=Photos (").isVisible().catch(() => false);
+    const hasGrid = await page.locator("text=visible").isVisible().catch(() => false);
     if (!hasGrid) {
         const importBtn = page.locator("text=Import Photos");
         if (await importBtn.isVisible()) {
@@ -619,9 +640,9 @@ async function scenarioViewerPaired(ctx: BrowserContext): Promise<void> {
     }
 
     // Click a paired photo (DSC_4821 has RAW+JPEG pair)
-    const pairedCard = page.locator("button").filter({ hasText: "DSC_4821" }).first();
+    const pairedCard = page.locator("[data-photo-card]").filter({ hasText: "DSC_4821" }).first();
     if (await pairedCard.isVisible()) {
-        await pairedCard.click();
+        await pairedCard.dblclick();
     }
 
     await page.waitForTimeout(800);
@@ -652,7 +673,7 @@ async function scenarioEditor(ctx: BrowserContext): Promise<void> {
     );
     await page.waitForTimeout(1000);
 
-    const hasGrid = await page.locator("text=Photos (").isVisible().catch(() => false);
+    const hasGrid = await page.locator("text=visible").isVisible().catch(() => false);
     if (!hasGrid) {
         const importBtn = page.locator("text=Import Photos");
         if (await importBtn.isVisible()) {
@@ -662,9 +683,9 @@ async function scenarioEditor(ctx: BrowserContext): Promise<void> {
     }
 
     // Open any photo in viewer
-    const anyCard = page.locator("button").filter({ hasText: /\.(NEF|CR3|ARW|JPG)/ }).first();
+    const anyCard = page.locator("[data-photo-card]").filter({ hasText: /\.(NEF|CR3|ARW|JPG)/ }).first();
     if (await anyCard.isVisible()) {
-        await anyCard.click();
+        await anyCard.dblclick();
     }
     await page.waitForTimeout(800);
 
@@ -711,9 +732,11 @@ async function main(): Promise<void> {
         if (!serverAlreadyRunning) server = await startServer();
     }
 
+    const executablePath = resolveChromiumExecutable();
     const browser = await chromium.launch({
         headless: true,
         args: ["--no-sandbox", "--disable-dev-shm-usage"],
+        executablePath,
     });
 
     const context = await browser.newContext({ deviceScaleFactor: DEVICE_SCALE_FACTOR });

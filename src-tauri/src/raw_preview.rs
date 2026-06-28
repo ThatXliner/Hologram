@@ -2,6 +2,7 @@ use anyhow::Result;
 use base64::Engine;
 use image::codecs::jpeg::JpegEncoder;
 use image::{DynamicImage, RgbImage};
+use exif::{In, Reader, Tag, Value};
 use rsraw::{ImageFormat as RawImageFormat, RawImage, ThumbFormat, BIT_DEPTH_8};
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -66,10 +67,37 @@ pub fn generate_thumbnail(file_path: &Path) -> Result<String> {
     }
 
     let img = image::open(file_path)?;
+    let img = apply_exif_orientation(img, read_exif_orientation(file_path));
     let thumbnail = img.thumbnail(400, 400);
     let buffer = encode_jpeg(&thumbnail, 90)?;
 
     Ok(base64::engine::general_purpose::STANDARD.encode(buffer))
+}
+
+fn read_exif_orientation(file_path: &Path) -> Option<u16> {
+    let file = fs::File::open(file_path).ok()?;
+    let mut reader = std::io::BufReader::new(file);
+    let exif = Reader::new().read_from_container(&mut reader).ok()?;
+    let field = exif.get_field(Tag::Orientation, In::PRIMARY)?;
+
+    match field.value {
+        Value::Short(ref values) => values.first().copied(),
+        Value::Long(ref values) => values.first().map(|value| *value as u16),
+        _ => None,
+    }
+}
+
+fn apply_exif_orientation(image: DynamicImage, orientation: Option<u16>) -> DynamicImage {
+    match orientation.unwrap_or(1) {
+        2 => image.fliph(),
+        3 => image.rotate180(),
+        4 => image.flipv(),
+        5 => image.fliph().rotate90(),
+        6 => image.rotate90(),
+        7 => image.fliph().rotate270(),
+        8 => image.rotate270(),
+        _ => image,
+    }
 }
 
 /// Get the cache directory for LibRaw conversions.
@@ -123,6 +151,7 @@ fn extract_embedded_raw_preview(file_path: &Path, max_dimension: u32) -> Result<
         .ok_or_else(|| anyhow::anyhow!("RAW file does not contain a JPEG preview"))?;
 
     let image = image::load_from_memory(&preview.data)?;
+    let image = apply_exif_orientation(image, read_exif_orientation(file_path));
     bounded_jpeg_from_image(image, max_dimension)
 }
 
@@ -160,6 +189,7 @@ fn render_raw_with_libraw(file_path: &Path, max_dimension: u32) -> Result<Vec<u8
 
     let image = RgbImage::from_raw(processed.width(), processed.height(), rgb_pixels)
         .ok_or_else(|| anyhow::anyhow!("Failed to assemble LibRaw RGB image"))?;
+    let image = apply_exif_orientation(DynamicImage::ImageRgb8(image), read_exif_orientation(file_path));
 
-    bounded_jpeg_from_image(DynamicImage::ImageRgb8(image), max_dimension)
+    bounded_jpeg_from_image(image, max_dimension)
 }

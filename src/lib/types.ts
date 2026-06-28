@@ -1,3 +1,5 @@
+export type CullFlag = "none" | "pick" | "reject";
+
 export interface Photo {
   id: string;
   file_path: string;
@@ -11,6 +13,8 @@ export interface Photo {
   paired_with?: string; // ID of paired RAW/JPEG
   tags?: string[];
   notes?: string;
+  rating?: number; // 0-5 stars
+  flag?: CullFlag;
 }
 
 export interface ExifData {
@@ -45,6 +49,15 @@ export interface PhotoFilter {
   flash?: string;
   white_balance?: string;
   tags?: string[]; // filter photos that have ALL of these tags
+  rating_gte?: number;
+  flag?: CullFlag;
+}
+
+export interface PhotoMetadata {
+  tags: string[];
+  notes: string;
+  rating: number;
+  flag: CullFlag;
 }
 
 export interface PhotoStats {

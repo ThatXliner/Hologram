@@ -1,11 +1,17 @@
 <script lang="ts">
-    import { photoStore, stats, currentFilter } from "../stores/photoStore.ts";
+    import { photoStore, stats } from "../stores/photoStore.ts";
     import { HologramAPI } from "../api.ts";
-    import type { PhotoFilter, Photo, ThumbnailReady, ExifData } from "../types.ts";
+    import type { ExifData, Photo, PhotoFilter, ThumbnailReady } from "../types.ts";
     import {
+        BarChart3,
+        Camera,
+        Check,
+        Filter,
         FolderOpen,
         Plus,
+        Star,
         X,
+        XCircle,
     } from "@lucide/svelte";
 
     interface Props {
@@ -18,17 +24,17 @@
 
     let activeFilter = $state<PhotoFilter>({});
     let showFilters = $state(false);
+    let showAddFilter = $state(false);
+    let tagFilterInput = $state("");
 
-    // All possible filter definitions, derived from actual data
-    type FilterKind = "select" | "range" | "date-range" | "tags";
-    interface FilterDef {
-        key: string;
-        label: string;
-        kind: FilterKind;
-        filterKey: keyof PhotoFilter; // maps to PhotoFilter field
-    }
+    const pickedCount = $derived(allPhotos.filter((photo) => photo.flag === "pick").length);
+    const rejectedCount = $derived(allPhotos.filter((photo) => photo.flag === "reject").length);
+    const ratedCount = $derived(allPhotos.filter((photo) => (photo.rating ?? 0) > 0).length);
+    const reviewedCount = $derived(
+        allPhotos.filter((photo) => photo.flag === "pick" || photo.flag === "reject" || (photo.rating ?? 0) > 0).length,
+    );
+    const reviewPct = $derived(allPhotos.length ? Math.round((reviewedCount / allPhotos.length) * 100) : 0);
 
-    // Select filters: auto-detect which EXIF string fields have values in the library
     const selectFields: { exifKey: keyof ExifData; label: string; filterKey: keyof PhotoFilter }[] = [
         { exifKey: "camera_model", label: "Camera Model", filterKey: "camera_model" },
         { exifKey: "camera_make", label: "Camera Make", filterKey: "camera_make" },
@@ -39,71 +45,60 @@
         { exifKey: "white_balance", label: "White Balance", filterKey: "white_balance" },
     ];
 
-    // File type is on the Photo object, not exif
     const fileTypeOptions = $derived(
-        Array.from(new Set(allPhotos.map((p) => p.file_type).filter(Boolean))).sort(),
+        Array.from(new Set(allPhotos.map((photo) => photo.file_type).filter(Boolean))).sort(),
     );
 
-    // Build available select filters from data (only show if at least 1 value exists)
     const availableSelectFilters = $derived(
         selectFields
-            .map((f) => ({
-                ...f,
+            .map((field) => ({
+                ...field,
                 options: Array.from(
-                    new Set(allPhotos.map((p) => p.exif[f.exifKey] as string | undefined).filter(Boolean)),
+                    new Set(allPhotos.map((photo) => photo.exif[field.exifKey] as string | undefined).filter(Boolean)),
                 ).sort() as string[],
             }))
-            .filter((f) => f.options.length > 0),
+            .filter((field) => field.options.length > 0),
     );
 
-    // Range filters
-    const rangeFields: { label: string; filterKey: "iso_range" | "aperture_range" | "focal_length_range"; step: number; prefix: string; exifKey: keyof ExifData }[] = [
+    const rangeFields: {
+        label: string;
+        filterKey: "iso_range" | "aperture_range" | "focal_length_range";
+        step: number;
+        prefix: string;
+        exifKey: keyof ExifData;
+    }[] = [
         { label: "ISO", filterKey: "iso_range", step: 1, prefix: "", exifKey: "iso" },
         { label: "Aperture", filterKey: "aperture_range", step: 0.1, prefix: "f/", exifKey: "aperture" },
         { label: "Focal Length", filterKey: "focal_length_range", step: 1, prefix: "", exifKey: "focal_length" },
     ];
 
-    // Only show range filters that have data
     const availableRangeFilters = $derived(
-        rangeFields.filter((f) => allPhotos.some((p) => p.exif[f.exifKey] != null)),
+        rangeFields.filter((field) => allPhotos.some((photo) => photo.exif[field.exifKey] != null)),
     );
+    const hasDateData = $derived(allPhotos.some((photo) => photo.exif.date_taken));
 
-    // Check if date data exists
-    const hasDateData = $derived(allPhotos.some((p) => p.exif.date_taken));
-
-    // Track which filters the user has added (customizable)
-    // By default, show the first 3 available select filters + file type
     let addedFilterKeys = $state<Set<string>>(new Set(["camera_model", "lens_model", "file_type"]));
-    let showAddFilter = $state(false);
 
-    // All possible filter keys that can be added
     const allFilterOptions = $derived([
-        ...availableSelectFilters.map((f) => ({ key: f.filterKey, label: f.label, kind: "select" as const })),
+        ...availableSelectFilters.map((field) => ({ key: field.filterKey, label: field.label, kind: "select" as const })),
         { key: "file_type", label: "File Type", kind: "select" as const },
-        ...availableRangeFilters.map((f) => ({ key: f.filterKey, label: f.label + " Range", kind: "range" as const })),
+        ...availableRangeFilters.map((field) => ({ key: field.filterKey, label: `${field.label} Range`, kind: "range" as const })),
         ...(hasDateData ? [{ key: "date_range", label: "Date Range", kind: "date-range" as const }] : []),
         { key: "tags", label: "Tags", kind: "tags" as const },
     ]);
 
-    let tagFilterInput = $state("");
+    const unaddedFilters = $derived(allFilterOptions.filter((field) => !addedFilterKeys.has(field.key)));
 
-    const unaddedFilters = $derived(
-        allFilterOptions.filter((f) => !addedFilterKeys.has(f.key)),
+    const activeFilterCount = $derived(
+        Object.entries(activeFilter).filter(([key, value]) => {
+            if (key === "search" || key === "rating_gte" || key === "flag") return false;
+            if (value == null || value === "") return false;
+            if (Array.isArray(value) && value.every((item: any) => item == null || item === "")) return false;
+            return true;
+        }).length,
     );
 
-    function addFilter(key: string) {
-        addedFilterKeys = new Set([...addedFilterKeys, key]);
-        showAddFilter = false;
-    }
-
-    function removeFilter(key: string) {
-        addedFilterKeys = new Set([...addedFilterKeys].filter((k) => k !== key));
-        // Also clear that filter value
-        const updated = { ...activeFilter };
-        delete (updated as any)[key];
-        activeFilter = updated;
-        onFilter(activeFilter);
-    }
+    const inputClass = "h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/40";
 
     async function importFolder() {
         const folderPath = await HologramAPI.selectFolder();
@@ -118,7 +113,7 @@
                 );
                 photoStore.setPhotos(result.photos);
                 photoStore.setStats(result.stats);
-                photoStore.loadMetadata(result.photos.map((p) => p.id));
+                photoStore.loadMetadata(result.photos.map((photo) => photo.id));
             } catch (error) {
                 console.error("Failed to import folder:", error);
             } finally {
@@ -127,28 +122,16 @@
         }
     }
 
-    function handleTagFilterKeydown(e: KeyboardEvent) {
-        if (e.key === "Enter" && tagFilterInput.trim()) {
-            e.preventDefault();
-            const newTag = tagFilterInput.trim().toLowerCase();
-            const currentTags = activeFilter.tags ?? [];
-            if (!currentTags.includes(newTag)) {
-                activeFilter = { ...activeFilter, tags: [...currentTags, newTag] };
-                onFilter(activeFilter);
-            }
-            tagFilterInput = "";
-        }
+    function addFilter(key: string) {
+        addedFilterKeys = new Set([...addedFilterKeys, key]);
+        showAddFilter = false;
     }
 
-    function removeTagFilter(tag: string) {
-        const updated = (activeFilter.tags ?? []).filter((t) => t !== tag);
-        if (updated.length === 0) {
-            const copy = { ...activeFilter };
-            delete copy.tags;
-            activeFilter = copy;
-        } else {
-            activeFilter = { ...activeFilter, tags: updated };
-        }
+    function removeFilter(key: string) {
+        addedFilterKeys = new Set([...addedFilterKeys].filter((value) => value !== key));
+        const updated = { ...activeFilter };
+        delete (updated as any)[key];
+        activeFilter = updated;
         onFilter(activeFilter);
     }
 
@@ -223,321 +206,318 @@
         applyFilter();
     }
 
+    function handleTagFilterKeydown(event: KeyboardEvent) {
+        if (event.key === "Enter" && tagFilterInput.trim()) {
+            event.preventDefault();
+            const newTag = tagFilterInput.trim().toLowerCase();
+            const currentTags = activeFilter.tags ?? [];
+            if (!currentTags.includes(newTag)) {
+                activeFilter = { ...activeFilter, tags: [...currentTags, newTag] };
+                onFilter(activeFilter);
+            }
+            tagFilterInput = "";
+        }
+    }
+
+    function removeTagFilter(tag: string) {
+        const updated = (activeFilter.tags ?? []).filter((item) => item !== tag);
+        if (updated.length === 0) {
+            const copy = { ...activeFilter };
+            delete copy.tags;
+            activeFilter = copy;
+        } else {
+            activeFilter = { ...activeFilter, tags: updated };
+        }
+        onFilter(activeFilter);
+    }
+
     function formatNumber(num: number): string {
         return new Intl.NumberFormat().format(num);
     }
 
-    // Count active filters
-    const activeFilterCount = $derived(
-        Object.entries(activeFilter).filter(([k, v]) => {
-            if (k === "search") return false; // search is in the toolbar
-            if (v == null || v === "") return false;
-            if (Array.isArray(v) && v.every((x: any) => x == null || x === "")) return false;
-            return true;
-        }).length,
-    );
-
-    const inputClass = "w-full px-3 py-2 text-sm border border-border rounded-lg bg-card text-foreground focus:ring-2 focus:ring-ring focus:border-ring focus:outline-none";
+    function progressWidth(percent: number): string {
+        return `${Math.max(0, Math.min(100, percent))}%`;
+    }
 </script>
 
-<aside
-    class="w-72 sidebar-surface border-r border-sidebar-border overflow-y-auto h-screen"
->
-    <!-- Import Section -->
-    <div class="p-4 border-b border-border">
+<aside class="flex h-screen w-80 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
+    <div class="border-b border-sidebar-border p-4">
         <button
-            class="w-full flex items-center justify-center gap-2 bg-primary hover:opacity-90 text-primary-foreground font-medium py-2.5 px-4 rounded-lg transition-opacity disabled:opacity-50 disabled:cursor-not-allowed"
+            class="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             onclick={importFolder}
         >
-            <FolderOpen size={20} />
+            <FolderOpen size={18} />
             Import Photos
         </button>
     </div>
 
-    <!-- Stats Section -->
-    {#if $stats}
-        <div class="p-4 border-b border-border">
-            <div class="flex items-center gap-2 mb-3">
-                <h3 class="section-heading text-xs font-semibold text-foreground uppercase tracking-wide flex-1">
-                    Library Stats
-                </h3>
-            </div>
-            <div class="grid grid-cols-2 gap-3 mb-4">
-                <div class="text-center p-3 stat-card rounded-lg border border-border">
-                    <span class="block text-xl font-bold tabular-nums text-foreground tracking-tight"
-                        >{formatNumber($stats.total_photos)}</span
-                    >
-                    <span class="block text-xs text-muted-foreground mt-1"
-                        >Total Photos</span
-                    >
+    <div class="min-h-0 flex-1 overflow-y-auto">
+        {#if $stats}
+            <section class="border-b border-sidebar-border p-4">
+                <div class="mb-3 flex items-center gap-2">
+                    <BarChart3 size={14} class="text-primary" />
+                    <h2 class="text-xs font-bold uppercase text-foreground">Session</h2>
+                    <span class="ml-auto text-xs tabular-nums text-muted-foreground">{formatNumber(photos.length)} visible</span>
                 </div>
-                <div class="text-center p-3 stat-card rounded-lg border border-border">
-                    <span class="block text-xl font-bold tabular-nums text-foreground tracking-tight"
-                        >{formatNumber($stats.raw_count)}</span
-                    >
-                    <span class="block text-xs text-muted-foreground mt-1"
-                        >RAW Files</span
-                    >
-                </div>
-                <div class="text-center p-3 stat-card rounded-lg border border-border">
-                    <span class="block text-xl font-bold tabular-nums text-foreground tracking-tight"
-                        >{formatNumber($stats.jpeg_count)}</span
-                    >
-                    <span class="block text-xs text-muted-foreground mt-1"
-                        >JPEG Files</span
-                    >
-                </div>
-                <div class="text-center p-3 stat-card rounded-lg border border-border">
-                    <span class="block text-xl font-bold tabular-nums text-foreground tracking-tight"
-                        >{formatNumber($stats.paired_count)}</span
-                    >
-                    <span class="block text-xs text-muted-foreground mt-1"
-                        >Paired Sets</span
-                    >
-                </div>
-            </div>
 
-            <!-- Top Cameras -->
-            {#if Object.keys($stats.cameras).length > 0}
-                <div class="mt-4">
-                    <h4 class="section-heading text-xs font-semibold text-foreground uppercase tracking-wide mb-2">
-                        Top Cameras
-                    </h4>
+                <div class="grid grid-cols-2 gap-2">
+                    <div class="rounded-lg border border-border bg-card p-3">
+                        <span class="block text-lg font-semibold tabular-nums text-foreground">{formatNumber($stats.total_photos)}</span>
+                        <span class="text-xs text-muted-foreground">Total</span>
+                    </div>
+                    <div class="rounded-lg border border-border bg-card p-3">
+                        <span class="block text-lg font-semibold tabular-nums text-foreground">{formatNumber($stats.paired_count)}</span>
+                        <span class="text-xs text-muted-foreground">Pairs</span>
+                    </div>
+                    <div class="rounded-lg border border-border bg-card p-3">
+                        <span class="block text-lg font-semibold tabular-nums text-foreground">{formatNumber($stats.raw_count)}</span>
+                        <span class="text-xs text-muted-foreground">RAW</span>
+                    </div>
+                    <div class="rounded-lg border border-border bg-card p-3">
+                        <span class="block text-lg font-semibold tabular-nums text-foreground">{formatNumber($stats.jpeg_count)}</span>
+                        <span class="text-xs text-muted-foreground">JPEG</span>
+                    </div>
+                </div>
+            </section>
+        {/if}
+
+        {#if allPhotos.length > 0}
+            <section class="border-b border-sidebar-border p-4">
+                <div class="mb-3 flex items-center gap-2">
+                    <Star size={14} class="text-rating" fill="currentColor" />
+                    <h2 class="text-xs font-bold uppercase text-foreground">Cull Progress</h2>
+                    <span class="ml-auto text-xs font-semibold tabular-nums text-muted-foreground">{reviewPct}%</span>
+                </div>
+                <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
+                    <div class="h-full rounded-full bg-primary" style:width={progressWidth(reviewPct)}></div>
+                </div>
+                <div class="mt-3 grid grid-cols-3 gap-2">
+                    <div class="rounded-lg border border-border bg-card p-2">
+                        <div class="flex items-center gap-1.5 text-xs text-pick">
+                            <Check size={13} />
+                            Picks
+                        </div>
+                        <div class="mt-1 text-base font-semibold tabular-nums text-foreground">{pickedCount}</div>
+                    </div>
+                    <div class="rounded-lg border border-border bg-card p-2">
+                        <div class="flex items-center gap-1.5 text-xs text-reject">
+                            <XCircle size={13} />
+                            Reject
+                        </div>
+                        <div class="mt-1 text-base font-semibold tabular-nums text-foreground">{rejectedCount}</div>
+                    </div>
+                    <div class="rounded-lg border border-border bg-card p-2">
+                        <div class="flex items-center gap-1.5 text-xs text-rating">
+                            <Star size={13} fill="currentColor" />
+                            Rated
+                        </div>
+                        <div class="mt-1 text-base font-semibold tabular-nums text-foreground">{ratedCount}</div>
+                    </div>
+                </div>
+            </section>
+        {/if}
+
+        {#if $stats && Object.keys($stats.cameras).length > 0}
+            <section class="border-b border-sidebar-border p-4">
+                <div class="mb-3 flex items-center gap-2">
+                    <Camera size={14} class="text-primary" />
+                    <h2 class="text-xs font-bold uppercase text-foreground">Top Cameras</h2>
+                </div>
+                <div class="space-y-2">
                     {#each Object.entries($stats.cameras)
                         .sort(([, a], [, b]) => b - a)
-                        .slice(0, 3) as [camera, count]}
-                        <div
-                            class="flex justify-between items-center py-1 text-sm"
-                        >
-                            <span class="text-muted-foreground truncate mr-2"
-                                >{camera}</span
-                            >
-                            <span class="text-foreground font-bold tabular-nums"
-                                >{count}</span
-                            >
+                        .slice(0, 4) as [camera, count]}
+                        <div class="flex items-center justify-between gap-3 text-sm">
+                            <span class="truncate text-muted-foreground">{camera}</span>
+                            <span class="font-semibold tabular-nums text-foreground">{count}</span>
                         </div>
                     {/each}
                 </div>
-            {/if}
-        </div>
-    {/if}
+            </section>
+        {/if}
 
-    <!-- Filters Section -->
-    <div class="p-4 border-b border-border">
-        <div class="flex items-center gap-2 mb-3">
-            <h3 class="section-heading text-xs font-semibold text-foreground uppercase tracking-wide flex-1">
-                Filters
+        <section class="p-4">
+            <div class="mb-3 flex items-center gap-2">
+                <Filter size={14} class="text-primary" />
+                <h2 class="text-xs font-bold uppercase text-foreground">Advanced Filters</h2>
                 {#if activeFilterCount > 0}
-                    <span class="ml-1 text-xs font-bold bg-primary text-primary-foreground rounded-full px-1.5 py-0.5 filter-count">{activeFilterCount}</span>
+                    <span class="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">{activeFilterCount}</span>
                 {/if}
-            </h3>
-            <button
-                class="w-6 h-6 rounded-full text-xs font-bold flex items-center justify-center transition-colors {showFilters ? 'bg-primary text-primary-foreground' : 'bg-secondary text-secondary-foreground hover:bg-accent'}"
-                onclick={() => (showFilters = !showFilters)}
-            >
-                {showFilters ? "\u2212" : "+"}
-            </button>
-        </div>
+                <button
+                    class="ml-auto grid h-7 w-7 place-items-center rounded-md bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    onclick={() => (showFilters = !showFilters)}
+                    title={showFilters ? "Collapse filters" : "Expand filters"}
+                >
+                    {#if showFilters}
+                        <X size={14} />
+                    {:else}
+                        <Plus size={14} />
+                    {/if}
+                </button>
+            </div>
 
-        {#if showFilters}
-            <div class="space-y-3">
-                <!-- Dynamic select filters -->
-                {#each availableSelectFilters.filter((f) => addedFilterKeys.has(f.filterKey)) as filter (filter.filterKey)}
-                    <div class="space-y-1">
-                        <div class="flex items-center justify-between">
-                            <label
-                                for="filter-{filter.filterKey}"
-                                class="text-sm font-medium text-foreground"
-                            >
-                                {filter.label}
-                            </label>
-                            <button
-                                class="text-muted-foreground hover:text-foreground p-0.5"
-                                onclick={() => removeFilter(filter.filterKey)}
-                                title="Remove filter"
-                            >
-                                <X size={12} />
-                            </button>
-                        </div>
-                        <select
-                            class={inputClass}
-                            id="filter-{filter.filterKey}"
-                            bind:value={activeFilter[filter.filterKey]}
-                            onchange={applyFilter}
-                        >
-                            <option value="">All</option>
-                            {#each filter.options as opt}
-                                <option value={opt}>{opt}</option>
-                            {/each}
-                        </select>
-                    </div>
-                {/each}
-
-                <!-- File type (special: on Photo, not exif) -->
-                {#if addedFilterKeys.has("file_type") && fileTypeOptions.length > 0}
-                    <div class="space-y-1">
-                        <div class="flex items-center justify-between">
-                            <label
-                                for="filter-file_type"
-                                class="text-sm font-medium text-foreground"
-                            >
-                                File Type
-                            </label>
-                            <button
-                                class="text-muted-foreground hover:text-foreground p-0.5"
-                                onclick={() => removeFilter("file_type")}
-                                title="Remove filter"
-                            >
-                                <X size={12} />
-                            </button>
-                        </div>
-                        <select
-                            class={inputClass}
-                            id="filter-file_type"
-                            bind:value={activeFilter.file_type}
-                            onchange={applyFilter}
-                        >
-                            <option value="">All Types</option>
-                            {#each fileTypeOptions as type}
-                                <option value={type}>{type}</option>
-                            {/each}
-                        </select>
-                    </div>
-                {/if}
-
-                <!-- Dynamic range filters -->
-                {#each availableRangeFilters.filter((f) => addedFilterKeys.has(f.filterKey)) as range (range.filterKey)}
-                    <div class="space-y-1">
-                        <div class="flex items-center justify-between">
-                            <label class="text-sm font-medium text-foreground">
-                                {range.label} Range
-                            </label>
-                            <button
-                                class="text-muted-foreground hover:text-foreground p-0.5"
-                                onclick={() => removeFilter(range.filterKey)}
-                                title="Remove filter"
-                            >
-                                <X size={12} />
-                            </button>
-                        </div>
-                        <div class="grid grid-cols-2 gap-2">
-                            <input
+            {#if showFilters}
+                <div class="space-y-3">
+                    {#each availableSelectFilters.filter((field) => addedFilterKeys.has(field.filterKey)) as filter (filter.filterKey)}
+                        <div class="space-y-1.5">
+                            <div class="flex items-center justify-between gap-2">
+                                <label for="filter-{filter.filterKey}" class="text-xs font-semibold text-foreground">{filter.label}</label>
+                                <button class="text-muted-foreground hover:text-foreground" onclick={() => removeFilter(filter.filterKey)} title="Remove filter">
+                                    <X size={12} />
+                                </button>
+                            </div>
+                            <select
                                 class={inputClass}
-                                type="number"
-                                step={range.step}
-                                placeholder="Min {range.prefix}"
-                                value={activeFilter[range.filterKey]?.[0] ?? ""}
-                                onchange={(e) => setRangeMin(range.filterKey, (e.target as HTMLInputElement).value)}
-                            />
-                            <input
-                                class={inputClass}
-                                type="number"
-                                step={range.step}
-                                placeholder="Max {range.prefix}"
-                                value={activeFilter[range.filterKey]?.[1] ?? ""}
-                                onchange={(e) => setRangeMax(range.filterKey, (e.target as HTMLInputElement).value)}
-                            />
-                        </div>
-                    </div>
-                {/each}
-
-                <!-- Date range filter -->
-                {#if addedFilterKeys.has("date_range") && hasDateData}
-                    <div class="space-y-1">
-                        <div class="flex items-center justify-between">
-                            <label class="text-sm font-medium text-foreground">
-                                Date Range
-                            </label>
-                            <button
-                                class="text-muted-foreground hover:text-foreground p-0.5"
-                                onclick={() => removeFilter("date_range")}
-                                title="Remove filter"
+                                id="filter-{filter.filterKey}"
+                                bind:value={activeFilter[filter.filterKey]}
+                                onchange={applyFilter}
                             >
-                                <X size={12} />
-                            </button>
+                                <option value="">All</option>
+                                {#each filter.options as opt}
+                                    <option value={opt}>{opt}</option>
+                                {/each}
+                            </select>
                         </div>
-                        <div class="grid grid-cols-2 gap-2">
-                            <input
-                                class={inputClass}
-                                type="date"
-                                value={activeFilter.date_range?.[0] ?? ""}
-                                onchange={(e) => setDateMin((e.target as HTMLInputElement).value)}
-                            />
-                            <input
-                                class={inputClass}
-                                type="date"
-                                value={activeFilter.date_range?.[1] ?? ""}
-                                onchange={(e) => setDateMax((e.target as HTMLInputElement).value)}
-                            />
-                        </div>
-                    </div>
-                {/if}
+                    {/each}
 
-                <!-- Tags filter -->
-                {#if addedFilterKeys.has("tags")}
-                    <div class="space-y-1">
-                        <div class="flex items-center justify-between">
-                            <label class="text-sm font-medium text-foreground">Tags</label>
-                            <button
-                                class="text-muted-foreground hover:text-foreground p-0.5"
-                                onclick={() => removeFilter("tags")}
-                                title="Remove filter"
+                    {#if addedFilterKeys.has("file_type") && fileTypeOptions.length > 0}
+                        <div class="space-y-1.5">
+                            <div class="flex items-center justify-between gap-2">
+                                <label for="filter-file_type" class="text-xs font-semibold text-foreground">File Type</label>
+                                <button class="text-muted-foreground hover:text-foreground" onclick={() => removeFilter("file_type")} title="Remove filter">
+                                    <X size={12} />
+                                </button>
+                            </div>
+                            <select
+                                class={inputClass}
+                                id="filter-file_type"
+                                bind:value={activeFilter.file_type}
+                                onchange={applyFilter}
                             >
-                                <X size={12} />
-                            </button>
+                                <option value="">All Types</option>
+                                {#each fileTypeOptions as type}
+                                    <option value={type}>{type}</option>
+                                {/each}
+                            </select>
                         </div>
-                        <div class="flex flex-wrap gap-1 min-h-[20px]">
-                            {#each (activeFilter.tags ?? []) as tag}
-                                <span class="inline-flex items-center gap-1 text-xs bg-primary/20 text-primary px-2 py-0.5 rounded-full">
-                                    {tag}
-                                    <button onclick={() => removeTagFilter(tag)} class="hover:text-red-400 transition-colors">×</button>
-                                </span>
-                            {/each}
-                        </div>
-                        <input
-                            type="text"
-                            placeholder="Filter by tag, press Enter"
-                            class={inputClass}
-                            bind:value={tagFilterInput}
-                            onkeydown={handleTagFilterKeydown}
-                        />
-                    </div>
-                {/if}
+                    {/if}
 
-                <!-- Add filter button -->
-                {#if unaddedFilters.length > 0}
-                    <div class="relative">
-                        <button
-                            class="w-full flex items-center justify-center gap-1.5 px-3 py-2 text-sm text-muted-foreground bg-accent/50 hover:bg-accent rounded-lg transition-colors border border-dashed border-border"
-                            onclick={() => (showAddFilter = !showAddFilter)}
-                        >
-                            <Plus size={14} />
-                            Add Filter
-                        </button>
-                        {#if showAddFilter}
-                            <div class="absolute z-10 left-0 right-0 mt-1 bg-card border border-border rounded-lg shadow-lg max-h-48 overflow-y-auto">
-                                {#each unaddedFilters as opt}
-                                    <button
-                                        class="w-full text-left px-3 py-2 text-sm text-foreground hover:bg-accent transition-colors"
-                                        onclick={() => addFilter(opt.key)}
-                                    >
-                                        {opt.label}
-                                    </button>
+                    {#each availableRangeFilters.filter((field) => addedFilterKeys.has(field.filterKey)) as range (range.filterKey)}
+                        <div class="space-y-1.5">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="text-xs font-semibold text-foreground">{range.label} Range</div>
+                                <button class="text-muted-foreground hover:text-foreground" onclick={() => removeFilter(range.filterKey)} title="Remove filter">
+                                    <X size={12} />
+                                </button>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <input
+                                    class={inputClass}
+                                    type="number"
+                                    step={range.step}
+                                    placeholder="Min {range.prefix}"
+                                    value={activeFilter[range.filterKey]?.[0] ?? ""}
+                                    onchange={(event) => setRangeMin(range.filterKey, (event.target as HTMLInputElement).value)}
+                                />
+                                <input
+                                    class={inputClass}
+                                    type="number"
+                                    step={range.step}
+                                    placeholder="Max {range.prefix}"
+                                    value={activeFilter[range.filterKey]?.[1] ?? ""}
+                                    onchange={(event) => setRangeMax(range.filterKey, (event.target as HTMLInputElement).value)}
+                                />
+                            </div>
+                        </div>
+                    {/each}
+
+                    {#if addedFilterKeys.has("date_range") && hasDateData}
+                        <div class="space-y-1.5">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="text-xs font-semibold text-foreground">Date Range</div>
+                                <button class="text-muted-foreground hover:text-foreground" onclick={() => removeFilter("date_range")} title="Remove filter">
+                                    <X size={12} />
+                                </button>
+                            </div>
+                            <div class="grid grid-cols-2 gap-2">
+                                <input
+                                    class={inputClass}
+                                    type="date"
+                                    value={activeFilter.date_range?.[0] ?? ""}
+                                    onchange={(event) => setDateMin((event.target as HTMLInputElement).value)}
+                                />
+                                <input
+                                    class={inputClass}
+                                    type="date"
+                                    value={activeFilter.date_range?.[1] ?? ""}
+                                    onchange={(event) => setDateMax((event.target as HTMLInputElement).value)}
+                                />
+                            </div>
+                        </div>
+                    {/if}
+
+                    {#if addedFilterKeys.has("tags")}
+                        <div class="space-y-1.5">
+                            <div class="flex items-center justify-between gap-2">
+                                <div class="text-xs font-semibold text-foreground">Tags</div>
+                                <button class="text-muted-foreground hover:text-foreground" onclick={() => removeFilter("tags")} title="Remove filter">
+                                    <X size={12} />
+                                </button>
+                            </div>
+                            <div class="flex min-h-6 flex-wrap gap-1">
+                                {#each (activeFilter.tags ?? []) as tag}
+                                    <span class="inline-flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-xs text-primary">
+                                        {tag}
+                                        <button onclick={() => removeTagFilter(tag)} class="hover:text-reject" aria-label="Remove tag filter">
+                                            <X size={10} />
+                                        </button>
+                                    </span>
                                 {/each}
                             </div>
-                        {/if}
-                    </div>
-                {/if}
+                            <input
+                                type="text"
+                                placeholder="Tag, then Enter"
+                                class={inputClass}
+                                bind:value={tagFilterInput}
+                                onkeydown={handleTagFilterKeydown}
+                            />
+                        </div>
+                    {/if}
 
-                {#if activeFilterCount > 0}
-                    <div class="pt-1">
+                    {#if unaddedFilters.length > 0}
+                        <div class="relative">
+                            <button
+                                class="flex h-8 w-full items-center justify-center gap-1.5 rounded-md border border-dashed border-border bg-secondary text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                onclick={() => (showAddFilter = !showAddFilter)}
+                            >
+                                <Plus size={13} />
+                                Add Filter
+                            </button>
+                            {#if showAddFilter}
+                                <div class="absolute left-0 right-0 z-20 mt-1 max-h-48 overflow-y-auto rounded-lg border border-border bg-popover shadow-lg">
+                                    {#each unaddedFilters as opt}
+                                        <button
+                                            class="w-full px-3 py-2 text-left text-xs text-foreground transition-colors hover:bg-accent"
+                                            onclick={() => addFilter(opt.key)}
+                                        >
+                                            {opt.label}
+                                        </button>
+                                    {/each}
+                                </div>
+                            {/if}
+                        </div>
+                    {/if}
+
+                    {#if activeFilterCount > 0}
                         <button
-                            class="w-full px-3 py-2 text-sm text-secondary-foreground bg-secondary hover:bg-accent rounded-lg transition-colors"
-                            onclick={clearFilter}>Clear All Filters</button
+                            class="h-8 w-full rounded-md bg-secondary px-3 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                            onclick={clearFilter}
                         >
-                    </div>
-                {/if}
-            </div>
-        {/if}
+                            Clear Advanced Filters
+                        </button>
+                    {/if}
+                </div>
+            {/if}
+        </section>
     </div>
 </aside>

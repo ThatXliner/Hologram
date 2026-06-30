@@ -26,7 +26,6 @@ serde = { version = "1", features = ["derive"] }
 serde_json = "1"
 kamadak-exif = "0.5"
 image = "0.25"
-rsraw = "0.1.1"
 walkdir = "^2"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1.0", features = ["v4", "v5", "serde"] }
@@ -40,6 +39,9 @@ ort = { version = "2.0.0-rc.12", features = ["ndarray"] }
 ndarray = "0.17"
 rusqlite = { version = "0.31", features = ["bundled"] }
 zip = "4.6.1"
+
+[target.'cfg(not(target_env = "msvc"))'.dependencies]
+rsraw = "0.1.1"
 
 [target.'cfg(not(any(target_os = "android", target_os = "ios")))'.dependencies]
 tauri-plugin-updater = "2"

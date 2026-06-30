@@ -2,7 +2,10 @@ use anyhow::Result;
 use base64::Engine;
 use exif::{Exif, In, Reader, Tag, Value};
 use image::codecs::jpeg::JpegEncoder;
-use image::{DynamicImage, RgbImage};
+use image::DynamicImage;
+#[cfg(not(target_env = "msvc"))]
+use image::RgbImage;
+#[cfg(not(target_env = "msvc"))]
 use rsraw::{ImageFormat as RawImageFormat, RawImage, ThumbFormat, BIT_DEPTH_8};
 use serde::{Deserialize, Serialize};
 use std::fs;
@@ -62,6 +65,7 @@ fn extension_matches(path: &Path, extensions: &[&str]) -> bool {
 /// Convert a RAW file to browser-friendly JPEG bytes.
 /// This prefers the camera's embedded JPEG preview and only falls back to a
 /// full LibRaw render when the file has no usable embedded JPEG.
+#[cfg(not(target_env = "msvc"))]
 pub fn convert_raw_preview_to_jpeg(file_path: &Path, max_dimension: u32) -> Result<RawPreview> {
     let cache_dir = raw_preview_cache_dir();
     let cache_key = raw_preview_cache_key(file_path, max_dimension, "preview");
@@ -86,9 +90,15 @@ pub fn convert_raw_preview_to_jpeg(file_path: &Path, max_dimension: u32) -> Resu
     Ok(preview)
 }
 
+#[cfg(target_env = "msvc")]
+pub fn convert_raw_preview_to_jpeg(_file_path: &Path, _max_dimension: u32) -> Result<RawPreview> {
+    anyhow::bail!("RAW preview rendering is not supported on MSVC builds")
+}
+
 /// Render RAW pixels through LibRaw. This is intentionally separate from the
 /// preview path so editing/exporting can request a true render without being
 /// served a cached embedded JPEG preview.
+#[cfg(not(target_env = "msvc"))]
 pub fn render_raw_to_jpeg(file_path: &Path, max_dimension: u32) -> Result<Vec<u8>> {
     let cache_dir = raw_preview_cache_dir();
     let cache_key = raw_preview_cache_key(file_path, max_dimension, "render");
@@ -101,6 +111,11 @@ pub fn render_raw_to_jpeg(file_path: &Path, max_dimension: u32) -> Result<Vec<u8
     let data = render_raw_with_libraw(file_path, max_dimension)?;
     write_cached_jpeg(&cache_path, &data);
     Ok(data)
+}
+
+#[cfg(target_env = "msvc")]
+pub fn render_raw_to_jpeg(_file_path: &Path, _max_dimension: u32) -> Result<Vec<u8>> {
+    anyhow::bail!("RAW rendering is not supported on MSVC builds")
 }
 
 pub fn generate_thumbnail_with_info(file_path: &Path) -> Result<GeneratedThumbnail> {
@@ -275,6 +290,7 @@ fn bounded_jpeg_from_image(image: DynamicImage, max_dimension: u32) -> Result<Ve
     encode_jpeg(&preview, 90)
 }
 
+#[cfg(not(target_env = "msvc"))]
 fn extract_largest_embedded_jpeg_preview(file_path: &Path) -> Result<EmbeddedJpegPreviewData> {
     let raw_bytes = fs::read(file_path)?;
     let mut raw_image = RawImage::open(&raw_bytes)?;
@@ -301,6 +317,7 @@ fn extract_largest_embedded_jpeg_preview(file_path: &Path) -> Result<EmbeddedJpe
     })
 }
 
+#[cfg(not(target_env = "msvc"))]
 fn extract_embedded_raw_preview(file_path: &Path, max_dimension: u32) -> Result<RawPreview> {
     let preview = extract_largest_embedded_jpeg_preview(file_path)?;
     let image = image::load_from_memory(&preview.data)?;
@@ -311,6 +328,7 @@ fn extract_embedded_raw_preview(file_path: &Path, max_dimension: u32) -> Result<
     })
 }
 
+#[cfg(not(target_env = "msvc"))]
 fn render_raw_with_libraw(file_path: &Path, max_dimension: u32) -> Result<Vec<u8>> {
     let raw_bytes = fs::read(file_path)?;
     let mut raw_image = RawImage::open(&raw_bytes)?;

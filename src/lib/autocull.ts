@@ -10,36 +10,80 @@ import type {
 } from "./types.ts";
 import { photoPreviewSrc } from "./photoPreview.ts";
 
-const EMBEDDING_BACKEND = "visual-hybrid32-v2";
-const RANKER_VERSION = "behavior-linear-ranker-v2";
+const DINO_MODEL_ID = "onnx-community/dinov2-small";
+const TRANSFORMER_EMBEDDING_BACKEND = "dinov2-small-transformersjs";
+const PERCEPTUAL_EMBEDDING_BACKEND = "perceptual-dct-focus-v3";
+const EMBEDDING_BACKEND = `${TRANSFORMER_EMBEDDING_BACKEND}+${PERCEPTUAL_EMBEDDING_BACKEND}`;
+const RANKER_VERSION = "gbdt-personal-ranker-v1";
 const SPATIAL_GRID = 32;
 const HISTOGRAM_BINS = 16;
 const SAMPLE_SIZE = 160;
+const TRANSFORMER_SAMPLE_SIZE = 224;
+const DCT_SIZE = 32;
+const DCT_COEFFICIENTS = 10;
+const GRADIENT_CELLS = 4;
+const GRADIENT_BINS = 8;
+const TRANSFORMER_MODEL_TIMEOUT_MS = 12_000;
+const TRANSFORMER_INFERENCE_TIMEOUT_MS = 8_000;
+const EMBEDDING_RANKER_FEATURES = 256;
 const BURST_WINDOW_MS = 2_000;
 const LOOSE_BURST_WINDOW_MS = 5_000;
 const BURST_VISUAL_SIMILARITY = 0.82;
 const SEQUENCE_VISUAL_SIMILARITY = 0.88;
 const MAX_BURST_SIZE = 18;
-const TRAINING_EPOCHS = 80;
-const LEARNING_RATE = 0.04;
-const L2_REGULARIZATION = 0.0004;
+const GBDT_TREES = 48;
+const GBDT_MAX_DEPTH = 3;
+const GBDT_LEARNING_RATE = 0.08;
+const GBDT_L2_REGULARIZATION = 1.2;
+const GBDT_MIN_LEAF_WEIGHT = 0.08;
+const GBDT_MIN_SPLIT_GAIN = 0.0008;
 
 type PixelFeatures = {
   embedding: number[];
   technicalScore: number;
+  backend: string;
 };
 
 type RankedExample = {
   vector: number[];
+  features: number[];
   signal: number;
   confidence: number;
 };
 
 type PairwiseExample = {
-  winner: number[];
-  loser: number[];
+  winnerFeatures: number[];
+  loserFeatures: number[];
   confidence: number;
 };
+
+type FeatureRecord = {
+  photo: Photo;
+  embedding?: number[];
+  technicalScore: number;
+  rankerFeatures: number[];
+};
+
+type BoostingRow = {
+  features: number[];
+  target: number;
+  weight: number;
+};
+
+type RegressionTree =
+  | { value: number }
+  | { feature: number; threshold: number; left: RegressionTree; right: RegressionTree };
+
+type EmbeddingTensor = {
+  data: ArrayLike<number | bigint>;
+  dims: number[];
+  dispose?: () => void;
+};
+
+type ImageFeatureExtractor = (
+  image: HTMLCanvasElement | OffscreenCanvas | string,
+  options?: { pool?: boolean },
+) => Promise<EmbeddingTensor>;
 
 type ScoredPhoto = AutoCullPhoto & {
   source: Photo;
@@ -54,7 +98,7 @@ type SequenceInfo = {
 };
 
 type RankingModel = {
-  score: (embedding: number[] | undefined) => number | null;
+  score: (features: number[] | undefined) => number | null;
   examples: RankedExample[];
 };
 
@@ -106,21 +150,22 @@ export async function buildAutoCullSession(
     featuresById.set(photo.id, await extractPixelFeatures(photo));
   }
 
-  const examples = buildRankedExamples(photos, featuresById);
-  const pairwiseExamples = buildPairwiseExamples(preferences, featuresById);
+  const featureRecordsById = buildFeatureRecords(photos, featuresById);
+  const examples = buildRankedExamples(photos, featureRecordsById);
+  const pairwiseExamples = buildPairwiseExamples(preferences, featureRecordsById);
   const model = trainRankingModel(examples, pairwiseExamples);
 
   let scored = photos.map((photo) => {
-    const pixelFeatures = featuresById.get(photo.id);
-    const technicalScore = pixelFeatures?.technicalScore ?? fallbackTechnicalScore(photo);
-    const embedding = pixelFeatures?.embedding;
+    const record = featureRecordsById.get(photo.id);
+    const technicalScore = record?.technicalScore ?? fallbackTechnicalScore(photo);
+    const embedding = record?.embedding;
     const behaviorSignalValue = behaviorSignal(photo);
     const neutral = neutralPersonalScore(technicalScore);
-    const linearDelta = model.score(embedding);
+    const boostedScore = model.score(record?.rankerFeatures);
     const learnedDelta = nearestNeighborDelta(embedding, model.examples);
     const personalScore = clamp01(
       neutral
-        + (linearDelta == null ? 0 : (linearDelta - 0.5) * 0.72)
+        + (boostedScore == null ? 0 : (boostedScore - 0.5) * 0.72)
         + learnedDelta
         + behaviorSignalValue,
     );
@@ -136,7 +181,7 @@ export async function buildAutoCullSession(
       recommendation: recommendationFor(photo, finalScore, personalScore),
       confidence: recommendationConfidence(photo, finalScore, embedding),
       embedding,
-      embedding_backend: embedding ? EMBEDDING_BACKEND : undefined,
+      embedding_backend: record?.embedding ? (featuresById.get(photo.id)?.backend ?? PERCEPTUAL_EMBEDDING_BACKEND) : undefined,
       captureMs: captureTimestampMs(photo),
       sortTimeMs: sortTimestampMs(photo),
       sequence: filenameSequence(photo.file_name),
@@ -209,14 +254,24 @@ async function extractPixelFeatures(photo: Photo): Promise<PixelFeatures | null>
     const image = await loadImage(src);
     const grid = drawImageData(image, SPATIAL_GRID, SPATIAL_GRID);
     const sample = drawImageData(image, SAMPLE_SIZE, SAMPLE_SIZE);
+    const perceptualEmbedding = perceptualImageEmbedding(
+      grid,
+      sample,
+      image.naturalWidth || image.width,
+      image.naturalHeight || image.height,
+    );
+    const transformerEmbedding = await extractTransformerEmbedding(image);
     return {
-      embedding: imageEmbedding(grid, sample, image.naturalWidth || image.width, image.naturalHeight || image.height),
+      embedding: combineVisionEmbeddings(transformerEmbedding, perceptualEmbedding),
       technicalScore: estimateTechnicalScore(sample),
+      backend: transformerEmbedding ? EMBEDDING_BACKEND : PERCEPTUAL_EMBEDDING_BACKEND,
     };
   } catch {
     return null;
   }
 }
+
+let dinoExtractorPromise: Promise<ImageFeatureExtractor | null> | null = null;
 
 function loadImage(src: string): Promise<HTMLImageElement> {
   return new Promise((resolve, reject) => {
@@ -228,21 +283,126 @@ function loadImage(src: string): Promise<HTMLImageElement> {
   });
 }
 
-function drawImageData(image: HTMLImageElement, width: number, height: number): ImageData {
+function drawImageCanvas(image: HTMLImageElement, width: number, height: number): HTMLCanvasElement {
   const canvas = document.createElement("canvas");
   canvas.width = width;
   canvas.height = height;
   const ctx = canvas.getContext("2d", { willReadFrequently: true });
   if (!ctx) throw new Error("Canvas unavailable");
   ctx.drawImage(image, 0, 0, width, height);
+  return canvas;
+}
+
+function drawImageData(image: HTMLImageElement, width: number, height: number): ImageData {
+  const canvas = drawImageCanvas(image, width, height);
+  const ctx = canvas.getContext("2d", { willReadFrequently: true });
+  if (!ctx) throw new Error("Canvas unavailable");
   return ctx.getImageData(0, 0, width, height);
 }
 
-function imageEmbedding(grid: ImageData, sample: ImageData, sourceWidth: number, sourceHeight: number): number[] {
+async function extractTransformerEmbedding(image: HTMLImageElement): Promise<number[] | null> {
+  if (transformerEmbeddingsDisabled()) return null;
+
+  try {
+    const extractor = await withTimeout(loadDinoExtractor(), TRANSFORMER_MODEL_TIMEOUT_MS, null);
+    if (!extractor) return null;
+
+    const canvas = drawImageCanvas(image, TRANSFORMER_SAMPLE_SIZE, TRANSFORMER_SAMPLE_SIZE);
+    const tensor = await withTimeout(extractor(canvas), TRANSFORMER_INFERENCE_TIMEOUT_MS, null);
+    if (!tensor) return null;
+
+    const embedding = tensorToEmbedding(tensor);
+    tensor.dispose?.();
+    return embedding.length ? normalizeVector(embedding) : null;
+  } catch {
+    return null;
+  }
+}
+
+function transformerEmbeddingsDisabled(): boolean {
+  if (typeof window === "undefined") return true;
+  return Boolean((window as typeof window & {
+    __HOLOGRAM_DISABLE_TRANSFORMER_EMBEDDINGS__?: boolean;
+  }).__HOLOGRAM_DISABLE_TRANSFORMER_EMBEDDINGS__);
+}
+
+async function loadDinoExtractor(): Promise<ImageFeatureExtractor | null> {
+  if (dinoExtractorPromise) return dinoExtractorPromise;
+  dinoExtractorPromise = (async () => {
+    try {
+      const { env, pipeline } = await import("@huggingface/transformers");
+      env.allowRemoteModels = true;
+      env.useBrowserCache = true;
+      const extractor = await pipeline("image-feature-extraction", DINO_MODEL_ID, {
+        dtype: "q8",
+      });
+      return extractor as unknown as ImageFeatureExtractor;
+    } catch {
+      return null;
+    }
+  })();
+  return dinoExtractorPromise;
+}
+
+function withTimeout<T>(promise: Promise<T>, timeoutMs: number, fallback: T): Promise<T> {
+  let timer: ReturnType<typeof setTimeout> | undefined;
+  const timeout = new Promise<T>((resolve) => {
+    timer = setTimeout(() => resolve(fallback), timeoutMs);
+  });
+  return Promise.race([promise, timeout]).finally(() => {
+    if (timer) clearTimeout(timer);
+  });
+}
+
+function tensorToEmbedding(tensor: EmbeddingTensor): number[] {
+  const data = Array.from(tensor.data, Number).filter(Number.isFinite);
+  if (tensor.dims.length === 3) {
+    const tokenCount = tensor.dims[1] ?? 0;
+    const dimensions = tensor.dims[2] ?? 0;
+    if (tokenCount <= 0 || dimensions <= 0) return [];
+
+    const result: number[] = [];
+    for (let feature = 0; feature < dimensions; feature++) {
+      const clsValue = data[feature] ?? 0;
+      let patchSum = 0;
+      let patchCount = 0;
+      for (let token = 1; token < tokenCount; token++) {
+        patchSum += data[(token * dimensions) + feature] ?? 0;
+        patchCount++;
+      }
+      const patchMean = patchCount ? patchSum / patchCount : clsValue;
+      result.push((clsValue * 0.55) + (patchMean * 0.45));
+    }
+    return result;
+  }
+
+  if (tensor.dims.length === 2) {
+    const dimensions = tensor.dims[1] ?? data.length;
+    return data.slice(0, dimensions);
+  }
+
+  return data;
+}
+
+function combineVisionEmbeddings(transformerEmbedding: number[] | null, perceptualEmbedding: number[]): number[] {
+  if (!transformerEmbedding?.length) return perceptualEmbedding;
+  return normalizeVector([
+    ...transformerEmbedding.map((value) => value * 0.82),
+    ...perceptualEmbedding.map((value) => value * 0.57),
+  ]);
+}
+
+function perceptualImageEmbedding(grid: ImageData, sample: ImageData, sourceWidth: number, sourceHeight: number): number[] {
   const vector: number[] = [];
   appendRgbGrid(vector, grid);
+  appendOpponentGrid(vector, grid);
   appendEdgeGrid(vector, grid);
+  appendGradientHistograms(vector, sample);
+  appendFocusGrid(vector, sample);
   appendHistograms(vector, sample);
+  appendColorMoments(vector, sample);
+  appendDctFeatures(vector, sample);
+  appendPerceptualHash(vector, sample);
   appendCompositionFeatures(vector, sample, sourceWidth, sourceHeight);
   return normalizeVector(vector);
 }
@@ -252,6 +412,24 @@ function appendRgbGrid(vector: number[], image: ImageData) {
     vector.push(image.data[index] / 255 - 0.5);
     vector.push(image.data[index + 1] / 255 - 0.5);
     vector.push(image.data[index + 2] / 255 - 0.5);
+  }
+}
+
+function appendOpponentGrid(vector: number[], image: ImageData) {
+  for (let index = 0; index < image.data.length; index += 4) {
+    const red = image.data[index] / 255;
+    const green = image.data[index + 1] / 255;
+    const blue = image.data[index + 2] / 255;
+    const maxChannel = Math.max(red, green, blue);
+    const minChannel = Math.min(red, green, blue);
+    const luma = 0.2126 * red + 0.7152 * green + 0.0722 * blue;
+    const redGreen = (red - green) * 0.5;
+    const blueYellow = ((red + green) * 0.5) - blue;
+    const saturation = maxChannel <= Number.EPSILON ? 0 : (maxChannel - minChannel) / maxChannel;
+    vector.push(luma - 0.5);
+    vector.push(redGreen);
+    vector.push(blueYellow * 0.5);
+    vector.push(saturation - 0.5);
   }
 }
 
@@ -279,6 +457,63 @@ function appendEdgeGrid(vector: number[], image: ImageData) {
   }
 }
 
+function appendGradientHistograms(vector: number[], image: ImageData) {
+  const luma = lumaArray(image);
+  const histogramCount = GRADIENT_CELLS * GRADIENT_CELLS * GRADIENT_BINS;
+  const histograms = Array.from({ length: histogramCount }, () => 0);
+  const totals = Array.from({ length: GRADIENT_CELLS * GRADIENT_CELLS }, () => 0);
+
+  for (let y = 1; y < image.height - 1; y++) {
+    for (let x = 1; x < image.width - 1; x++) {
+      const gx = lumaAt(luma, image.width, x + 1, y) - lumaAt(luma, image.width, x - 1, y);
+      const gy = lumaAt(luma, image.width, x, y + 1) - lumaAt(luma, image.width, x, y - 1);
+      const magnitude = Math.sqrt((gx * gx) + (gy * gy));
+      if (magnitude <= Number.EPSILON) continue;
+
+      const cellX = Math.min(GRADIENT_CELLS - 1, Math.floor((x / image.width) * GRADIENT_CELLS));
+      const cellY = Math.min(GRADIENT_CELLS - 1, Math.floor((y / image.height) * GRADIENT_CELLS));
+      const cell = (cellY * GRADIENT_CELLS) + cellX;
+      const angle = Math.atan2(gy, gx) + Math.PI;
+      const bin = Math.min(GRADIENT_BINS - 1, Math.floor((angle / (Math.PI * 2)) * GRADIENT_BINS));
+      histograms[(cell * GRADIENT_BINS) + bin] += magnitude;
+      totals[cell] += magnitude;
+    }
+  }
+
+  for (let cell = 0; cell < totals.length; cell++) {
+    const total = Math.max(Number.EPSILON, totals[cell]);
+    for (let bin = 0; bin < GRADIENT_BINS; bin++) {
+      vector.push((histograms[(cell * GRADIENT_BINS) + bin] / total) - (1 / GRADIENT_BINS));
+    }
+  }
+}
+
+function appendFocusGrid(vector: number[], image: ImageData) {
+  const luma = lumaArray(image);
+  const sums = Array.from({ length: GRADIENT_CELLS * GRADIENT_CELLS }, () => 0);
+  const counts = Array.from({ length: GRADIENT_CELLS * GRADIENT_CELLS }, () => 0);
+
+  for (let y = 1; y < image.height - 1; y++) {
+    for (let x = 1; x < image.width - 1; x++) {
+      const center = lumaAt(luma, image.width, x, y) * 4;
+      const neighbors = lumaAt(luma, image.width, x - 1, y)
+        + lumaAt(luma, image.width, x + 1, y)
+        + lumaAt(luma, image.width, x, y - 1)
+        + lumaAt(luma, image.width, x, y + 1);
+      const cellX = Math.min(GRADIENT_CELLS - 1, Math.floor((x / image.width) * GRADIENT_CELLS));
+      const cellY = Math.min(GRADIENT_CELLS - 1, Math.floor((y / image.height) * GRADIENT_CELLS));
+      const cell = (cellY * GRADIENT_CELLS) + cellX;
+      sums[cell] += (center - neighbors) ** 2;
+      counts[cell]++;
+    }
+  }
+
+  for (let index = 0; index < sums.length; index++) {
+    const focus = counts[index] ? Math.sqrt(sums[index] / counts[index]) : 0;
+    vector.push(clamp(focus * 4.8, 0, 1) - 0.5);
+  }
+}
+
 function appendHistograms(vector: number[], image: ImageData) {
   const histograms = Array.from({ length: HISTOGRAM_BINS * 5 }, () => 0);
   const total = Math.max(1, image.width * image.height);
@@ -299,6 +534,45 @@ function appendHistograms(vector: number[], image: ImageData) {
   }
 
   for (const value of histograms) vector.push(value / total);
+}
+
+function appendColorMoments(vector: number[], image: ImageData) {
+  const channels = Array.from({ length: 5 }, () => [] as number[]);
+
+  for (let index = 0; index < image.data.length; index += 4) {
+    const red = image.data[index] / 255;
+    const green = image.data[index + 1] / 255;
+    const blue = image.data[index + 2] / 255;
+    const maxChannel = Math.max(red, green, blue);
+    const minChannel = Math.min(red, green, blue);
+    channels[0].push(red);
+    channels[1].push(green);
+    channels[2].push(blue);
+    channels[3].push(0.2126 * red + 0.7152 * green + 0.0722 * blue);
+    channels[4].push(maxChannel <= Number.EPSILON ? 0 : (maxChannel - minChannel) / maxChannel);
+  }
+
+  for (const channel of channels) {
+    const mean = channel.reduce((sum, value) => sum + value, 0) / Math.max(1, channel.length);
+    const variance = channel.reduce((sum, value) => sum + ((value - mean) ** 2), 0) / Math.max(1, channel.length);
+    const standardDeviation = Math.sqrt(variance);
+    const skew = channel.reduce((sum, value) => sum + ((value - mean) ** 3), 0) / Math.max(1, channel.length);
+    vector.push(mean - 0.5);
+    vector.push(standardDeviation - 0.25);
+    vector.push(clamp(skew * 4, -1, 1));
+  }
+}
+
+function appendDctFeatures(vector: number[], image: ImageData) {
+  const coefficients = lowFrequencyDct(image, DCT_COEFFICIENTS);
+  for (const coefficient of coefficients) vector.push(clamp(coefficient * 1.8, -1, 1));
+}
+
+function appendPerceptualHash(vector: number[], image: ImageData) {
+  const coefficients = lowFrequencyDct(image, 8).slice(1);
+  if (!coefficients.length) return;
+  const threshold = median(coefficients);
+  for (const coefficient of coefficients) vector.push(coefficient >= threshold ? 0.5 : -0.5);
 }
 
 function appendCompositionFeatures(
@@ -342,6 +616,68 @@ function appendCompositionFeatures(
   const aspectRatio = sourceWidth / Math.max(1, sourceHeight);
   vector.push(clamp(aspectRatio / 3, 0, 1));
   vector.push(aspectRatio >= 1 ? 1 : -1);
+}
+
+function lowFrequencyDct(image: ImageData, coefficientCount: number): number[] {
+  const luma = downsampleLuma(image, DCT_SIZE);
+  const coefficients: number[] = [];
+  for (let yFrequency = 0; yFrequency < coefficientCount; yFrequency++) {
+    for (let xFrequency = 0; xFrequency < coefficientCount; xFrequency++) {
+      const coefficient = dctCoefficient(luma, DCT_SIZE, xFrequency, yFrequency);
+      coefficients.push(coefficient);
+    }
+  }
+  return coefficients;
+}
+
+function downsampleLuma(image: ImageData, size: number): number[] {
+  const result: number[] = [];
+  for (let targetY = 0; targetY < size; targetY++) {
+    for (let targetX = 0; targetX < size; targetX++) {
+      const startX = Math.floor((targetX * image.width) / size);
+      const endX = Math.max(startX + 1, Math.floor(((targetX + 1) * image.width) / size));
+      const startY = Math.floor((targetY * image.height) / size);
+      const endY = Math.max(startY + 1, Math.floor(((targetY + 1) * image.height) / size));
+      let sum = 0;
+      let count = 0;
+
+      for (let y = startY; y < Math.min(image.height, endY); y++) {
+        for (let x = startX; x < Math.min(image.width, endX); x++) {
+          const index = ((y * image.width) + x) * 4;
+          sum += (
+            (0.2126 * image.data[index])
+            + (0.7152 * image.data[index + 1])
+            + (0.0722 * image.data[index + 2])
+          ) / 255;
+          count++;
+        }
+      }
+
+      result.push(count ? sum / count - 0.5 : 0);
+    }
+  }
+  return result;
+}
+
+function dctCoefficient(values: number[], size: number, xFrequency: number, yFrequency: number): number {
+  let sum = 0;
+  for (let y = 0; y < size; y++) {
+    for (let x = 0; x < size; x++) {
+      sum += (values[(y * size) + x] ?? 0)
+        * Math.cos(((2 * x + 1) * xFrequency * Math.PI) / (2 * size))
+        * Math.cos(((2 * y + 1) * yFrequency * Math.PI) / (2 * size));
+    }
+  }
+  const xScale = xFrequency === 0 ? Math.sqrt(1 / size) : Math.sqrt(2 / size);
+  const yScale = yFrequency === 0 ? Math.sqrt(1 / size) : Math.sqrt(2 / size);
+  return xScale * yScale * sum;
+}
+
+function median(values: number[]): number {
+  const sorted = [...values].sort((left, right) => left - right);
+  const middle = Math.floor(sorted.length / 2);
+  if (sorted.length % 2 === 1) return sorted[middle] ?? 0;
+  return ((sorted[middle - 1] ?? 0) + (sorted[middle] ?? 0)) / 2;
 }
 
 function estimateTechnicalScore(image: ImageData): number {
@@ -399,16 +735,85 @@ function fallbackTechnicalScore(photo: Photo): number {
   return clamp01(score);
 }
 
-function buildRankedExamples(photos: Photo[], featuresById: Map<string, PixelFeatures | null>): RankedExample[] {
+function buildFeatureRecords(
+  photos: Photo[],
+  featuresById: Map<string, PixelFeatures | null>,
+): Map<string, FeatureRecord> {
+  const records = new Map<string, FeatureRecord>();
+  for (const photo of photos) {
+    const pixelFeatures = featuresById.get(photo.id);
+    const technicalScore = pixelFeatures?.technicalScore ?? fallbackTechnicalScore(photo);
+    records.set(photo.id, {
+      photo,
+      embedding: pixelFeatures?.embedding,
+      technicalScore,
+      rankerFeatures: rankerFeatureVector(photo, pixelFeatures, technicalScore),
+    });
+  }
+  return records;
+}
+
+function rankerFeatureVector(
+  photo: Photo,
+  pixelFeatures: PixelFeatures | null | undefined,
+  technicalScore: number,
+): number[] {
+  const iso = photo.exif.iso ?? 0;
+  const shutter = shutterSeconds(photo.exif.shutter_speed) ?? 0;
+  const aperture = photo.exif.aperture ?? 0;
+  const focal = photo.exif.focal_length ?? 0;
+  const width = photo.exif.width ?? 0;
+  const height = photo.exif.height ?? 0;
+  const aspect = width > 0 && height > 0 ? width / height : 0;
+  const exposureBias = photo.exif.exposure_bias ?? 0;
+  const ev100 = photo.exif.ev100 ?? 0;
+  const fileType = photo.file_type.toUpperCase();
+  const embedding = pixelFeatures?.embedding;
+  const features = [
+    technicalScore,
+    iso ? clamp(1 - (Math.log2(Math.max(100, iso) / 100) / 7), 0, 1) : 0.55,
+    aperture ? clamp(aperture / 16, 0, 1) : 0,
+    shutter ? clamp((Math.log2(shutter + (1 / 8000)) + 13) / 18, 0, 1) : 0,
+    focal ? clamp(focal / 300, 0, 1) : 0,
+    aspect ? clamp(aspect / 3, 0, 1) : 0,
+    aspect && aspect < 1 ? 1 : 0,
+    clamp((exposureBias + 5) / 10, 0, 1),
+    ev100 ? clamp(ev100 / 18, 0, 1) : 0,
+    ["CR2", "CR3", "NEF", "ARW", "DNG", "RAF", "ORF", "RW2"].includes(fileType) ? 1 : 0,
+    photo.paired_with ? 1 : 0,
+  ];
+
+  for (let index = 0; index < EMBEDDING_RANKER_FEATURES; index++) {
+    features.push(embedding ? sampledVectorValue(embedding, index, EMBEDDING_RANKER_FEATURES) : 0);
+  }
+
+  return features;
+}
+
+function sampledVectorValue(vector: number[], index: number, targetLength: number): number {
+  if (!vector.length) return 0;
+  const start = Math.floor((index * vector.length) / targetLength);
+  const end = Math.max(start + 1, Math.floor(((index + 1) * vector.length) / targetLength));
+  let sum = 0;
+  let count = 0;
+  for (let sourceIndex = start; sourceIndex < Math.min(vector.length, end); sourceIndex++) {
+    sum += vector[sourceIndex] ?? 0;
+    count++;
+  }
+  return count ? sum / count : 0;
+}
+
+function buildRankedExamples(photos: Photo[], recordsById: Map<string, FeatureRecord>): RankedExample[] {
   const examples: RankedExample[] = [];
   for (const photo of photos) {
-    const vector = featuresById.get(photo.id)?.embedding;
-    if (!vector) continue;
+    const record = recordsById.get(photo.id);
+    if (!record) continue;
     const rating = photo.rating ?? 0;
     const flag = normalizeFlag(photo.flag);
     if (flag === "none" && rating <= 0) continue;
     examples.push({
-      vector,
+      vector: record.embedding ?? [],
+      features: record.rankerFeatures,
       signal: pointwiseSignal(flag, rating),
       confidence: flag === "none" ? 0.62 : 1,
     });
@@ -418,16 +823,16 @@ function buildRankedExamples(photos: Photo[], featuresById: Map<string, PixelFea
 
 function buildPairwiseExamples(
   preferences: AutoCullPairwisePreference[],
-  featuresById: Map<string, PixelFeatures | null>,
+  recordsById: Map<string, FeatureRecord>,
 ): PairwiseExample[] {
   const examples: PairwiseExample[] = [];
   for (const preference of preferences) {
-    const winner = featuresById.get(preference.winner_photo_id)?.embedding;
-    const loser = featuresById.get(preference.loser_photo_id)?.embedding;
-    if (!winner || !loser || winner.length !== loser.length) continue;
+    const winner = recordsById.get(preference.winner_photo_id);
+    const loser = recordsById.get(preference.loser_photo_id);
+    if (!winner || !loser || winner.rankerFeatures.length !== loser.rankerFeatures.length) continue;
     examples.push({
-      winner,
-      loser,
+      winnerFeatures: winner.rankerFeatures,
+      loserFeatures: loser.rankerFeatures,
       confidence: clamp(preference.confidence, 0.1, 1.25),
     });
   }
@@ -435,49 +840,163 @@ function buildPairwiseExamples(
 }
 
 function trainRankingModel(examples: RankedExample[], pairwiseExamples: PairwiseExample[]): RankingModel {
-  const dimensions = examples[0]?.vector.length ?? pairwiseExamples[0]?.winner.length ?? 0;
-  const usableExamples = examples.filter((example) => example.vector.length === dimensions);
-  const usablePairwiseExamples = pairwiseExamples.filter(
-    (example) => example.winner.length === dimensions && example.loser.length === dimensions,
-  );
-  if (!dimensions || (usableExamples.length === 0 && usablePairwiseExamples.length === 0)) {
+  const dimensions = examples[0]?.features.length ?? pairwiseExamples[0]?.winnerFeatures.length ?? 0;
+  const usableExamples = examples.filter((example) => example.features.length === dimensions);
+  const usablePairwiseExamples = pairwiseExamples.filter((example) => (
+    example.winnerFeatures.length === dimensions && example.loserFeatures.length === dimensions
+  ));
+  const rows = buildBoostingRows(usableExamples, usablePairwiseExamples);
+  if (!dimensions || rows.length === 0) {
     return { examples: usableExamples, score: () => null };
   }
 
-  const weights = Array.from({ length: dimensions }, () => 0);
-  let bias = 0;
+  const baseScore = clamp(weightedMean(rows), 0.02, 0.98);
+  const baseRaw = logit(baseScore);
+  const rawPredictions = rows.map(() => baseRaw);
+  const trees: RegressionTree[] = [];
+  const allIndices = rows.map((_, index) => index);
 
-  for (let epoch = 0; epoch < TRAINING_EPOCHS; epoch++) {
-    for (const example of usableExamples) {
-      const prediction = sigmoid(bias + dot(weights, example.vector));
-      const error = (prediction - clamp01(example.signal)) * example.confidence;
-      for (let index = 0; index < weights.length; index++) {
-        weights[index] -= LEARNING_RATE * (error * example.vector[index] + L2_REGULARIZATION * weights[index]);
-      }
-      bias -= LEARNING_RATE * error;
+  for (let treeIndex = 0; treeIndex < GBDT_TREES; treeIndex++) {
+    const gradients: number[] = [];
+    const hessians: number[] = [];
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      const row = rows[rowIndex];
+      const prediction = sigmoid(rawPredictions[rowIndex] ?? baseRaw);
+      gradients.push((row.target - prediction) * row.weight);
+      hessians.push(Math.max(0.0001, prediction * (1 - prediction) * row.weight));
     }
 
-    for (const example of usablePairwiseExamples) {
-      let score = 0;
-      for (let index = 0; index < weights.length; index++) {
-        score += weights[index] * (example.winner[index] - example.loser[index]);
-      }
-      const error = (sigmoid(score) - 1) * example.confidence;
-      for (let index = 0; index < weights.length; index++) {
-        const diff = example.winner[index] - example.loser[index];
-        weights[index] -= LEARNING_RATE * (error * diff + L2_REGULARIZATION * weights[index]);
-      }
+    const tree = fitBoostedTree(rows, gradients, hessians, allIndices, dimensions, 0);
+    trees.push(tree);
+    for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
+      rawPredictions[rowIndex] += GBDT_LEARNING_RATE * predictTree(tree, rows[rowIndex].features);
     }
   }
 
-  const trained = Math.abs(bias) > Number.EPSILON || weights.some((weight) => Math.abs(weight) > Number.EPSILON);
   return {
     examples: usableExamples,
-    score: (embedding) => {
-      if (!trained || !embedding || embedding.length !== weights.length) return null;
-      return sigmoid(bias + dot(weights, embedding));
+    score: (features) => {
+      if (!features || features.length !== dimensions) return null;
+      let rawScore = baseRaw;
+      for (const tree of trees) rawScore += GBDT_LEARNING_RATE * predictTree(tree, features);
+      return clamp01(sigmoid(rawScore));
     },
   };
+}
+
+function buildBoostingRows(examples: RankedExample[], pairwiseExamples: PairwiseExample[]): BoostingRow[] {
+  const rows: BoostingRow[] = [];
+  for (const example of examples) {
+    rows.push({
+      features: example.features,
+      target: clamp(example.signal, 0.03, 0.97),
+      weight: clamp(example.confidence, 0.05, 2),
+    });
+  }
+
+  for (const example of pairwiseExamples) {
+    const weight = clamp(example.confidence * 0.9, 0.05, 1.4);
+    rows.push({ features: example.winnerFeatures, target: 0.92, weight });
+    rows.push({ features: example.loserFeatures, target: 0.08, weight });
+  }
+  return rows;
+}
+
+function weightedMean(rows: BoostingRow[]): number {
+  let weightedSum = 0;
+  let totalWeight = 0;
+  for (const row of rows) {
+    weightedSum += row.target * row.weight;
+    totalWeight += row.weight;
+  }
+  return totalWeight <= Number.EPSILON ? 0.5 : weightedSum / totalWeight;
+}
+
+function logit(value: number): number {
+  const probability = clamp(value, 0.0001, 0.9999);
+  return Math.log(probability / (1 - probability));
+}
+
+function fitBoostedTree(
+  rows: BoostingRow[],
+  gradients: number[],
+  hessians: number[],
+  indices: number[],
+  featureCount: number,
+  depth: number,
+): RegressionTree {
+  const parent = sumGradientStats(gradients, hessians, indices);
+  const leaf = { value: leafValue(parent.gradient, parent.hessian) };
+  if (depth >= GBDT_MAX_DEPTH || indices.length <= 2 || parent.hessian < GBDT_MIN_LEAF_WEIGHT * 2) return leaf;
+
+  const parentScore = splitScore(parent.gradient, parent.hessian);
+  let best:
+    | { gain: number; feature: number; threshold: number; left: number[]; right: number[] }
+    | null = null;
+
+  for (let feature = 0; feature < featureCount; feature++) {
+    const ordered = [...indices].sort((left, right) => rows[left].features[feature] - rows[right].features[feature]);
+    let leftGradient = 0;
+    let leftHessian = 0;
+
+    for (let position = 0; position < ordered.length - 1; position++) {
+      const rowIndex = ordered[position];
+      leftGradient += gradients[rowIndex] ?? 0;
+      leftHessian += hessians[rowIndex] ?? 0;
+
+      const currentValue = rows[rowIndex].features[feature] ?? 0;
+      const nextValue = rows[ordered[position + 1]].features[feature] ?? 0;
+      if (Math.abs(currentValue - nextValue) <= 0.000001) continue;
+
+      const rightGradient = parent.gradient - leftGradient;
+      const rightHessian = parent.hessian - leftHessian;
+      if (leftHessian < GBDT_MIN_LEAF_WEIGHT || rightHessian < GBDT_MIN_LEAF_WEIGHT) continue;
+
+      const gain = splitScore(leftGradient, leftHessian) + splitScore(rightGradient, rightHessian) - parentScore;
+      if (gain <= GBDT_MIN_SPLIT_GAIN || (best && gain <= best.gain)) continue;
+
+      best = {
+        gain,
+        feature,
+        threshold: (currentValue + nextValue) / 2,
+        left: ordered.slice(0, position + 1),
+        right: ordered.slice(position + 1),
+      };
+    }
+  }
+
+  if (!best) return leaf;
+  return {
+    feature: best.feature,
+    threshold: best.threshold,
+    left: fitBoostedTree(rows, gradients, hessians, best.left, featureCount, depth + 1),
+    right: fitBoostedTree(rows, gradients, hessians, best.right, featureCount, depth + 1),
+  };
+}
+
+function sumGradientStats(gradients: number[], hessians: number[], indices: number[]) {
+  let gradient = 0;
+  let hessian = 0;
+  for (const index of indices) {
+    gradient += gradients[index] ?? 0;
+    hessian += hessians[index] ?? 0;
+  }
+  return { gradient, hessian };
+}
+
+function splitScore(gradient: number, hessian: number): number {
+  return (gradient * gradient) / (hessian + GBDT_L2_REGULARIZATION);
+}
+
+function leafValue(gradient: number, hessian: number): number {
+  return clamp(gradient / (hessian + GBDT_L2_REGULARIZATION), -3, 3);
+}
+
+function predictTree(tree: RegressionTree, features: number[]): number {
+  if ("value" in tree) return tree.value;
+  return (features[tree.feature] ?? 0) <= tree.threshold
+    ? predictTree(tree.left, features)
+    : predictTree(tree.right, features);
 }
 
 function nearestNeighborDelta(embedding: number[] | undefined, examples: RankedExample[]): number {
@@ -729,14 +1248,6 @@ function normalizeVector(vector: number[]): number[] {
   const norm = Math.sqrt(vector.reduce((sum, value) => sum + value ** 2, 0));
   if (norm <= Number.EPSILON) return vector;
   return vector.map((value) => value / norm);
-}
-
-function dot(left: number[], right: number[]): number {
-  let result = 0;
-  for (let index = 0; index < Math.min(left.length, right.length); index++) {
-    result += left[index] * right[index];
-  }
-  return result;
 }
 
 function sigmoid(value: number): number {

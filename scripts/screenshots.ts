@@ -300,6 +300,7 @@ async function installTauriMock(
             (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
                 unregisterListener: () => {},
             };
+            (window as unknown as Record<string, unknown>).__HOLOGRAM_DISABLE_TRANSFORMER_EMBEDDINGS__ = true;
 
             // If we want pre-loaded photos, seed the store after the app mounts
             if (payload.withPhotos) {

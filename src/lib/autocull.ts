@@ -37,12 +37,45 @@ const GBDT_LEARNING_RATE = 0.08;
 const GBDT_L2_REGULARIZATION = 1.2;
 const GBDT_MIN_LEAF_WEIGHT = 0.08;
 const GBDT_MIN_SPLIT_GAIN = 0.0008;
+const FEATURE_CACHE_DB = "hologram-autocull-cache";
+const FEATURE_CACHE_STORE = "pixel-features";
+const FEATURE_CACHE_VERSION = [
+  EMBEDDING_BACKEND,
+  "sample",
+  SAMPLE_SIZE,
+  "transformer",
+  TRANSFORMER_SAMPLE_SIZE,
+  "spatial",
+  SPATIAL_GRID,
+  "dct",
+  DCT_SIZE,
+  DCT_COEFFICIENTS,
+  "grad",
+  GRADIENT_CELLS,
+  GRADIENT_BINS,
+].join(":");
+const MEMORY_FEATURE_CACHE_LIMIT = 800;
+const PERSISTENT_FEATURE_CACHE_LIMIT = 4_000;
 
 type PixelFeatures = {
   embedding: number[];
   technicalScore: number;
   backend: string;
 };
+
+type CachedPixelFeaturesEntry = {
+  key: string;
+  version: string;
+  cached_at: string;
+  file_path: string;
+  file_size: number;
+  modified_at: string;
+  features: PixelFeatures | null;
+};
+
+const pixelFeatureMemoryCache = new Map<string, PixelFeatures | null>();
+let featureCacheDbPromise: Promise<IDBDatabase | null> | null = null;
+let featureCachePrunePromise: Promise<void> | null = null;
 
 type RankedExample = {
   vector: number[];
@@ -147,7 +180,7 @@ export async function buildAutoCullSession(
     const photo = photos[index];
     onProgress({ current: index, total, current_file: photo.file_name });
     await idleTick();
-    featuresById.set(photo.id, await extractPixelFeatures(photo));
+    featuresById.set(photo.id, await extractCachedPixelFeatures(photo));
   }
 
   const featureRecordsById = buildFeatureRecords(photos, featuresById);
@@ -244,6 +277,176 @@ function dedupePairwise(preferences: AutoCullPairwisePreference[]): AutoCullPair
     result.push(preference);
   }
   return result.reverse().slice(-2_000);
+}
+
+async function extractCachedPixelFeatures(photo: Photo): Promise<PixelFeatures | null> {
+  const cacheKey = pixelFeatureCacheKey(photo);
+  if (pixelFeatureMemoryCache.has(cacheKey)) {
+    return clonePixelFeatures(pixelFeatureMemoryCache.get(cacheKey));
+  }
+
+  const persisted = await readCachedPixelFeatures(cacheKey);
+  if (persisted !== undefined) {
+    rememberPixelFeatures(cacheKey, persisted);
+    return clonePixelFeatures(persisted);
+  }
+
+  const features = await extractPixelFeatures(photo);
+  rememberPixelFeatures(cacheKey, features);
+  void writeCachedPixelFeatures(cacheKey, photo, features);
+  return features;
+}
+
+function pixelFeatureCacheKey(photo: Photo): string {
+  return JSON.stringify([
+    FEATURE_CACHE_VERSION,
+    photo.file_path,
+    photo.file_type,
+    photo.file_size,
+    photo.modified_at,
+    photo.exif?.orientation ?? null,
+    thumbnailFingerprint(photo),
+  ]);
+}
+
+function thumbnailFingerprint(photo: Photo): string {
+  if (!photo.thumbnail) return "none";
+  return [
+    photo.thumbnail.length,
+    photo.thumbnail.slice(0, 32),
+    photo.thumbnail.slice(-16),
+  ].join(":");
+}
+
+function clonePixelFeatures(features: PixelFeatures | null | undefined): PixelFeatures | null {
+  if (!features) return null;
+  return {
+    embedding: [...features.embedding],
+    technicalScore: features.technicalScore,
+    backend: features.backend,
+  };
+}
+
+function rememberPixelFeatures(cacheKey: string, features: PixelFeatures | null) {
+  if (pixelFeatureMemoryCache.has(cacheKey)) pixelFeatureMemoryCache.delete(cacheKey);
+  pixelFeatureMemoryCache.set(cacheKey, clonePixelFeatures(features));
+
+  while (pixelFeatureMemoryCache.size > MEMORY_FEATURE_CACHE_LIMIT) {
+    const oldestKey = pixelFeatureMemoryCache.keys().next().value;
+    if (!oldestKey) break;
+    pixelFeatureMemoryCache.delete(oldestKey);
+  }
+}
+
+function openFeatureCacheDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === "undefined") return Promise.resolve(null);
+  if (featureCacheDbPromise) return featureCacheDbPromise;
+
+  featureCacheDbPromise = new Promise((resolve) => {
+    const request = indexedDB.open(FEATURE_CACHE_DB, 1);
+
+    request.onupgradeneeded = () => {
+      const db = request.result;
+      const store = db.objectStoreNames.contains(FEATURE_CACHE_STORE)
+        ? request.transaction?.objectStore(FEATURE_CACHE_STORE)
+        : db.createObjectStore(FEATURE_CACHE_STORE, { keyPath: "key" });
+
+      if (store && !store.indexNames.contains("cached_at")) {
+        store.createIndex("cached_at", "cached_at");
+      }
+    };
+
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(null);
+    request.onblocked = () => resolve(null);
+  });
+
+  return featureCacheDbPromise;
+}
+
+async function readCachedPixelFeatures(cacheKey: string): Promise<PixelFeatures | null | undefined> {
+  const db = await openFeatureCacheDb();
+  if (!db) return undefined;
+
+  return new Promise((resolve) => {
+    const transaction = db.transaction(FEATURE_CACHE_STORE, "readonly");
+    const request = transaction.objectStore(FEATURE_CACHE_STORE).get(cacheKey);
+
+    request.onsuccess = () => {
+      const entry = request.result as CachedPixelFeaturesEntry | undefined;
+      if (!entry || entry.version !== FEATURE_CACHE_VERSION) {
+        resolve(undefined);
+        return;
+      }
+      resolve(clonePixelFeatures(entry.features));
+    };
+
+    request.onerror = () => resolve(undefined);
+    transaction.onerror = () => resolve(undefined);
+  });
+}
+
+async function writeCachedPixelFeatures(cacheKey: string, photo: Photo, features: PixelFeatures | null) {
+  const db = await openFeatureCacheDb();
+  if (!db) return;
+
+  const entry: CachedPixelFeaturesEntry = {
+    key: cacheKey,
+    version: FEATURE_CACHE_VERSION,
+    cached_at: new Date().toISOString(),
+    file_path: photo.file_path,
+    file_size: photo.file_size,
+    modified_at: photo.modified_at,
+    features: clonePixelFeatures(features),
+  };
+
+  await new Promise<void>((resolve) => {
+    const transaction = db.transaction(FEATURE_CACHE_STORE, "readwrite");
+    transaction.objectStore(FEATURE_CACHE_STORE).put(entry);
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+    transaction.onabort = () => resolve();
+  });
+
+  scheduleFeatureCachePrune(db);
+}
+
+function scheduleFeatureCachePrune(db: IDBDatabase) {
+  if (featureCachePrunePromise) return;
+  featureCachePrunePromise = pruneFeatureCache(db).finally(() => {
+    featureCachePrunePromise = null;
+  });
+}
+
+async function pruneFeatureCache(db: IDBDatabase) {
+  const count = await new Promise<number>((resolve) => {
+    const transaction = db.transaction(FEATURE_CACHE_STORE, "readonly");
+    const request = transaction.objectStore(FEATURE_CACHE_STORE).count();
+    request.onsuccess = () => resolve(request.result);
+    request.onerror = () => resolve(0);
+    transaction.onerror = () => resolve(0);
+  });
+
+  if (count <= PERSISTENT_FEATURE_CACHE_LIMIT) return;
+  let remaining = count - PERSISTENT_FEATURE_CACHE_LIMIT;
+
+  await new Promise<void>((resolve) => {
+    const transaction = db.transaction(FEATURE_CACHE_STORE, "readwrite");
+    const request = transaction.objectStore(FEATURE_CACHE_STORE).index("cached_at").openCursor();
+
+    request.onsuccess = () => {
+      const cursor = request.result;
+      if (!cursor || remaining <= 0) return;
+      cursor.delete();
+      remaining--;
+      cursor.continue();
+    };
+
+    request.onerror = () => resolve();
+    transaction.oncomplete = () => resolve();
+    transaction.onerror = () => resolve();
+    transaction.onabort = () => resolve();
+  });
 }
 
 async function extractPixelFeatures(photo: Photo): Promise<PixelFeatures | null> {

@@ -13,6 +13,7 @@
         Trophy,
         XCircle,
     } from "@lucide/svelte";
+    import { tick } from "svelte";
     import {
         addPairwisePreferences,
         buildAutoCullSession,
@@ -92,10 +93,30 @@
     );
     const burstCount = $derived(session?.clusters.length ?? 0);
 
+    function revealSelectedPhoto(photoId: string) {
+        void tick().then(() => {
+            const rows = document.querySelectorAll<HTMLElement>("[data-autocull-photo-id]");
+            for (const row of rows) {
+                if (row.dataset.autocullPhotoId === photoId) {
+                    row.scrollIntoView({ block: "nearest", inline: "nearest" });
+                    return;
+                }
+            }
+        });
+    }
+
+    function setSelectedPhoto(photoId: string | null, reveal = false) {
+        selectedPhotoId = photoId;
+        if (!photoId) return;
+        const index = photos.findIndex((photo) => photo.id === photoId);
+        if (index >= 0) photoStore.setSelectedIndex(index);
+        if (reveal) revealSelectedPhoto(photoId);
+    }
+
     $effect(() => {
         const firstId = photos[0]?.id ?? null;
         if (!selectedPhotoId || !photosById.has(selectedPhotoId)) {
-            selectedPhotoId = firstId;
+            setSelectedPhoto(firstId);
         }
     });
 
@@ -126,9 +147,11 @@
             activeClusterId = next.clusters.find((cluster) => cluster.photo_ids.includes(selectedPhotoId ?? ""))?.id
                 ?? next.clusters[0]?.id
                 ?? null;
-            selectedPhotoId = selectedPhotoId && photosById.has(selectedPhotoId)
-                ? selectedPhotoId
-                : next.clusters[0]?.top_pick_id ?? photos[0]?.id ?? null;
+            setSelectedPhoto(
+                selectedPhotoId && photosById.has(selectedPhotoId)
+                    ? selectedPhotoId
+                    : next.clusters[0]?.top_pick_id ?? photos[0]?.id ?? null,
+            );
             status = `${next.stats.indexed}/${next.stats.total} indexed`;
         } catch (error) {
             status = error instanceof Error ? error.message : String(error);
@@ -139,11 +162,11 @@
 
     function selectCluster(cluster: AutoCullCluster) {
         activeClusterId = cluster.id;
-        selectedPhotoId = cluster.top_pick_id;
+        setSelectedPhoto(cluster.top_pick_id, true);
     }
 
-    function selectPhoto(photoId: string) {
-        selectedPhotoId = photoId;
+    function selectPhoto(photoId: string, reveal = false) {
+        setSelectedPhoto(photoId, reveal);
         const cluster = session?.clusters.find((item) => item.photo_ids.includes(photoId));
         activeClusterId = cluster?.id ?? activeClusterId;
     }
@@ -151,7 +174,11 @@
     function setReviewMode(next: "bursts" | "all") {
         reviewMode = next;
         if (next === "bursts" && activeCluster) {
-            selectedPhotoId = activeCluster.top_pick_id;
+            setSelectedPhoto(activeCluster.top_pick_id, true);
+        } else if (next === "all" && !selectedPhotoId) {
+            setSelectedPhoto(rankedRecommendations[0]?.photo_id ?? photos[0]?.id ?? null, true);
+        } else if (selectedPhotoId) {
+            revealSelectedPhoto(selectedPhotoId);
         }
     }
 
@@ -171,14 +198,121 @@
         }
     }
 
-    function markSelected(flag: CullFlag) {
+    function markSelected(flag: CullFlag, advance = false) {
         if (!selectedPhoto) return;
         setFlag(selectedPhoto, flag);
+        if (advance) moveSelection(1);
     }
 
-    function rateSelected(rating: number) {
+    function rateSelected(rating: number, advance = false) {
         if (!selectedPhoto) return;
         setRating(selectedPhoto, rating);
+        if (advance) moveSelection(1);
+    }
+
+    function clearSelectedCull() {
+        if (!selectedPhoto) return;
+        setFlag(selectedPhoto, "none");
+        setRating(selectedPhoto, 0);
+    }
+
+    function visibleClusterPhotoIds(cluster: AutoCullCluster): string[] {
+        return cluster.photo_ids.filter((id) => photosById.has(id));
+    }
+
+    function rankedPhotoIds(): string[] {
+        const ids = rankedRecommendations.length > 0
+            ? rankedRecommendations.map((item) => item.photo_id)
+            : photos.map((photo) => photo.id);
+        return ids.filter((id) => photosById.has(id));
+    }
+
+    function clampIndex(index: number, length: number): number {
+        return Math.max(0, Math.min(length - 1, index));
+    }
+
+    function moveSelection(delta: number) {
+        if (photos.length === 0) return;
+
+        if (reviewMode === "bursts" && clusterList.length > 0) {
+            const currentCluster = activeCluster ?? clusterList[0];
+            const currentClusterIndex = Math.max(0, clusterList.findIndex((cluster) => cluster.id === currentCluster.id));
+            const currentIds = visibleClusterPhotoIds(currentCluster);
+            const currentPhotoIndex = selectedPhotoId ? currentIds.indexOf(selectedPhotoId) : -1;
+            const nextPhotoIndex = currentPhotoIndex === -1
+                ? (delta > 0 ? 0 : currentIds.length - 1)
+                : currentPhotoIndex + delta;
+
+            if (nextPhotoIndex >= 0 && nextPhotoIndex < currentIds.length) {
+                selectPhoto(currentIds[nextPhotoIndex], true);
+                return;
+            }
+
+            const nextClusterIndex = clampIndex(currentClusterIndex + (delta > 0 ? 1 : -1), clusterList.length);
+            if (nextClusterIndex === currentClusterIndex) return;
+
+            const nextCluster = clusterList[nextClusterIndex];
+            const nextIds = visibleClusterPhotoIds(nextCluster);
+            const nextTopPickId = photosById.has(nextCluster.top_pick_id)
+                ? nextCluster.top_pick_id
+                : nextIds[0] ?? nextCluster.top_pick_id;
+            activeClusterId = nextCluster.id;
+            setSelectedPhoto(
+                delta > 0
+                    ? nextTopPickId
+                    : nextIds[nextIds.length - 1] ?? nextCluster.top_pick_id,
+                true,
+            );
+            return;
+        }
+
+        const ids = rankedPhotoIds();
+        if (ids.length === 0) return;
+        const currentIndex = selectedPhotoId ? ids.indexOf(selectedPhotoId) : -1;
+        const nextIndex = currentIndex === -1
+            ? (delta > 0 ? 0 : ids.length - 1)
+            : clampIndex(currentIndex + delta, ids.length);
+        selectPhoto(ids[nextIndex], true);
+    }
+
+    function isTypingTarget(target: EventTarget | null): boolean {
+        const element = target as HTMLElement | null;
+        return !!element && (element.isContentEditable || ["INPUT", "TEXTAREA", "SELECT"].includes(element.tagName));
+    }
+
+    function handleKeydown(event: KeyboardEvent) {
+        if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey || isTypingTarget(event.target)) return;
+
+        if (event.key === "ArrowDown" || event.key === "ArrowRight") {
+            event.preventDefault();
+            moveSelection(1);
+            return;
+        }
+        if (event.key === "ArrowUp" || event.key === "ArrowLeft") {
+            event.preventDefault();
+            moveSelection(-1);
+            return;
+        }
+        if (/^[0-5]$/.test(event.key)) {
+            event.preventDefault();
+            const rating = Number(event.key);
+            rateSelected(rating, rating > 0);
+            return;
+        }
+        if (event.key === "p" || event.key === "P") {
+            event.preventDefault();
+            markSelected("pick", true);
+            return;
+        }
+        if (event.key === "x" || event.key === "X") {
+            event.preventDefault();
+            markSelected("reject", true);
+            return;
+        }
+        if (event.key === "u" || event.key === "U") {
+            event.preventDefault();
+            clearSelectedCull();
+        }
     }
 
     function acceptClusterWinner(cluster: AutoCullCluster | null = activeCluster) {
@@ -270,6 +404,8 @@
         ].join(" ");
     }
 </script>
+
+<svelte:window onkeydown={handleKeydown} />
 
 <section class="flex h-full min-h-0 flex-col bg-background" data-autocull-view>
     <div class="flex h-14 shrink-0 items-center gap-4 border-b border-border bg-card/70 px-5">
@@ -383,6 +519,7 @@
                             {#if photo}
                                 <button
                                     class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {selectedPhotoId === item.photo_id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                    data-autocull-photo-id={item.photo_id}
                                     onclick={() => selectPhoto(item.photo_id)}
                                 >
                                     <span class="min-w-0 flex-1">
@@ -456,6 +593,7 @@
                             {@const recommendation = recommendationsById.get(photo.id)}
                             <button
                                 class="relative aspect-[3/2] h-full overflow-hidden rounded-md border bg-black transition-colors {selectedPhotoId === photo.id ? 'border-primary shadow-[0_0_0_2px_var(--color-primary)]' : 'border-border hover:border-ring'}"
+                                data-autocull-photo-id={photo.id}
                                 onclick={() => selectPhoto(photo.id)}
                                 title={photo.file_name}
                             >
@@ -595,6 +733,7 @@
                                     {#if photo}
                                         <button
                                             class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                            data-autocull-photo-id={item.photo_id}
                                             onclick={() => selectPhoto(item.photo_id)}
                                         >
                                             <span class="min-w-0 flex-1 truncate">{photo.file_name}</span>

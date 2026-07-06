@@ -372,7 +372,15 @@
                 event.preventDefault();
                 navigatePrevious();
                 break;
+            case "ArrowUp":
+                event.preventDefault();
+                navigatePrevious();
+                break;
             case "ArrowRight":
+                event.preventDefault();
+                navigateNext();
+                break;
+            case "ArrowDown":
                 event.preventDefault();
                 navigateNext();
                 break;

@@ -1,4 +1,3 @@
-import { convertFileSrc } from "@tauri-apps/api/core";
 import type {
   AutoCullCluster,
   AutoCullLabel,
@@ -9,19 +8,21 @@ import type {
   Photo,
   VisualIndexProgress,
 } from "./types.ts";
+import { photoPreviewSrc } from "./photoPreview.ts";
 
 const EMBEDDING_BACKEND = "visual-hybrid32-v2";
 const RANKER_VERSION = "behavior-linear-ranker-v2";
 const SPATIAL_GRID = 32;
 const HISTOGRAM_BINS = 16;
 const SAMPLE_SIZE = 160;
-const BURST_WINDOW_MS = 3_500;
-const SIMILARITY_THRESHOLD = 0.94;
+const BURST_WINDOW_MS = 2_000;
+const LOOSE_BURST_WINDOW_MS = 5_000;
+const BURST_VISUAL_SIMILARITY = 0.82;
+const SEQUENCE_VISUAL_SIMILARITY = 0.88;
+const MAX_BURST_SIZE = 18;
 const TRAINING_EPOCHS = 80;
 const LEARNING_RATE = 0.04;
 const L2_REGULARIZATION = 0.0004;
-
-const browserPreviewTypes = new Set(["JPEG", "JPG", "PNG", "WEBP", "GIF"]);
 
 type PixelFeatures = {
   embedding: number[];
@@ -42,26 +43,20 @@ type PairwiseExample = {
 
 type ScoredPhoto = AutoCullPhoto & {
   source: Photo;
-  timestampMs: number | null;
+  captureMs: number | null;
+  sortTimeMs: number | null;
+  sequence: SequenceInfo | null;
+};
+
+type SequenceInfo = {
+  prefix: string;
+  number: number;
 };
 
 type RankingModel = {
   score: (embedding: number[] | undefined) => number | null;
   examples: RankedExample[];
 };
-
-export function photoPreviewSrc(photo: Photo): string {
-  if (photo.thumbnail) {
-    const mime = photo.thumbnail.startsWith("iVBOR") ? "image/png" : "image/jpeg";
-    return `data:${mime};base64,${photo.thumbnail}`;
-  }
-  if (!browserPreviewTypes.has(photo.file_type.toUpperCase())) return "";
-  try {
-    return convertFileSrc(photo.file_path);
-  } catch {
-    return "";
-  }
-}
 
 export function pairwisePreferenceKey(folderPath: string | null): string {
   return `hologram.autocull.pairwise.${folderPath?.trim() || "global"}`;
@@ -142,7 +137,9 @@ export async function buildAutoCullSession(
       confidence: recommendationConfidence(photo, finalScore, embedding),
       embedding,
       embedding_backend: embedding ? EMBEDDING_BACKEND : undefined,
-      timestampMs: timestampMs(photo),
+      captureMs: captureTimestampMs(photo),
+      sortTimeMs: sortTimestampMs(photo),
+      sequence: filenameSequence(photo.file_name),
     } satisfies ScoredPhoto;
   });
 
@@ -156,7 +153,13 @@ export async function buildAutoCullSession(
     cluster_id: clusterByPhotoId.get(photo.photo_id) ?? `single-${photo.photo_id}`,
   }));
 
-  const outputPhotos: AutoCullPhoto[] = scored.map(({ source: _source, timestampMs: _timestampMs, ...photo }) => photo);
+  const outputPhotos: AutoCullPhoto[] = scored.map(({
+    source: _source,
+    captureMs: _captureMs,
+    sortTimeMs: _sortTimeMs,
+    sequence: _sequence,
+    ...photo
+  }) => photo);
   onProgress({ current: total, total });
   return {
     embedding_backend: EMBEDDING_BACKEND,
@@ -494,8 +497,13 @@ function nearestNeighborDelta(embedding: number[] | undefined, examples: RankedE
 
 function buildClusters(scored: ScoredPhoto[]): AutoCullCluster[] {
   const sorted = [...scored].sort((a, b) => {
-    const timeDelta = (a.timestampMs ?? Number.MAX_SAFE_INTEGER) - (b.timestampMs ?? Number.MAX_SAFE_INTEGER);
+    const timeDelta = (a.sortTimeMs ?? Number.MAX_SAFE_INTEGER) - (b.sortTimeMs ?? Number.MAX_SAFE_INTEGER);
     if (timeDelta !== 0) return timeDelta;
+    const leftSequence = a.sequence;
+    const rightSequence = b.sequence;
+    if (leftSequence && rightSequence && leftSequence.prefix === rightSequence.prefix) {
+      return leftSequence.number - rightSequence.number;
+    }
     return a.source.file_name.localeCompare(b.source.file_name);
   });
   const clusters: ScoredPhoto[][] = [];
@@ -506,45 +514,28 @@ function buildClusters(scored: ScoredPhoto[]): AutoCullCluster[] {
       clusters.push([photo]);
       continue;
     }
-    const previous = current[current.length - 1];
-    const timeGap = photo.timestampMs != null && previous.timestampMs != null
-      ? Math.abs(photo.timestampMs - previous.timestampMs)
-      : Number.POSITIVE_INFINITY;
-    const visualMatch = photo.embedding && current[0]?.embedding
-      ? cosineSimilarity(photo.embedding, current[0].embedding) >= SIMILARITY_THRESHOLD
-      : false;
-    const sameCamera = !photo.source.exif.camera_model
-      || !previous.source.exif.camera_model
-      || photo.source.exif.camera_model === previous.source.exif.camera_model;
-
-    if ((timeGap <= BURST_WINDOW_MS && sameCamera) || visualMatch) {
+    if (shouldJoinBurst(current, photo)) {
       current.push(photo);
     } else {
       clusters.push([photo]);
     }
   }
 
-  return clusters.map((items, index) => {
+  return clusters.filter((items) => items.length > 1).map((items, index) => {
     const sortedByScore = [...items].sort((a, b) => b.final_score - a.final_score);
-    const startTime = minTimestamp(items);
-    const endTime = maxTimestamp(items);
-    const timeSpan = startTime != null && endTime != null ? endTime - startTime : null;
+    const startTime = minCaptureTimestamp(items);
+    const endTime = maxCaptureTimestamp(items);
     const similarities = items
       .slice(1)
       .map((item) => item.embedding && items[0].embedding ? cosineSimilarity(item.embedding, items[0].embedding) : 0)
       .filter((value) => value > 0);
     const averageSimilarity = similarities.length
       ? similarities.reduce((sum, value) => sum + value, 0) / similarities.length
-      : 1;
-    const kind: AutoCullCluster["kind"] = items.length <= 1
-      ? "single"
-      : timeSpan != null && timeSpan <= 10_000
-        ? "burst"
-        : "similar";
+      : 0.72;
     return {
-      id: `${kind}-${index + 1}`,
-      kind,
-      confidence: items.length <= 1 ? 0.5 : clamp(averageSimilarity, 0.5, 0.99),
+      id: `burst-${index + 1}`,
+      kind: "burst",
+      confidence: clamp(averageSimilarity, 0.5, 0.99),
       photo_ids: items.map((item) => item.photo_id),
       top_pick_id: sortedByScore[0].photo_id,
       start_time: startTime == null ? undefined : new Date(startTime).toISOString(),
@@ -553,13 +544,69 @@ function buildClusters(scored: ScoredPhoto[]): AutoCullCluster[] {
   });
 }
 
-function minTimestamp(items: ScoredPhoto[]): number | null {
-  const values = items.map((item) => item.timestampMs).filter((value): value is number => value != null);
+function shouldJoinBurst(current: ScoredPhoto[], photo: ScoredPhoto): boolean {
+  if (current.length >= MAX_BURST_SIZE) return false;
+
+  const previous = current[current.length - 1];
+  const anchor = current[0];
+  if (!sameCamera(previous, photo)) return false;
+
+  const adjacentSimilarity = visualSimilarity(previous, photo);
+  const anchorSimilarity = visualSimilarity(anchor, photo);
+  const hasVisualSignal = adjacentSimilarity != null && anchorSimilarity != null;
+  const sequenceGap = sequenceGapBetween(previous, photo);
+  const sameSequenceRun = sequenceGap != null && sequenceGap > 0 && sequenceGap <= 2;
+  const captureGap = captureGapBetween(previous, photo);
+  const anchorGap = captureGapBetween(anchor, photo);
+
+  const sequenceBurst = sameSequenceRun
+    && adjacentSimilarity != null
+    && adjacentSimilarity >= SEQUENCE_VISUAL_SIMILARITY
+    && (anchorSimilarity == null || anchorSimilarity >= BURST_VISUAL_SIMILARITY);
+  const tightTimedBurst = captureGap != null
+    && captureGap <= BURST_WINDOW_MS
+    && (anchorGap == null || anchorGap <= 12_000)
+    && (!hasVisualSignal || adjacentSimilarity >= 0.62);
+  const looseTimedBurst = captureGap != null
+    && captureGap <= LOOSE_BURST_WINDOW_MS
+    && anchorGap != null
+    && anchorGap <= 12_000
+    && adjacentSimilarity != null
+    && adjacentSimilarity >= BURST_VISUAL_SIMILARITY;
+
+  return sequenceBurst || tightTimedBurst || looseTimedBurst;
+}
+
+function visualSimilarity(left: ScoredPhoto, right: ScoredPhoto): number | null {
+  if (!left.embedding || !right.embedding) return null;
+  return cosineSimilarity(left.embedding, right.embedding);
+}
+
+function sameCamera(left: ScoredPhoto, right: ScoredPhoto): boolean {
+  const leftCamera = left.source.exif.camera_model;
+  const rightCamera = right.source.exif.camera_model;
+  if (!leftCamera || !rightCamera) return true;
+  return leftCamera === rightCamera;
+}
+
+function captureGapBetween(left: ScoredPhoto, right: ScoredPhoto): number | null {
+  if (left.captureMs == null || right.captureMs == null) return null;
+  return Math.abs(right.captureMs - left.captureMs);
+}
+
+function sequenceGapBetween(left: ScoredPhoto, right: ScoredPhoto): number | null {
+  if (!left.sequence || !right.sequence) return null;
+  if (left.sequence.prefix !== right.sequence.prefix) return null;
+  return right.sequence.number - left.sequence.number;
+}
+
+function minCaptureTimestamp(items: ScoredPhoto[]): number | null {
+  const values = items.map((item) => item.captureMs).filter((value): value is number => value != null);
   return values.length ? Math.min(...values) : null;
 }
 
-function maxTimestamp(items: ScoredPhoto[]): number | null {
-  const values = items.map((item) => item.timestampMs).filter((value): value is number => value != null);
+function maxCaptureTimestamp(items: ScoredPhoto[]): number | null {
+  const values = items.map((item) => item.captureMs).filter((value): value is number => value != null);
   return values.length ? Math.max(...values) : null;
 }
 
@@ -609,11 +656,28 @@ function normalizeFlag(flag: CullFlag | undefined): CullFlag {
   return flag === "pick" || flag === "reject" ? flag : "none";
 }
 
-function timestampMs(photo: Photo): number | null {
-  const value = photo.exif.date_taken || photo.created_at || photo.modified_at;
+function captureTimestampMs(photo: Photo): number | null {
+  return parseTime(photo.exif.date_taken);
+}
+
+function sortTimestampMs(photo: Photo): number | null {
+  return parseTime(photo.exif.date_taken) ?? parseTime(photo.modified_at);
+}
+
+function parseTime(value?: string): number | null {
   if (!value) return null;
   const time = new Date(value).getTime();
   return Number.isFinite(time) ? time : null;
+}
+
+function filenameSequence(fileName: string): SequenceInfo | null {
+  const stem = fileName.replace(/\.[^.]+$/, "");
+  const match = stem.match(/^(.*?)(\d{3,})(?:[_-].*)?$/);
+  if (!match) return null;
+  return {
+    prefix: match[1].toLowerCase(),
+    number: Number(match[2]),
+  };
 }
 
 function shutterSeconds(value?: string): number | null {

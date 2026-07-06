@@ -4,8 +4,8 @@
         Check,
         Circle,
         Gauge,
-        ImageOff,
         Loader2,
+        PanelRightOpen,
         RefreshCw,
         Rows3,
         Sparkles,
@@ -17,10 +17,10 @@
         addPairwisePreferences,
         buildAutoCullSession,
         loadPairwisePreferences,
-        photoPreviewSrc,
     } from "../autocull.ts";
     import { HologramAPI } from "../api.ts";
     import { photoStore } from "../stores/photoStore.ts";
+    import PhotoPreview from "./PhotoPreview.svelte";
     import type {
         AutoCullCluster,
         AutoCullLabel,
@@ -47,6 +47,8 @@
     let lastAnalysisKey = $state("");
     let status = $state("Ready");
     let rejectThreshold = $state(0.42);
+    let reviewMode = $state<"bursts" | "all">("bursts");
+    let showDetails = $state(false);
     let analysisRun = 0;
 
     const photosById = $derived(new Map(photos.map((photo) => [photo.id, photo])));
@@ -88,6 +90,7 @@
                 && (photo?.flag ?? "none") === "none";
         }),
     );
+    const burstCount = $derived(session?.clusters.length ?? 0);
 
     $effect(() => {
         const firstId = photos[0]?.id ?? null;
@@ -119,6 +122,7 @@
             });
             if (runId !== analysisRun) return;
             session = next;
+            if (next.clusters.length === 0) reviewMode = "all";
             activeClusterId = next.clusters.find((cluster) => cluster.photo_ids.includes(selectedPhotoId ?? ""))?.id
                 ?? next.clusters[0]?.id
                 ?? null;
@@ -142,6 +146,13 @@
         selectedPhotoId = photoId;
         const cluster = session?.clusters.find((item) => item.photo_ids.includes(photoId));
         activeClusterId = cluster?.id ?? activeClusterId;
+    }
+
+    function setReviewMode(next: "bursts" | "all") {
+        reviewMode = next;
+        if (next === "bursts" && activeCluster) {
+            selectedPhotoId = activeCluster.top_pick_id;
+        }
     }
 
     function relatedIds(photo: Photo): string[] {
@@ -248,6 +259,24 @@
     function recommendationPhoto(item: AutoCullPhoto): Photo | undefined {
         return photosById.get(item.photo_id);
     }
+
+    function workspaceClass(): string {
+        return [
+            "grid min-h-0 flex-1",
+            showDetails
+                ? "grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)_minmax(17rem,22rem)]"
+                : "grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)]",
+        ].join(" ");
+    }
+
+    function modeButtonClass(active: boolean): string {
+        return [
+            "h-8 flex-1 rounded-md px-2 text-xs font-semibold transition-colors",
+            active
+                ? "bg-primary text-primary-foreground"
+                : "bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground",
+        ].join(" ");
+    }
 </script>
 
 <section class="flex h-full min-h-0 flex-col bg-background" data-autocull-view>
@@ -257,32 +286,15 @@
                 <Sparkles size={13} />
                 AutoCull
             </div>
-            <h2 class="truncate text-sm font-semibold text-foreground">{status}</h2>
+            <h2 class="truncate text-sm font-semibold text-foreground">
+                {status}
+                {#if session}
+                    <span class="text-muted-foreground">/ {burstCount} bursts</span>
+                {/if}
+            </h2>
         </div>
 
-        {#if session}
-            <div class="hidden items-center gap-2 text-xs text-muted-foreground md:flex">
-                <span class="rounded-md bg-secondary px-2 py-1 tabular-nums">{session.stats.select} select</span>
-                <span class="rounded-md bg-secondary px-2 py-1 tabular-nums">{session.stats.maybe} maybe</span>
-                <span class="rounded-md bg-secondary px-2 py-1 tabular-nums">{session.stats.needs_review} review</span>
-                <span class="rounded-md bg-secondary px-2 py-1 tabular-nums">{session.stats.reject} reject</span>
-            </div>
-        {/if}
-
         <div class="ml-auto flex items-center gap-2">
-            <label class="hidden items-center gap-2 text-xs text-muted-foreground lg:flex">
-                Reject
-                <input
-                    class="h-7 w-28 accent-primary"
-                    type="range"
-                    min="0.25"
-                    max="0.55"
-                    step="0.01"
-                    bind:value={rejectThreshold}
-                    title="Reject threshold"
-                />
-                <span class="w-9 tabular-nums">{percent(rejectThreshold)}</span>
-            </label>
             <button
                 class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-3 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 onclick={runAnalysis}
@@ -296,12 +308,12 @@
                 Analyze
             </button>
             <button
-                class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-reject px-3 text-xs font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                onclick={applyRejectSuggestions}
-                disabled={!session || rejectCandidates.length === 0}
+                class="grid h-8 w-8 place-items-center rounded-md bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground {showDetails ? 'bg-primary text-primary-foreground' : ''}"
+                onclick={() => (showDetails = !showDetails)}
+                title="Toggle details"
+                aria-label="Toggle details"
             >
-                <XCircle size={14} />
-                Apply {rejectCandidates.length}
+                <PanelRightOpen size={15} />
             </button>
         </div>
     </div>
@@ -326,51 +338,79 @@
             </button>
         </div>
     {:else}
-        <div class="grid min-h-0 flex-1 grid-cols-[minmax(14rem,20rem)_minmax(0,1fr)_minmax(18rem,23rem)]">
+        <div class={workspaceClass()}>
             <aside class="min-h-0 overflow-y-auto border-r border-border bg-sidebar/50 p-3">
-                <div class="mb-2 flex items-center gap-2 px-1 text-xs font-bold uppercase text-foreground">
-                    <Rows3 size={13} class="text-primary" />
-                    Clusters
-                    <span class="ml-auto text-muted-foreground">{clusterList.length}</span>
+                <div class="mb-3 flex gap-1" aria-label="AutoCull layer">
+                    <button class={modeButtonClass(reviewMode === "bursts")} onclick={() => setReviewMode("bursts")} disabled={burstCount === 0}>
+                        Bursts
+                    </button>
+                    <button class={modeButtonClass(reviewMode === "all")} onclick={() => setReviewMode("all")}>
+                        All Photos
+                    </button>
                 </div>
-                <div class="space-y-1">
-                    {#each clusterList as cluster (cluster.id)}
-                        {@const topPhoto = photosById.get(cluster.top_pick_id)}
-                        {@const topRecommendation = recommendationsById.get(cluster.top_pick_id)}
-                        <button
-                            class="w-full rounded-md px-2 py-2 text-left transition-colors {activeCluster?.id === cluster.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
-                            onclick={() => selectCluster(cluster)}
-                        >
-                            <span class="flex items-center gap-2">
-                                <span class="truncate text-xs font-semibold">{clusterTitle(cluster)}</span>
-                                <span class="ml-auto rounded bg-black/20 px-1.5 py-0.5 text-[10px] tabular-nums">{cluster.photo_ids.length}</span>
-                            </span>
-                            <span class="mt-1 block truncate text-[11px] opacity-75">
-                                {topPhoto?.file_name ?? "Missing photo"} / {formatScore(topRecommendation?.final_score)}
-                            </span>
-                        </button>
-                    {/each}
-                </div>
+
+                {#if reviewMode === "bursts"}
+                    <div class="mb-2 flex items-center gap-2 px-1 text-xs font-bold uppercase text-foreground">
+                        <Rows3 size={13} class="text-primary" />
+                        Burst Winners
+                        <span class="ml-auto text-muted-foreground">{clusterList.length}</span>
+                    </div>
+                    {#if clusterList.length === 0}
+                        <div class="rounded-md border border-dashed border-border bg-card px-3 py-3 text-xs text-muted-foreground">
+                            No burst groups detected. Use All Photos for the general cull layer.
+                        </div>
+                    {:else}
+                        <div class="space-y-1">
+                            {#each clusterList as cluster (cluster.id)}
+                                {@const topPhoto = photosById.get(cluster.top_pick_id)}
+                                {@const topRecommendation = recommendationsById.get(cluster.top_pick_id)}
+                                <button
+                                    class="w-full rounded-md px-2 py-2 text-left transition-colors {activeCluster?.id === cluster.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                    onclick={() => selectCluster(cluster)}
+                                >
+                                    <span class="flex items-center gap-2">
+                                        <span class="truncate text-xs font-semibold">{clusterTitle(cluster)}</span>
+                                        <span class="ml-auto rounded bg-black/20 px-1.5 py-0.5 text-[10px] tabular-nums">{cluster.photo_ids.length}</span>
+                                    </span>
+                                    <span class="mt-1 block truncate text-[11px] opacity-75">
+                                        {topPhoto?.file_name ?? "Missing photo"} / {formatScore(topRecommendation?.final_score)}
+                                    </span>
+                                </button>
+                            {/each}
+                        </div>
+                    {/if}
+                {:else}
+                    <div class="mb-2 flex items-center gap-2 px-1 text-xs font-bold uppercase text-foreground">
+                        <Gauge size={13} class="text-primary" />
+                        General Cull
+                        <span class="ml-auto text-muted-foreground">{rankedRecommendations.length}</span>
+                    </div>
+                    <div class="space-y-1">
+                        {#each rankedRecommendations as item (item.photo_id)}
+                            {@const photo = recommendationPhoto(item)}
+                            {#if photo}
+                                <button
+                                    class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {selectedPhotoId === item.photo_id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                    onclick={() => selectPhoto(item.photo_id)}
+                                >
+                                    <span class="min-w-0 flex-1">
+                                        <span class="block truncate font-semibold">{photo.file_name}</span>
+                                        <span class="block truncate text-[10px] opacity-75">{item.recommendation.replace("_", " ")}</span>
+                                    </span>
+                                    <span class="tabular-nums">{formatScore(item.final_score)}</span>
+                                </button>
+                            {/if}
+                        {/each}
+                    </div>
+                {/if}
             </aside>
 
             <main class="flex min-w-0 flex-col">
                 <div class="grid min-h-0 flex-1 place-items-center bg-black">
                     {#if selectedPhoto}
-                        {@const src = photoPreviewSrc(selectedPhoto)}
                         <div class="flex h-full w-full flex-col">
                             <div class="grid min-h-0 flex-1 place-items-center p-4">
-                                {#if src}
-                                    <img
-                                        src={src}
-                                        alt={selectedPhoto.file_name}
-                                        class="h-full w-full object-contain"
-                                    />
-                                {:else}
-                                    <div class="flex flex-col items-center gap-2 text-muted-foreground">
-                                        <ImageOff size={42} />
-                                        <span class="text-sm">No preview</span>
-                                    </div>
-                                {/if}
+                                <PhotoPreview photo={selectedPhoto} fit="contain" eager iconSize={42} fallbackLabel="No preview" />
                             </div>
                             <div class="flex h-16 shrink-0 items-center gap-3 border-t border-white/10 bg-black/70 px-4">
                                 <div class="min-w-0 flex-1">
@@ -389,28 +429,44 @@
                                         {selectedRecommendation.recommendation.replace("_", " ")}
                                     </span>
                                 {/if}
+                                <button
+                                    class="hidden h-8 items-center justify-center gap-1.5 rounded-md bg-pick px-3 text-xs font-bold text-black transition-opacity hover:opacity-90 md:inline-flex"
+                                    onclick={() => markSelected("pick")}
+                                >
+                                    <Check size={14} />
+                                    Pick
+                                </button>
+                                <button
+                                    class="hidden h-8 items-center justify-center gap-1.5 rounded-md bg-reject px-3 text-xs font-bold text-white transition-opacity hover:opacity-90 md:inline-flex"
+                                    onclick={() => markSelected("reject")}
+                                >
+                                    <XCircle size={14} />
+                                    Reject
+                                </button>
+                                {#if reviewMode === "bursts" && activeCluster && activeCluster.photo_ids.length > 1}
+                                    <button
+                                        class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90"
+                                        onclick={() => acceptClusterWinner(activeCluster)}
+                                    >
+                                        <Trophy size={14} />
+                                        Winner
+                                    </button>
+                                {/if}
                             </div>
                         </div>
                     {/if}
                 </div>
 
-                {#if clusterPhotos.length > 1}
-                    <div class="flex h-28 shrink-0 gap-2 overflow-x-auto border-t border-border bg-card/70 p-2">
+                {#if reviewMode === "bursts" && clusterPhotos.length > 1}
+                    <div class="flex h-24 shrink-0 gap-2 overflow-x-auto border-t border-border bg-card/70 p-2">
                         {#each clusterPhotos as photo (photo.id)}
                             {@const recommendation = recommendationsById.get(photo.id)}
-                            {@const src = photoPreviewSrc(photo)}
                             <button
                                 class="relative aspect-[3/2] h-full overflow-hidden rounded-md border bg-black transition-colors {selectedPhotoId === photo.id ? 'border-primary shadow-[0_0_0_2px_var(--color-primary)]' : 'border-border hover:border-ring'}"
                                 onclick={() => selectPhoto(photo.id)}
                                 title={photo.file_name}
                             >
-                                {#if src}
-                                    <img src={src} alt={photo.file_name} class="h-full w-full object-cover" />
-                                {:else}
-                                    <div class="grid h-full w-full place-items-center text-muted-foreground">
-                                        <ImageOff size={20} />
-                                    </div>
-                                {/if}
+                                <PhotoPreview photo={photo} fit="cover" fallbackLabel="" iconSize={20} />
                                 {#if recommendation}
                                     <span class="absolute bottom-1 right-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-white">
                                         {formatScore(recommendation.final_score)}
@@ -422,120 +478,135 @@
                 {/if}
             </main>
 
-            <aside class="min-h-0 overflow-y-auto border-l border-border bg-card/50 p-4">
-                {#if selectedPhoto && selectedRecommendation}
-                    <div class="mb-4 flex items-start gap-3">
-                        <div class="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-primary/15 text-primary">
-                            <Gauge size={20} />
+            {#if showDetails}
+                <aside class="min-h-0 overflow-y-auto border-l border-border bg-card/50 p-4">
+                    {#if selectedPhoto && selectedRecommendation}
+                        <div class="mb-4 flex items-start gap-3">
+                            <div class="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-primary/15 text-primary">
+                                <Gauge size={20} />
+                            </div>
+                            <div class="min-w-0">
+                                <h3 class="truncate text-sm font-semibold text-foreground">{selectedPhoto.file_name}</h3>
+                                <p class="mt-0.5 text-xs text-muted-foreground">
+                                    {selectedRecommendation.embedding ? session?.embedding_backend : "metadata fallback"}
+                                </p>
+                            </div>
                         </div>
-                        <div class="min-w-0">
-                            <h3 class="truncate text-sm font-semibold text-foreground">{selectedPhoto.file_name}</h3>
-                            <p class="mt-0.5 text-xs text-muted-foreground">
-                                {selectedRecommendation.embedding ? session?.embedding_backend : "metadata fallback"}
-                            </p>
-                        </div>
-                    </div>
 
-                    <div class="space-y-3">
-                        <div>
-                            <div class="mb-1 flex items-center justify-between text-xs">
-                                <span class="font-semibold text-muted-foreground">Final</span>
-                                <span class="tabular-nums text-foreground">{formatScore(selectedRecommendation.final_score)}</span>
+                        <div class="space-y-3">
+                            <div>
+                                <div class="mb-1 flex items-center justify-between text-xs">
+                                    <span class="font-semibold text-muted-foreground">Final</span>
+                                    <span class="tabular-nums text-foreground">{formatScore(selectedRecommendation.final_score)}</span>
+                                </div>
+                                <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
+                                    <div class="h-full rounded-full bg-primary" style:width={scoreWidth(selectedRecommendation.final_score)}></div>
+                                </div>
                             </div>
-                            <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
-                                <div class="h-full rounded-full bg-primary" style:width={scoreWidth(selectedRecommendation.final_score)}></div>
+                            <div>
+                                <div class="mb-1 flex items-center justify-between text-xs">
+                                    <span class="font-semibold text-muted-foreground">Personal</span>
+                                    <span class="tabular-nums text-foreground">{formatScore(selectedRecommendation.personal_score)}</span>
+                                </div>
+                                <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
+                                    <div class="h-full rounded-full bg-pick" style:width={scoreWidth(selectedRecommendation.personal_score)}></div>
+                                </div>
+                            </div>
+                            <div>
+                                <div class="mb-1 flex items-center justify-between text-xs">
+                                    <span class="font-semibold text-muted-foreground">Technical</span>
+                                    <span class="tabular-nums text-foreground">{formatScore(selectedRecommendation.technical_score)}</span>
+                                </div>
+                                <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
+                                    <div class="h-full rounded-full bg-rating" style:width={scoreWidth(selectedRecommendation.technical_score)}></div>
+                                </div>
                             </div>
                         </div>
-                        <div>
-                            <div class="mb-1 flex items-center justify-between text-xs">
-                                <span class="font-semibold text-muted-foreground">Personal</span>
-                                <span class="tabular-nums text-foreground">{formatScore(selectedRecommendation.personal_score)}</span>
-                            </div>
-                            <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
-                                <div class="h-full rounded-full bg-pick" style:width={scoreWidth(selectedRecommendation.personal_score)}></div>
-                            </div>
-                        </div>
-                        <div>
-                            <div class="mb-1 flex items-center justify-between text-xs">
-                                <span class="font-semibold text-muted-foreground">Technical</span>
-                                <span class="tabular-nums text-foreground">{formatScore(selectedRecommendation.technical_score)}</span>
-                            </div>
-                            <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
-                                <div class="h-full rounded-full bg-rating" style:width={scoreWidth(selectedRecommendation.technical_score)}></div>
-                            </div>
-                        </div>
-                    </div>
 
-                    <div class="mt-5 grid grid-cols-3 gap-2">
-                        <button
-                            class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-pick px-2 text-xs font-bold text-black transition-opacity hover:opacity-90"
-                            onclick={() => markSelected("pick")}
-                        >
-                            <Check size={14} />
-                            Pick
-                        </button>
-                        <button
-                            class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-secondary px-2 text-xs font-bold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            onclick={() => markSelected("none")}
-                        >
-                            <Circle size={14} />
-                            Clear
-                        </button>
-                        <button
-                            class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-reject px-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
-                            onclick={() => markSelected("reject")}
-                        >
-                            <XCircle size={14} />
-                            Reject
-                        </button>
-                    </div>
-
-                    <div class="mt-3 flex items-center gap-1">
-                        {#each [1, 2, 3, 4, 5] as rating}
+                        <div class="mt-5 grid grid-cols-3 gap-2">
                             <button
-                                class="grid h-8 flex-1 place-items-center rounded-md transition-colors {(selectedPhoto.rating ?? 0) >= rating ? 'bg-rating text-black' : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-rating'}"
-                                onclick={() => rateSelected((selectedPhoto.rating ?? 0) === rating ? 0 : rating)}
-                                title={`${rating} stars`}
+                                class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-pick px-2 text-xs font-bold text-black transition-opacity hover:opacity-90"
+                                onclick={() => markSelected("pick")}
                             >
-                                <Star size={14} fill="currentColor" />
+                                <Check size={14} />
+                                Pick
                             </button>
-                        {/each}
-                    </div>
-
-                    {#if activeCluster && activeCluster.photo_ids.length > 1}
-                        <button
-                            class="mt-4 inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
-                            onclick={() => acceptClusterWinner(activeCluster)}
-                        >
-                            <Trophy size={15} />
-                            Accept Cluster Winner
-                        </button>
-                    {/if}
-                {/if}
-
-                {#if rankedRecommendations.length > 0}
-                    <div class="mt-6">
-                        <div class="mb-2 flex items-center gap-2 text-xs font-bold uppercase text-foreground">
-                            <AlertTriangle size={13} class="text-rating" />
-                            Lowest Ranked
+                            <button
+                                class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-secondary px-2 text-xs font-bold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                onclick={() => markSelected("none")}
+                            >
+                                <Circle size={14} />
+                                Clear
+                            </button>
+                            <button
+                                class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-reject px-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
+                                onclick={() => markSelected("reject")}
+                            >
+                                <XCircle size={14} />
+                                Reject
+                            </button>
                         </div>
-                        <div class="space-y-1">
-                            {#each rankedRecommendations.slice(0, 7) as item (item.photo_id)}
-                                {@const photo = recommendationPhoto(item)}
-                                {#if photo}
-                                    <button
-                                        class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                                        onclick={() => selectPhoto(item.photo_id)}
-                                    >
-                                        <span class="min-w-0 flex-1 truncate">{photo.file_name}</span>
-                                        <span class="tabular-nums">{formatScore(item.final_score)}</span>
-                                    </button>
-                                {/if}
+
+                        <div class="mt-3 flex items-center gap-1">
+                            {#each [1, 2, 3, 4, 5] as rating}
+                                <button
+                                    class="grid h-8 flex-1 place-items-center rounded-md transition-colors {(selectedPhoto.rating ?? 0) >= rating ? 'bg-rating text-black' : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-rating'}"
+                                    onclick={() => rateSelected((selectedPhoto.rating ?? 0) === rating ? 0 : rating)}
+                                    title={`${rating} stars`}
+                                >
+                                    <Star size={14} fill="currentColor" />
+                                </button>
                             {/each}
                         </div>
+                    {/if}
+
+                    <div class="mt-6 space-y-3 border-t border-border pt-4">
+                        <label class="flex items-center gap-2 text-xs text-muted-foreground">
+                            Reject threshold
+                            <input
+                                class="min-w-0 flex-1 accent-primary"
+                                type="range"
+                                min="0.25"
+                                max="0.55"
+                                step="0.01"
+                                bind:value={rejectThreshold}
+                            />
+                            <span class="w-9 tabular-nums">{percent(rejectThreshold)}</span>
+                        </label>
+                        <button
+                            class="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-reject px-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
+                            onclick={applyRejectSuggestions}
+                            disabled={!session || rejectCandidates.length === 0}
+                        >
+                            <XCircle size={15} />
+                            Apply {rejectCandidates.length} Rejects
+                        </button>
                     </div>
-                {/if}
-            </aside>
+
+                    {#if rankedRecommendations.length > 0}
+                        <div class="mt-6">
+                            <div class="mb-2 flex items-center gap-2 text-xs font-bold uppercase text-foreground">
+                                <AlertTriangle size={13} class="text-rating" />
+                                Lowest Ranked
+                            </div>
+                            <div class="space-y-1">
+                                {#each rankedRecommendations.slice(0, 7) as item (item.photo_id)}
+                                    {@const photo = recommendationPhoto(item)}
+                                    {#if photo}
+                                        <button
+                                            class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                            onclick={() => selectPhoto(item.photo_id)}
+                                        >
+                                            <span class="min-w-0 flex-1 truncate">{photo.file_name}</span>
+                                            <span class="tabular-nums">{formatScore(item.final_score)}</span>
+                                        </button>
+                                    {/if}
+                                {/each}
+                            </div>
+                        </div>
+                    {/if}
+                </aside>
+            {/if}
         </div>
     {/if}
 </section>

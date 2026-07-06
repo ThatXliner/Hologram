@@ -25,6 +25,8 @@ use raw_preview::{
     convert_raw_preview_to_jpeg, generate_embedded_thumbnail, generate_thumbnail_with_info,
     is_raw_file, is_supported_file, render_raw_to_jpeg, EmbeddedJpegPreview,
 };
+#[cfg(not(target_env = "msvc"))]
+use rsraw::RawImage;
 
 /// Managed state holding the DnCNN ONNX session for AI denoising.
 pub struct DenoiseModel(Arc<Mutex<Option<Session>>>);
@@ -178,6 +180,121 @@ fn first_exif_ascii(value: &kamadak_exif::Value) -> Option<String> {
     }
 }
 
+fn clean_metadata_string(value: impl AsRef<str>) -> Option<String> {
+    let value = value
+        .as_ref()
+        .trim_matches(char::from(0))
+        .trim()
+        .to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn fill_missing<T>(target: &mut Option<T>, value: Option<T>) {
+    if target.is_none() {
+        *target = value;
+    }
+}
+
+fn format_shutter_speed(seconds: f32) -> Option<String> {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+
+    if seconds < 1.0 {
+        let denominator = (1.0 / seconds).round();
+        if denominator >= 1.0 {
+            return Some(format!("1/{denominator:.0} s"));
+        }
+    }
+
+    if (seconds.fract()).abs() < f32::EPSILON {
+        Some(format!("{seconds:.0} s"))
+    } else {
+        Some(format!("{seconds:.2} s"))
+    }
+}
+
+fn gps_parts_to_decimal(parts: [f32; 3]) -> Option<f64> {
+    if parts == [0.0, 0.0, 0.0] || parts.iter().any(|part| !part.is_finite()) {
+        return None;
+    }
+
+    let sign = if parts.iter().any(|part| *part < 0.0) {
+        -1.0
+    } else {
+        1.0
+    };
+    let degrees = f64::from(parts[0].abs());
+    let minutes = f64::from(parts[1].abs());
+    let seconds = f64::from(parts[2].abs());
+    Some(sign * (degrees + minutes / 60.0 + seconds / 3600.0))
+}
+
+#[cfg(not(target_env = "msvc"))]
+fn extract_raw_metadata(file_path: &Path) -> Result<ExifData> {
+    let raw_bytes = fs::read(file_path)?;
+    let raw_image = RawImage::open(&raw_bytes)?;
+    let info = raw_image.full_info();
+    let mut exif_data = ExifData::default();
+
+    exif_data.camera_make =
+        clean_metadata_string(&info.normalized_make).or_else(|| clean_metadata_string(&info.make));
+    exif_data.camera_model = clean_metadata_string(&info.normalized_model)
+        .or_else(|| clean_metadata_string(&info.model));
+    exif_data.lens_model = clean_metadata_string(&info.lens_info.lens_name);
+    exif_data.focal_length =
+        (info.focal_len.is_finite() && info.focal_len > 0.0).then_some(f64::from(info.focal_len));
+    exif_data.aperture =
+        (info.aperture.is_finite() && info.aperture > 0.0).then_some(f64::from(info.aperture));
+    exif_data.shutter_speed = format_shutter_speed(info.shutter);
+    exif_data.iso = (info.iso_speed > 0).then_some(info.iso_speed);
+    exif_data.date_taken = info.datetime.map(|datetime| datetime.with_timezone(&Utc));
+    exif_data.width = (info.width > 0).then_some(info.width);
+    exif_data.height = (info.height > 0).then_some(info.height);
+    exif_data.latitude = gps_parts_to_decimal(info.gps.latitude);
+    exif_data.longitude = gps_parts_to_decimal(info.gps.longitude);
+    if exif_data.latitude.is_some() && exif_data.longitude.is_some() {
+        exif_data.altitude = info
+            .gps
+            .altitude
+            .is_finite()
+            .then_some(f64::from(info.gps.altitude));
+    }
+
+    let exposure_seconds =
+        (info.shutter.is_finite() && info.shutter > 0.0).then_some(f64::from(info.shutter));
+    exif_data.ev100 = exposure_ev100(exif_data.aperture, exposure_seconds, exif_data.iso);
+
+    Ok(exif_data)
+}
+
+#[cfg(target_env = "msvc")]
+fn extract_raw_metadata(_file_path: &Path) -> Result<ExifData> {
+    Ok(ExifData::default())
+}
+
+fn merge_exif_data(target: &mut ExifData, fallback: ExifData) {
+    fill_missing(&mut target.camera_make, fallback.camera_make);
+    fill_missing(&mut target.camera_model, fallback.camera_model);
+    fill_missing(&mut target.lens_model, fallback.lens_model);
+    fill_missing(&mut target.focal_length, fallback.focal_length);
+    fill_missing(&mut target.aperture, fallback.aperture);
+    fill_missing(&mut target.shutter_speed, fallback.shutter_speed);
+    fill_missing(&mut target.iso, fallback.iso);
+    fill_missing(&mut target.exposure_mode, fallback.exposure_mode);
+    fill_missing(&mut target.flash, fallback.flash);
+    fill_missing(&mut target.white_balance, fallback.white_balance);
+    fill_missing(&mut target.date_taken, fallback.date_taken);
+    fill_missing(&mut target.exposure_bias, fallback.exposure_bias);
+    fill_missing(&mut target.ev100, fallback.ev100);
+    fill_missing(&mut target.latitude, fallback.latitude);
+    fill_missing(&mut target.longitude, fallback.longitude);
+    fill_missing(&mut target.altitude, fallback.altitude);
+    fill_missing(&mut target.width, fallback.width);
+    fill_missing(&mut target.height, fallback.height);
+    fill_missing(&mut target.orientation, fallback.orientation);
+}
+
 fn gps_coordinate(
     value: &kamadak_exif::Value,
     ref_value: Option<&kamadak_exif::Value>,
@@ -297,6 +414,12 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
                     exif_data.altitude = exif_data.altitude.map(|value| -value);
                 }
             }
+        }
+    }
+
+    if is_raw_file(file_path) {
+        if let Ok(raw_exif_data) = extract_raw_metadata(file_path) {
+            merge_exif_data(&mut exif_data, raw_exif_data);
         }
     }
 

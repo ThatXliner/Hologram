@@ -1,9 +1,9 @@
 <script lang="ts">
-    import { convertFileSrc } from "@tauri-apps/api/core";
     import { onDestroy, onMount, tick } from "svelte";
     import { photoStore, selectedIndex } from "../stores/photoStore.ts";
     import type { CullFlag, Photo } from "../types.ts";
-    import { Check, FileImage, ImageOff, Info, Star, XCircle } from "@lucide/svelte";
+    import { Check, FileImage, Info, Star, XCircle } from "@lucide/svelte";
+    import PhotoPreview from "./PhotoPreview.svelte";
 
     type GridDetails = "image" | "essentials" | "metadata";
     const DEFAULT_TILE_MIN_WIDTH = 220;
@@ -19,7 +19,6 @@
     let visibleCount = $state(initialVisibleCount(tileMinWidth));
     let sentinel: HTMLDivElement | undefined = $state();
     let gridEl: HTMLDivElement | undefined = $state();
-    let failedPreviewIds = $state<Set<string>>(new Set());
     let lastPhotoSetKey = $state("");
     let observer: IntersectionObserver | undefined;
 
@@ -65,35 +64,6 @@
     function openPhoto(index: number) {
         photoStore.setSelectedIndex(index);
         photoStore.setViewMode("viewer");
-    }
-
-    function getPreviewSrc(photo: Photo): string {
-        if (photo.thumbnail) {
-            const mime = photo.thumbnail.startsWith("iVBOR") ? "image/png" : "image/jpeg";
-            return `data:${mime};base64,${photo.thumbnail}`;
-        }
-        if (failedPreviewIds.has(photo.id)) return "";
-        if (canUseOriginalAsPreview(photo)) {
-            try {
-                return convertFileSrc(photo.file_path);
-            } catch {
-                return "";
-            }
-        }
-        return "";
-    }
-
-    function canUseOriginalAsPreview(photo: Photo): boolean {
-        return ["JPEG", "JPG", "PNG", "WEBP", "GIF"].includes(photo.file_type.toUpperCase());
-    }
-
-    function markPreviewFailed(photo: Photo) {
-        if (photo.thumbnail) return;
-        failedPreviewIds = new Set([...failedPreviewIds, photo.id]);
-    }
-
-    function getPlaceholderSrc(): string {
-        return "/placeholder-image.svg";
     }
 
     function formatAperture(aperture?: number): string {
@@ -293,7 +263,6 @@
 >
     <div class={gridClass()} style={`--grid-tile-min: ${normalizedTileMinWidth}px`}>
         {#each visiblePhotos as photo, i (photo.id)}
-            {@const previewSrc = getPreviewSrc(photo)}
             {@const embeddedPreview = embeddedPreviewInfo(photo)}
             <div
                 class={tileClass(photo, i)}
@@ -307,24 +276,7 @@
                 onkeydown={(event) => handleTileKeydown(event, i)}
             >
                 <div class="relative aspect-[3/2] overflow-hidden bg-black">
-                    {#if previewSrc}
-                        <img
-                            src={previewSrc}
-                            alt={photo.file_name}
-                            class="photo-preview-image h-full w-full bg-black object-contain"
-                            loading={i < 30 ? "eager" : "lazy"}
-                            decoding="async"
-                            onerror={() => markPreviewFailed(photo)}
-                        />
-                    {:else}
-                        <div class="grid h-full w-full place-items-center bg-secondary">
-                            <div class="flex flex-col items-center gap-2 text-muted-foreground">
-                                <ImageOff size={34} />
-                                <span class="text-xs">No preview</span>
-                            </div>
-                            <img src={getPlaceholderSrc()} alt="" class="hidden" />
-                        </div>
-                    {/if}
+                    <PhotoPreview photo={photo} fit="contain" eager={i < 30} iconSize={34} />
 
                     {#if detailMode === "metadata"}
                         <div class="absolute inset-x-0 top-0 flex items-start justify-between gap-2 p-2">

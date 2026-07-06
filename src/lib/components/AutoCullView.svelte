@@ -371,6 +371,51 @@
         return Circle;
     }
 
+    function normalizedFlag(photo: Photo | null | undefined): CullFlag {
+        return photo?.flag === "pick" || photo?.flag === "reject" ? photo.flag : "none";
+    }
+
+    function displayRecommendation(label: AutoCullLabel | undefined): string {
+        return label ? label.replace("_", " ").toLowerCase() : "unmarked";
+    }
+
+    function statusText(photo: Photo, recommendation: AutoCullPhoto | null | undefined): string {
+        const flag = normalizedFlag(photo);
+        const model = recommendation ? ` / model ${displayRecommendation(recommendation.recommendation)}` : "";
+        if (flag === "pick") return `PICK${model}`;
+        if (flag === "reject") return `REJECT${model}`;
+        if ((photo.rating ?? 0) > 0) return `${photo.rating} STAR${model}`;
+        return recommendation ? `Suggested ${displayRecommendation(recommendation.recommendation)}` : "Unmarked";
+    }
+
+    function statusClass(photo: Photo, recommendation: AutoCullPhoto | null | undefined): string {
+        const flag = normalizedFlag(photo);
+        if (flag === "pick") return "bg-pick text-black";
+        if (flag === "reject") return "bg-reject text-white";
+        if ((photo.rating ?? 0) > 0) return "bg-rating text-black";
+        return recommendation ? labelClass(recommendation.recommendation) : "bg-secondary text-muted-foreground";
+    }
+
+    function statusIcon(photo: Photo, recommendation: AutoCullPhoto | null | undefined) {
+        const flag = normalizedFlag(photo);
+        if (flag === "pick") return Check;
+        if (flag === "reject") return XCircle;
+        if ((photo.rating ?? 0) > 0) return Star;
+        return recommendation ? labelIcon(recommendation.recommendation) : Circle;
+    }
+
+    function recommendationRowClass(photo: Photo, selected: boolean): string {
+        const flag = normalizedFlag(photo);
+        if (selected) {
+            if (flag === "pick") return "bg-pick text-black";
+            if (flag === "reject") return "bg-reject text-white";
+            return "bg-primary text-primary-foreground";
+        }
+        if (flag === "pick") return "text-pick hover:bg-pick/15";
+        if (flag === "reject") return "text-reject hover:bg-reject/15";
+        return "text-muted-foreground hover:bg-accent hover:text-foreground";
+    }
+
     function scoreWidth(score: number): string {
         return `${Math.round(Math.max(0, Math.min(1, score)) * 100)}%`;
     }
@@ -531,13 +576,13 @@
                             {@const photo = recommendationPhoto(item)}
                             {#if photo}
                                 <button
-                                    class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {selectedPhotoId === item.photo_id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                    class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {recommendationRowClass(photo, selectedPhotoId === item.photo_id)}"
                                     data-autocull-photo-id={item.photo_id}
                                     onclick={() => selectPhoto(item.photo_id)}
                                 >
                                     <span class="min-w-0 flex-1">
                                         <span class="block truncate font-semibold">{photo.file_name}</span>
-                                        <span class="block truncate text-[10px] opacity-75">{item.recommendation.replace("_", " ")}</span>
+                                        <span class="block truncate text-[10px] opacity-75">{statusText(photo, item)}</span>
                                     </span>
                                     <span class="tabular-nums">{formatScore(item.final_score)}</span>
                                 </button>
@@ -565,12 +610,17 @@
                                 </div>
                             </div>
                             <div class="flex h-12 shrink-0 items-center gap-3 border-t border-white/10 bg-black/70 px-4">
-                                {#if selectedRecommendation}
-                                    {@const RecommendationIcon = labelIcon(selectedRecommendation.recommendation)}
-                                    <span class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold {labelClass(selectedRecommendation.recommendation)}">
-                                        <RecommendationIcon size={13} />
-                                        {selectedRecommendation.recommendation.replace("_", " ")}
+                                {#if selectedPhoto}
+                                    {@const StatusIcon = statusIcon(selectedPhoto, selectedRecommendation)}
+                                    <span class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold {statusClass(selectedPhoto, selectedRecommendation)}">
+                                        <StatusIcon size={13} />
+                                        {normalizedFlag(selectedPhoto) === "none" ? statusText(selectedPhoto, selectedRecommendation) : normalizedFlag(selectedPhoto).toUpperCase()}
                                     </span>
+                                    {#if selectedRecommendation && normalizedFlag(selectedPhoto) !== "none"}
+                                        <span class="truncate text-xs text-white/45">
+                                            Model {displayRecommendation(selectedRecommendation.recommendation)} / {formatScore(selectedRecommendation.final_score)}
+                                        </span>
+                                    {/if}
                                 {/if}
                                 <div class="min-w-0 flex-1"></div>
                                 <button
@@ -758,11 +808,14 @@
                                     {@const photo = recommendationPhoto(item)}
                                     {#if photo}
                                         <button
-                                            class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                                            class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {recommendationRowClass(photo, selectedPhotoId === item.photo_id)}"
                                             data-autocull-photo-id={item.photo_id}
                                             onclick={() => selectPhoto(item.photo_id)}
                                         >
-                                            <span class="min-w-0 flex-1 truncate">{photo.file_name}</span>
+                                            <span class="min-w-0 flex-1">
+                                                <span class="block truncate">{photo.file_name}</span>
+                                                <span class="block truncate text-[10px] opacity-70">{statusText(photo, item)}</span>
+                                            </span>
                                             <span class="tabular-nums">{formatScore(item.final_score)}</span>
                                         </button>
                                     {/if}

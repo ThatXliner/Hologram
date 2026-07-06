@@ -6,6 +6,7 @@
         Gauge,
         Loader2,
         PanelRightOpen,
+        Plus,
         RefreshCw,
         Rows3,
         Sparkles,
@@ -15,9 +16,17 @@
     } from "@lucide/svelte";
     import { tick } from "svelte";
     import {
+        DEFAULT_PREFERENCE_PROFILE_ID,
         addPairwisePreferences,
         buildAutoCullSession,
+        createPreferenceProfile,
+        loadActivePreferenceProfileId,
         loadPairwisePreferences,
+        loadPreferenceProfiles,
+        loadPreferenceRefinements,
+        recordPreferenceRefinement,
+        saveActivePreferenceProfileId,
+        type AutoCullPreferenceProfile,
     } from "../autocull.ts";
     import { HologramAPI } from "../api.ts";
     import { photoStore } from "../stores/photoStore.ts";
@@ -51,6 +60,9 @@
     let reviewMode = $state<"bursts" | "all">("bursts");
     let showDetails = $state(false);
     let analysisRun = 0;
+    let preferenceProfiles = $state<AutoCullPreferenceProfile[]>([]);
+    let activePreferenceProfileId = $state("default");
+    let preferenceProfileFolderPath = $state<string | null | undefined>(undefined);
 
     const photosById = $derived(new Map(photos.map((photo) => [photo.id, photo])));
     const allPhotosById = $derived(new Map(allPhotos.map((photo) => [photo.id, photo])));
@@ -114,6 +126,12 @@
     }
 
     $effect(() => {
+        photos.length;
+        photos[0]?.file_path;
+        loadPreferenceProfileState();
+    });
+
+    $effect(() => {
         const firstId = photos[0]?.id ?? null;
         if (!selectedPhotoId || !photosById.has(selectedPhotoId)) {
             setSelectedPhoto(firstId);
@@ -131,7 +149,9 @@
     });
 
     function analysisInputKey(): string {
-        return photos
+        return [
+            activePreferenceProfileId,
+            photos
             .map((photo) => [
                 photo.id,
                 photo.file_path,
@@ -139,7 +159,8 @@
                 photo.modified_at,
                 photo.thumbnail ? "t" : "n",
             ].join(":"))
-            .join("|");
+            .join("|"),
+        ].join("::");
     }
 
     async function runAnalysis() {
@@ -150,10 +171,17 @@
         progress = { current: 0, total: photos.length };
         try {
             const folderPath = HologramAPI.getActiveFolderPath();
-            const preferences = loadPairwisePreferences(folderPath);
-            const next = await buildAutoCullSession(photos, preferences, (nextProgress) => {
-                if (runId === analysisRun) progress = nextProgress;
-            });
+            const preferences = loadPairwisePreferences(folderPath, activePreferenceProfileId);
+            const refinements = loadPreferenceRefinements(folderPath, activePreferenceProfileId);
+            const next = await buildAutoCullSession(
+                photos,
+                preferences,
+                (nextProgress) => {
+                    if (runId === analysisRun) progress = nextProgress;
+                },
+                refinements,
+                activePreferenceProfileId === DEFAULT_PREFERENCE_PROFILE_ID,
+            );
             if (runId !== analysisRun) return;
             session = next;
             if (next.clusters.length === 0) reviewMode = "all";
@@ -171,6 +199,30 @@
         } finally {
             if (runId === analysisRun) isAnalyzing = false;
         }
+    }
+
+    function loadPreferenceProfileState() {
+        const folderPath = HologramAPI.getActiveFolderPath();
+        if (folderPath === preferenceProfileFolderPath && preferenceProfiles.length > 0) return;
+        preferenceProfileFolderPath = folderPath;
+        preferenceProfiles = loadPreferenceProfiles(folderPath);
+        activePreferenceProfileId = loadActivePreferenceProfileId(folderPath);
+    }
+
+    function setPreferenceProfile(profileId: string) {
+        if (!preferenceProfiles.some((profile) => profile.id === profileId)) return;
+        activePreferenceProfileId = profileId;
+        saveActivePreferenceProfileId(HologramAPI.getActiveFolderPath(), profileId);
+        status = "Profile changed";
+    }
+
+    function createProfile() {
+        const name = window.prompt("Preference profile name");
+        if (!name?.trim()) return;
+        const folderPath = HologramAPI.getActiveFolderPath();
+        const profile = createPreferenceProfile(folderPath, name);
+        preferenceProfiles = loadPreferenceProfiles(folderPath);
+        setPreferenceProfile(profile.id);
     }
 
     function selectCluster(cluster: AutoCullCluster) {
@@ -201,12 +253,28 @@
 
     function setFlag(photo: Photo, flag: CullFlag) {
         for (const id of relatedIds(photo)) {
+            const relatedPhoto = allPhotosById.get(id) ?? photosById.get(id) ?? photo;
+            recordPreferenceRefinement(
+                HologramAPI.getActiveFolderPath(),
+                activePreferenceProfileId,
+                id,
+                flag,
+                relatedPhoto.rating ?? 0,
+            );
             photoStore.setPhotoFlag(id, flag);
         }
     }
 
     function setRating(photo: Photo, rating: number) {
         for (const id of relatedIds(photo)) {
+            const relatedPhoto = allPhotosById.get(id) ?? photosById.get(id) ?? photo;
+            recordPreferenceRefinement(
+                HologramAPI.getActiveFolderPath(),
+                activePreferenceProfileId,
+                id,
+                relatedPhoto.flag ?? "none",
+                rating,
+            );
             photoStore.setPhotoRating(id, rating);
         }
     }
@@ -342,7 +410,7 @@
                 source: "cluster_winner",
                 created_at: new Date().toISOString(),
             }));
-        addPairwisePreferences(HologramAPI.getActiveFolderPath(), preferences);
+        addPairwisePreferences(HologramAPI.getActiveFolderPath(), preferences, activePreferenceProfileId);
         setFlag(winner, "pick");
         setRating(winner, Math.max(5, winner.rating ?? 0));
         status = "Winner saved";
@@ -481,6 +549,26 @@
         </div>
 
         <div class="ml-auto flex items-center gap-2">
+            <label class="flex h-8 items-center gap-1.5 rounded-md bg-secondary px-2 text-xs font-semibold text-muted-foreground">
+                <span>Profile</span>
+                <select
+                    class="h-6 max-w-36 bg-transparent text-foreground outline-none"
+                    value={activePreferenceProfileId}
+                    onchange={(event) => setPreferenceProfile(event.currentTarget.value)}
+                    aria-label="Preference profile"
+                >
+                    {#each preferenceProfiles as profile}
+                        <option value={profile.id}>{profile.name}</option>
+                    {/each}
+                </select>
+            </label>
+            <button
+                class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                onclick={createProfile}
+            >
+                <Plus size={14} />
+                New Profile
+            </button>
             <button
                 class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-3 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
                 onclick={runAnalysis}

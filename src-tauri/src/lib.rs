@@ -135,6 +135,12 @@ pub struct ExportResult {
     pub metadata_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XmpSidecarResult {
+    pub processed_count: usize,
+    pub skipped_count: usize,
+}
+
 fn first_exif_u32(value: &kamadak_exif::Value) -> Option<u32> {
     match value {
         kamadak_exif::Value::Byte(values) => values.first().map(|value| u32::from(*value)),
@@ -1056,6 +1062,14 @@ pub struct PhotoMetadata {
     pub flag: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct XmpMetadataPatch {
+    tags: Option<Vec<String>>,
+    notes: Option<String>,
+    rating: Option<u8>,
+    flag: Option<String>,
+}
+
 fn open_db(app: &AppHandle, folder_path: Option<&str>) -> Result<rusqlite::Connection, String> {
     let db_path = if let Some(folder_path) = folder_path.filter(|path| !path.trim().is_empty()) {
         let folder = Path::new(folder_path);
@@ -1189,6 +1203,90 @@ fn get_photo_metadata(
     }
 
     Ok(result)
+}
+
+#[tauri::command]
+async fn export_xmp_sidecars(photos: Vec<Photo>) -> Result<XmpSidecarResult, String> {
+    tokio::task::spawn_blocking(move || -> Result<XmpSidecarResult, String> {
+        let mut processed_count = 0usize;
+        let mut skipped_count = 0usize;
+
+        for photo in photos {
+            let photo_path = Path::new(&photo.file_path);
+            if !photo_path.is_file() {
+                skipped_count += 1;
+                continue;
+            }
+            let sidecar_path = xmp_sidecar_path(photo_path);
+            fs::write(&sidecar_path, lightroom_xmp(&photo)).map_err(|e| e.to_string())?;
+            processed_count += 1;
+        }
+
+        Ok(XmpSidecarResult {
+            processed_count,
+            skipped_count,
+        })
+    })
+    .await
+    .map_err(|e| format!("XMP export failed: {}", e))?
+}
+
+#[tauri::command]
+async fn import_xmp_sidecars(
+    app: AppHandle,
+    photos: Vec<Photo>,
+    folder_path: Option<String>,
+) -> Result<XmpSidecarResult, String> {
+    tokio::task::spawn_blocking(move || -> Result<XmpSidecarResult, String> {
+        let conn = open_db(&app, folder_path.as_deref())?;
+        let mut processed_count = 0usize;
+        let mut skipped_count = 0usize;
+
+        for photo in photos {
+            let sidecar_path = xmp_sidecar_path(Path::new(&photo.file_path));
+            if !sidecar_path.is_file() {
+                skipped_count += 1;
+                continue;
+            }
+            let contents = fs::read_to_string(&sidecar_path).map_err(|e| e.to_string())?;
+            let Some(patch) = parse_xmp_sidecar(&contents) else {
+                skipped_count += 1;
+                continue;
+            };
+
+            let existing = read_photo_metadata(&conn, &[photo.id.clone()])
+                .remove(&photo.id)
+                .unwrap_or(PhotoMetadata {
+                    tags: photo.tags.clone().unwrap_or_default(),
+                    notes: photo.notes.clone().unwrap_or_default(),
+                    rating: photo.rating.unwrap_or(0).min(5),
+                    flag: photo.flag.clone().unwrap_or_else(|| "none".to_string()),
+                });
+            let tags = patch.tags.unwrap_or(existing.tags);
+            let notes = patch.notes.unwrap_or(existing.notes);
+            let rating = patch.rating.unwrap_or(existing.rating).min(5);
+            let flag = patch.flag.unwrap_or(existing.flag);
+            let flag = match flag.as_str() {
+                "pick" | "reject" => flag,
+                _ => "none".to_string(),
+            };
+            let tags_json = serde_json::to_string(&tags).map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO photo_metadata (photo_id, tags, notes, rating, flag) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes, rating=excluded.rating, flag=excluded.flag",
+                rusqlite::params![photo.id, tags_json, notes, rating, flag],
+            )
+            .map_err(|e| e.to_string())?;
+            processed_count += 1;
+        }
+
+        Ok(XmpSidecarResult {
+            processed_count,
+            skipped_count,
+        })
+    })
+    .await
+    .map_err(|e| format!("XMP import failed: {}", e))?
 }
 
 fn sanitize_path_component(value: &str) -> String {
@@ -1367,6 +1465,136 @@ fn xml_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
+}
+
+fn xmp_sidecar_path(path: &Path) -> PathBuf {
+    match path.extension().and_then(|value| value.to_str()) {
+        Some(extension) if !extension.is_empty() => path.with_extension(format!("{extension}.xmp")),
+        _ => path.with_extension("xmp"),
+    }
+}
+
+fn xmp_attribute(contents: &str, name: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let needle = format!("{name}={quote}");
+        if let Some(start) = contents.find(&needle) {
+            let value_start = start + needle.len();
+            let value_end = contents[value_start..].find(quote)? + value_start;
+            return Some(xml_unescape(&contents[value_start..value_end]));
+        }
+    }
+    None
+}
+
+fn xmp_block<'a>(contents: &'a str, tag: &str) -> Option<&'a str> {
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let start = contents.find(&open)?;
+    let after_open = contents[start..].find('>')? + start + 1;
+    let end = contents[after_open..].find(&close)? + after_open;
+    Some(&contents[after_open..end])
+}
+
+fn rdf_li_values(block: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut rest = block;
+    while let Some(start) = rest.find("<rdf:li") {
+        let candidate = &rest[start..];
+        let Some(open_end) = candidate.find('>') else {
+            break;
+        };
+        let content_start = open_end + 1;
+        let Some(close_start) = candidate[content_start..].find("</rdf:li>") else {
+            break;
+        };
+        let value = xml_unescape(candidate[content_start..content_start + close_start].trim());
+        if !value.is_empty() {
+            values.push(value);
+        }
+        rest = &candidate[content_start + close_start + "</rdf:li>".len()..];
+    }
+    values
+}
+
+fn parse_xmp_sidecar(contents: &str) -> Option<XmpMetadataPatch> {
+    let mut patch = XmpMetadataPatch::default();
+    let mut touched = false;
+
+    if let Some(rating) = xmp_attribute(contents, "xmp:Rating")
+        .and_then(|value| value.parse::<u8>().ok())
+    {
+        patch.rating = Some(rating.min(5));
+        touched = true;
+    }
+
+    if let Some(label) = xmp_attribute(contents, "xmp:Label") {
+        patch.flag = Some(match label.trim().to_ascii_lowercase().as_str() {
+            "pick" | "select" | "selected" => "pick".to_string(),
+            "reject" | "rejected" => "reject".to_string(),
+            _ => "none".to_string(),
+        });
+        touched = true;
+    }
+
+    if let Some(subject) = xmp_block(contents, "dc:subject") {
+        patch.tags = Some(rdf_li_values(subject));
+        touched = true;
+    }
+
+    if let Some(description) = xmp_block(contents, "dc:description") {
+        if let Some(notes) = rdf_li_values(description).first() {
+            patch.notes = Some(notes.clone());
+            touched = true;
+        }
+    }
+
+    if touched {
+        Some(patch)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_rating_label_tags_and_notes_from_xmp() {
+        let patch = parse_xmp_sidecar(
+            r#"<?xpacket begin=""?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="4" xmp:Label="Pick">
+      <dc:subject xmlns:dc="http://purl.org/dc/elements/1.1/">
+        <rdf:Bag><rdf:li>portfolio</rdf:li><rdf:li>client &amp; edit</rdf:li></rdf:Bag>
+      </dc:subject>
+      <dc:description xmlns:dc="http://purl.org/dc/elements/1.1/">
+        <rdf:Alt><rdf:li xml:lang="x-default">Hero frame</rdf:li></rdf:Alt>
+      </dc:description>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>"#,
+        )
+        .expect("xmp patch");
+
+        assert_eq!(patch.rating, Some(4));
+        assert_eq!(patch.flag.as_deref(), Some("pick"));
+        assert_eq!(
+            patch.tags,
+            Some(vec!["portfolio".to_string(), "client & edit".to_string()])
+        );
+        assert_eq!(patch.notes.as_deref(), Some("Hero frame"));
+    }
 }
 
 fn metadata_csv(rows: &[(Photo, String)]) -> String {
@@ -1623,6 +1851,8 @@ pub fn run() {
             denoise_image,
             set_photo_metadata,
             get_photo_metadata,
+            export_xmp_sidecars,
+            import_xmp_sidecars,
             export_photos
         ])
         .run(tauri::generate_context!())

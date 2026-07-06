@@ -1,4 +1,5 @@
 export type CullFlag = "none" | "pick" | "reject";
+export type AutoCullLabel = "SELECT" | "MAYBE" | "REJECT" | "NEEDS_REVIEW";
 
 export interface EmbeddedJpegPreview {
   width: number;
@@ -146,6 +147,58 @@ export interface PhotoMetadata {
   notes: string;
   rating: number;
   flag: CullFlag;
+}
+
+export interface AutoCullPhoto {
+  photo_id: string;
+  cluster_id: string;
+  technical_score: number;
+  personal_score: number;
+  final_score: number;
+  behavior_signal: number;
+  recommendation: AutoCullLabel;
+  confidence: number;
+  embedding?: number[];
+  embedding_backend?: string;
+}
+
+export interface AutoCullCluster {
+  id: string;
+  kind: "burst" | "similar" | "single";
+  confidence: number;
+  photo_ids: string[];
+  top_pick_id: string;
+  start_time?: string;
+  end_time?: string;
+}
+
+export interface AutoCullPairwisePreference {
+  winner_photo_id: string;
+  loser_photo_id: string;
+  confidence: number;
+  source: "cluster_winner" | "manual";
+  created_at: string;
+}
+
+export interface AutoCullSession {
+  embedding_backend: string;
+  ranker_version: string;
+  generated_at: string;
+  photos: AutoCullPhoto[];
+  clusters: AutoCullCluster[];
+  stats: {
+    total: number;
+    indexed: number;
+    select: number;
+    maybe: number;
+    reject: number;
+    needs_review: number;
+  };
+}
+
+export interface XmpSidecarResult {
+  processed_count: number;
+  skipped_count: number;
 }
 
 export interface PhotoStats {

@@ -8,7 +8,7 @@
 **Hologram** is a pro-grade photo management application tailored for photographers who want total control over their files without being forced into bloated editing environments. Designed from the ground up to handle RAW+JPEG workflows, advanced EXIF-based filtering, and intelligent organization strategies, Hologram empowers users to manage and analyze their photography with precision.
 
 No cloud lock-in. No black-box automations. Just clean, local photo organization.
-Easy filtering for duplicates. Easily select for editing. Easily learn from your past photos.
+Easy filtering for duplicates. Easily select for editing. AutoCull learns locally from picks, rejects, ratings, and burst winner choices so first-pass culling gets faster without touching originals.
 
 Eventually I plan to expand it to normies, directly competing with Google Photos.
 
@@ -26,6 +26,10 @@ Eventually I plan to expand it to normies, directly competing with Google Photos
 |----------------------|-------------------|
 | ![RAW+JPEG paired viewer](screenshots/05-viewer-paired.png) | ![Adjustments/edit panel](screenshots/06-editor.png) |
 
+| AutoCull View |
+|---------------|
+| ![AutoCull ranking and cluster view](screenshots/07-autocull.png) |
+
 ## Roadmap
 
 See [here](https://github.com/ThatXliner/Hologram/issues/6)
@@ -34,7 +38,7 @@ See [here](https://github.com/ThatXliner/Hologram/issues/6)
 
 Hologram is for photographers who want clarity and control—who shoot in full manual, wrestle with dynamic range, and compare in-camera JPEGs to flat RAWs with clinical curiosity. Built for those who want easy access to their RAWs "just on the filesystem", Hologram provides a professional file-first view of your work.
 
-Organize by folder, EXIF, camera, or custom rules. Compare your technique over time. Track when you nailed a shot manually versus let the camera decide. Pair JPEG previews with RAW originals and see how your vision evolved.
+Organize by folder, EXIF, camera, or custom rules. Compare your technique over time. Track when you nailed a shot manually versus let the camera decide. Pair JPEG previews with RAW originals and see how your vision evolved. Use the AutoCull view to rank the current set with local hybrid visual embeddings, technical scoring, and behavior-aware recommendations.
 
 And most importantly: it never touches your files. Never. It's not an editing program and it never will be.
 

@@ -10,6 +10,7 @@
         selectedIndex,
     } from "../lib/stores/photoStore.ts";
     import PhotoGrid from "../lib/components/PhotoGrid.svelte";
+    import AutoCullView from "../lib/components/AutoCullView.svelte";
     import TimelineView from "../lib/components/TimelineView.svelte";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import PhotoViewer from "../lib/components/PhotoViewer.svelte";
@@ -39,7 +40,7 @@
     type CullFilter = "all" | CullFlag;
     type LegacyDensity = "compact" | "balanced" | "large" | "lightbox";
     type GridDetails = "image" | "essentials" | "metadata";
-    type LibraryView = "grid" | "timeline";
+    type LibraryView = "grid" | "timeline" | "autocull";
     const GRID_PREFERENCES_KEY = "hologram.gridPreferences";
     const GRID_ZOOM_STEPS = [120, 150, 180, 220, 270, 340, 430, 520] as const;
     const DEFAULT_GRID_ZOOM_LEVEL = 3;
@@ -562,6 +563,10 @@
                             <CalendarRange size={14} />
                             Timeline
                         </button>
+                        <button class={segmentClass(libraryView === "autocull")} onclick={() => (libraryView = "autocull")}>
+                            <Sparkles size={14} />
+                            AutoCull
+                        </button>
                     </div>
 
                     <div class="hidden min-w-[14rem] items-center gap-1 min-[1850px]:flex" aria-label="Saved search">
@@ -632,6 +637,8 @@
                     <div class="min-h-0 flex-1 overflow-y-auto bg-background">
                         {#if libraryView === "timeline"}
                             <TimelineView photos={$displayPhotos} tileMinWidth={gridTileSize} />
+                        {:else if libraryView === "autocull"}
+                            <AutoCullView photos={$displayPhotos} allPhotos={$photos} />
                         {:else}
                             <PhotoGrid photos={$displayPhotos} tileMinWidth={gridTileSize} detailMode={gridDetailMode} />
                         {/if}

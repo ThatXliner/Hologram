@@ -11,6 +11,7 @@ import type {
   PhotoStats,
   ScanResult,
   ThumbnailReady,
+  XmpSidecarResult,
 } from "./types.ts";
 
 export class HologramAPI {
@@ -206,6 +207,19 @@ export class HologramAPI {
       photos,
       allPhotos,
       options,
+    });
+  }
+
+  static async exportXmpSidecars(photos: Photo[]): Promise<XmpSidecarResult> {
+    return await invoke<XmpSidecarResult>("export_xmp_sidecars", {
+      photos,
+    });
+  }
+
+  static async importXmpSidecars(photos: Photo[]): Promise<XmpSidecarResult> {
+    return await invoke<XmpSidecarResult>("import_xmp_sidecars", {
+      photos,
+      folderPath: HologramAPI.activeFolderPath,
     });
   }
 }

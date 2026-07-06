@@ -20,7 +20,7 @@
     } from "../autocull.ts";
     import { HologramAPI } from "../api.ts";
     import { photoStore } from "../stores/photoStore.ts";
-    import PhotoPreview from "./PhotoPreview.svelte";
+    import PhotoPreviewCard from "./PhotoPreviewCard.svelte";
     import type {
         AutoCullCluster,
         AutoCullLabel,
@@ -410,7 +410,16 @@
                     {#if selectedPhoto}
                         <div class="flex h-full w-full flex-col">
                             <div class="grid min-h-0 flex-1 place-items-center p-4">
-                                <PhotoPreview photo={selectedPhoto} fit="contain" eager iconSize={42} fallbackLabel="No preview" />
+                                <div class="w-full max-w-5xl">
+                                    <PhotoPreviewCard
+                                        photo={selectedPhoto}
+                                        detailMode="metadata"
+                                        eager
+                                        selected
+                                        showControls={false}
+                                        containerClass="rounded-md border border-border shadow-lg"
+                                    />
+                                </div>
                             </div>
                             <div class="flex h-16 shrink-0 items-center gap-3 border-t border-white/10 bg-black/70 px-4">
                                 <div class="min-w-0 flex-1">
@@ -466,7 +475,14 @@
                                 onclick={() => selectPhoto(photo.id)}
                                 title={photo.file_name}
                             >
-                                <PhotoPreview photo={photo} fit="cover" fallbackLabel="" iconSize={20} />
+                                <PhotoPreviewCard
+                                    {photo}
+                                    detailMode="image"
+                                    fit="cover"
+                                    iconSize={20}
+                                    showControls={false}
+                                    containerClass="h-full w-full aspect-auto"
+                                />
                                 {#if recommendation}
                                     <span class="absolute bottom-1 right-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-white">
                                         {formatScore(recommendation.final_score)}

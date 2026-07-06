@@ -248,14 +248,6 @@
         return 2;
     }
 
-    function exposureSummary(photo: Photo): string {
-        return [
-            photo.exif.aperture ? `f/${photo.exif.aperture.toFixed(photo.exif.aperture % 1 === 0 ? 0 : 1)}` : "",
-            photo.exif.shutter_speed,
-            photo.exif.iso ? `ISO ${photo.exif.iso}` : "",
-        ].filter(Boolean).join("  ");
-    }
-
     function recommendationPhoto(item: AutoCullPhoto): Photo | undefined {
         return photosById.get(item.photo_id);
     }
@@ -421,16 +413,7 @@
                                     />
                                 </div>
                             </div>
-                            <div class="flex h-16 shrink-0 items-center gap-3 border-t border-white/10 bg-black/70 px-4">
-                                <div class="min-w-0 flex-1">
-                                    <div class="truncate text-sm font-semibold text-white">{selectedPhoto.file_name}</div>
-                                    <div class="truncate text-xs text-white/55">
-                                        {selectedPhoto.exif.camera_model ?? "Unknown camera"}
-                                        {#if exposureSummary(selectedPhoto)}
-                                            <span class="text-white/30"> / </span>{exposureSummary(selectedPhoto)}
-                                        {/if}
-                                    </div>
-                                </div>
+                            <div class="flex h-12 shrink-0 items-center gap-3 border-t border-white/10 bg-black/70 px-4">
                                 {#if selectedRecommendation}
                                     {@const RecommendationIcon = labelIcon(selectedRecommendation.recommendation)}
                                     <span class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold {labelClass(selectedRecommendation.recommendation)}">
@@ -438,6 +421,7 @@
                                         {selectedRecommendation.recommendation.replace("_", " ")}
                                     </span>
                                 {/if}
+                                <div class="min-w-0 flex-1"></div>
                                 <button
                                     class="hidden h-8 items-center justify-center gap-1.5 rounded-md bg-pick px-3 text-xs font-bold text-black transition-opacity hover:opacity-90 md:inline-flex"
                                     onclick={() => markSelected("pick")}

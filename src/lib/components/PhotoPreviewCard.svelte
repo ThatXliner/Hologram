@@ -4,6 +4,7 @@
     import PhotoPreview from "./PhotoPreview.svelte";
 
     type GridDetails = "image" | "essentials" | "metadata";
+    type PreviewQuality = "thumbnail" | "display";
     type EmbeddedPreview = NonNullable<Photo["embedded_jpeg_preview"]>;
 
     interface Props {
@@ -12,6 +13,7 @@
         eager?: boolean;
         fit?: "contain" | "cover";
         iconSize?: number;
+        previewQuality?: PreviewQuality;
         selected?: boolean;
         showControls?: boolean;
         containerClass?: string;
@@ -25,6 +27,7 @@
         eager = false,
         fit = "contain",
         iconSize = 34,
+        previewQuality = "thumbnail",
         selected = false,
         showControls = true,
         containerClass = "",
@@ -80,7 +83,7 @@
 </script>
 
 <div class="relative aspect-[3/2] overflow-hidden bg-black {containerClass}">
-    <PhotoPreview {photo} {fit} {eager} {iconSize} />
+    <PhotoPreview {photo} {fit} {eager} {iconSize} quality={previewQuality} />
 
     {#if detailMode === "metadata"}
         {@const embeddedPreview = embeddedPreviewInfo(photo)}

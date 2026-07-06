@@ -544,6 +544,7 @@
                                         photo={selectedPhoto}
                                         detailMode="metadata"
                                         eager
+                                        previewQuality="display"
                                         selected
                                         showControls={false}
                                         containerClass="rounded-md border border-border shadow-lg"
@@ -562,16 +563,20 @@
                                 <button
                                     class="hidden h-8 items-center justify-center gap-1.5 rounded-md bg-pick px-3 text-xs font-bold text-black transition-opacity hover:opacity-90 md:inline-flex"
                                     onclick={() => markSelected("pick")}
+                                    aria-keyshortcuts="P"
                                 >
                                     <Check size={14} />
                                     Pick
+                                    <kbd class="rounded bg-black/15 px-1.5 py-0.5 text-[10px] font-black leading-none">P</kbd>
                                 </button>
                                 <button
                                     class="hidden h-8 items-center justify-center gap-1.5 rounded-md bg-reject px-3 text-xs font-bold text-white transition-opacity hover:opacity-90 md:inline-flex"
                                     onclick={() => markSelected("reject")}
+                                    aria-keyshortcuts="X"
                                 >
                                     <XCircle size={14} />
                                     Reject
+                                    <kbd class="rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-black leading-none">X</kbd>
                                 </button>
                                 {#if reviewMode === "bursts" && activeCluster && activeCluster.photo_ids.length > 1}
                                     <button
@@ -665,34 +670,42 @@
                             <button
                                 class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-pick px-2 text-xs font-bold text-black transition-opacity hover:opacity-90"
                                 onclick={() => markSelected("pick")}
+                                aria-keyshortcuts="P"
                             >
                                 <Check size={14} />
                                 Pick
+                                <kbd class="rounded bg-black/15 px-1.5 py-0.5 text-[10px] font-black leading-none">P</kbd>
                             </button>
                             <button
                                 class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-secondary px-2 text-xs font-bold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                                onclick={() => markSelected("none")}
+                                onclick={clearSelectedCull}
+                                aria-keyshortcuts="U"
                             >
                                 <Circle size={14} />
                                 Clear
+                                <kbd class="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-black leading-none">U</kbd>
                             </button>
                             <button
                                 class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-reject px-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
                                 onclick={() => markSelected("reject")}
+                                aria-keyshortcuts="X"
                             >
                                 <XCircle size={14} />
                                 Reject
+                                <kbd class="rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-black leading-none">X</kbd>
                             </button>
                         </div>
 
                         <div class="mt-3 flex items-center gap-1">
                             {#each [1, 2, 3, 4, 5] as rating}
                                 <button
-                                    class="grid h-8 flex-1 place-items-center rounded-md transition-colors {(selectedPhoto.rating ?? 0) >= rating ? 'bg-rating text-black' : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-rating'}"
+                                    class="flex h-8 flex-1 items-center justify-center gap-1 rounded-md transition-colors {(selectedPhoto.rating ?? 0) >= rating ? 'bg-rating text-black' : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-rating'}"
                                     onclick={() => rateSelected((selectedPhoto.rating ?? 0) === rating ? 0 : rating)}
+                                    aria-keyshortcuts={`${rating}`}
                                     title={`${rating} stars`}
                                 >
                                     <Star size={14} fill="currentColor" />
+                                    <span class="text-[10px] font-black leading-none">{rating}</span>
                                 </button>
                             {/each}
                         </div>

@@ -23,7 +23,8 @@ use zip::{CompressionMethod, ZipWriter};
 mod raw_preview;
 use raw_preview::{
     convert_raw_preview_to_jpeg, generate_embedded_thumbnail, generate_thumbnail_with_info,
-    is_raw_file, is_supported_file, render_raw_to_jpeg, EmbeddedJpegPreview,
+    is_raw_file, is_supported_file, orient_image_to_jpeg_if_needed, render_raw_to_jpeg,
+    EmbeddedJpegPreview,
 };
 #[cfg(not(target_env = "msvc"))]
 use rsraw::RawImage;
@@ -588,6 +589,12 @@ fn is_browser_preview_file(path: &Path) -> bool {
         })
 }
 
+fn is_jpeg_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_lowercase().as_str(), "jpg" | "jpeg"))
+}
+
 fn load_full_resolution_image(file_path: &Path) -> Response {
     const RAW_VIEWER_PREVIEW_MAX_DIMENSION: u32 = 4096;
 
@@ -601,7 +608,14 @@ fn load_full_resolution_image(file_path: &Path) -> Response {
         return tauri::ipc::Response::new(data);
     }
 
-    // For JPEG/PNG/TIFF, send the original file bytes directly (true full res)
+    if is_jpeg_file(file_path) {
+        if let Ok(Some(data)) = orient_image_to_jpeg_if_needed(file_path) {
+            return tauri::ipc::Response::new(data);
+        }
+    }
+
+    // For images without a required orientation transform, send the original
+    // file bytes directly.
     let data = fs::read(file_path).unwrap_or_default();
     tauri::ipc::Response::new(data)
 }
@@ -1652,8 +1666,8 @@ fn parse_xmp_sidecar(contents: &str) -> Option<XmpMetadataPatch> {
     let mut patch = XmpMetadataPatch::default();
     let mut touched = false;
 
-    if let Some(rating) = xmp_attribute(contents, "xmp:Rating")
-        .and_then(|value| value.parse::<u8>().ok())
+    if let Some(rating) =
+        xmp_attribute(contents, "xmp:Rating").and_then(|value| value.parse::<u8>().ok())
     {
         patch.rating = Some(rating.min(5));
         touched = true;

@@ -146,6 +146,17 @@ pub fn generate_embedded_thumbnail(file_path: &Path) -> Option<String> {
         .map(|data| base64::engine::general_purpose::STANDARD.encode(data))
 }
 
+pub fn orient_image_to_jpeg_if_needed(file_path: &Path) -> Result<Option<Vec<u8>>> {
+    let orientation = read_exif_orientation(file_path);
+    if matches!(orientation.unwrap_or(1), 1) {
+        return Ok(None);
+    }
+
+    let image = image::open(file_path)?;
+    let image = apply_exif_orientation(image, orientation);
+    Ok(Some(encode_jpeg(&image, 95)?))
+}
+
 fn read_exif(file_path: &Path) -> Result<Exif> {
     let file = fs::File::open(file_path)?;
     let mut reader = std::io::BufReader::new(file);

@@ -24,6 +24,8 @@ static SUPPORTED_EXTENSIONS: &[&str] = &[
     "rwz", "sr2", "srf", "srw", "x3f",
 ];
 
+const RAW_PREVIEW_CACHE_VERSION: &str = "raw-preview-orientation-v2";
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct EmbeddedJpegPreview {
     pub width: u32,
@@ -236,6 +238,7 @@ fn raw_preview_cache_key(file_path: &Path, max_dimension: u32, cache_kind: &str)
     use std::hash::{Hash, Hasher};
 
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    RAW_PREVIEW_CACHE_VERSION.hash(&mut hasher);
     cache_kind.hash(&mut hasher);
     file_path.hash(&mut hasher);
     if let Ok(meta) = fs::metadata(file_path) {
@@ -321,7 +324,9 @@ fn extract_largest_embedded_jpeg_preview(file_path: &Path) -> Result<EmbeddedJpe
 fn extract_embedded_raw_preview(file_path: &Path, max_dimension: u32) -> Result<RawPreview> {
     let preview = extract_largest_embedded_jpeg_preview(file_path)?;
     let image = image::load_from_memory(&preview.data)?;
-    let image = apply_exif_orientation(image, read_exif_orientation_from_bytes(&preview.data));
+    let orientation = read_exif_orientation_from_bytes(&preview.data)
+        .or_else(|| read_exif_orientation(file_path));
+    let image = apply_exif_orientation(image, orientation);
     Ok(RawPreview {
         data: bounded_jpeg_from_image(image, max_dimension)?,
         embedded_jpeg_preview: Some(preview.info),

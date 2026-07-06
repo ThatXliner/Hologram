@@ -15,6 +15,7 @@
  *   04-viewer.png           — full-screen photo viewer with EXIF sidebar
  *   05-viewer-paired.png    — viewer showing RAW+JPEG toggle
  *   06-editor.png           — image editor with tone curve and sliders
+ *   07-autocull.png         — AutoCull ranking and cluster view
  */
 
 import { chromium, type BrowserContext, type Page } from "playwright";
@@ -278,6 +279,8 @@ async function installTauriMock(
                     if (cmd === "apply_edits_and_save") return "/tmp/edited.jpg";
                     if (cmd === "set_photo_metadata") return null;
                     if (cmd === "get_photo_metadata") return {};
+                    if (cmd === "export_xmp_sidecars") return { processed_count: payload.photos.length, skipped_count: 0 };
+                    if (cmd === "import_xmp_sidecars") return { processed_count: 0, skipped_count: payload.photos.length };
                     if (cmd === "load_full_resolution_image_command") {
                         // Return a tiny valid image buffer
                         return new ArrayBuffer(0);
@@ -297,6 +300,7 @@ async function installTauriMock(
             (window as unknown as Record<string, unknown>).__TAURI_EVENT_PLUGIN_INTERNALS__ = {
                 unregisterListener: () => {},
             };
+            (window as unknown as Record<string, unknown>).__HOLOGRAM_DISABLE_TRANSFORMER_EMBEDDINGS__ = true;
 
             // If we want pre-loaded photos, seed the store after the app mounts
             if (payload.withPhotos) {
@@ -700,6 +704,43 @@ async function scenarioEditor(ctx: BrowserContext): Promise<void> {
     await page.close();
 }
 
+/**
+ * 07. autocull — The AutoCull view with local ranking, clusters, and
+ *    score breakdowns generated from the seeded thumbnails and metadata.
+ */
+async function scenarioAutoCull(ctx: BrowserContext): Promise<void> {
+    const page = await ctx.newPage();
+    await page.setViewportSize(VIEWPORT);
+    await installTauriMock(page, { withPhotos: true });
+    await page.goto(BASE_URL);
+    await page.waitForTimeout(300);
+
+    await page.evaluate(
+        (payload) => {
+            const store = (window as any).__photoStore__;
+            if (store) {
+                store.setPhotos(payload.photos);
+                store.setStats(payload.stats);
+            }
+        },
+        { photos: MOCK_PHOTOS, stats: MOCK_STATS },
+    );
+    await page.waitForTimeout(1000);
+
+    const autoCullButton = page.getByRole("button", { name: /AutoCull/i });
+    if (await autoCullButton.isVisible()) {
+        await autoCullButton.click();
+    }
+    await page.locator("[data-autocull-view]").waitFor({ state: "visible", timeout: 15_000 });
+    await page.waitForFunction(() => {
+        const view = document.querySelector("[data-autocull-view]");
+        return view?.textContent?.includes("indexed") || view?.textContent?.includes("fallback");
+    }, null, { timeout: 15_000 }).catch(() => {});
+    await page.waitForTimeout(700);
+    await shot(page, "07-autocull");
+    await page.close();
+}
+
 // ── Main ──────────────────────────────────────────────────────────────────────
 
 async function main(): Promise<void> {
@@ -749,6 +790,7 @@ async function main(): Promise<void> {
         await scenarioViewer(context);
         await scenarioViewerPaired(context);
         await scenarioEditor(context);
+        await scenarioAutoCull(context);
         if (significantChanges) {
             console.log(`\nDone. Screenshots saved to ./${OUT_DIR}/`);
         } else {

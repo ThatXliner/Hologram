@@ -1,7 +1,8 @@
 <script lang="ts">
-    import { Archive, Check, Download, FolderDown, Loader2 } from "@lucide/svelte";
+    import { Archive, Check, Download, FolderDown, Loader2, Upload } from "@lucide/svelte";
     import { HologramAPI } from "../api.ts";
-    import type { ExportOptions, ExportResult, Photo } from "../types.ts";
+    import { photoStore } from "../stores/photoStore.ts";
+    import type { ExportOptions, ExportResult, Photo, XmpSidecarResult } from "../types.ts";
 
     interface Props {
         photos: Photo[];
@@ -16,8 +17,11 @@
     let includeMetadata = $state(true);
     let renamePattern = $state("");
     let isExporting = $state(false);
+    let xmpBusy = $state<"export" | "import" | null>(null);
     let result = $state<ExportResult | null>(null);
+    let xmpResult = $state<XmpSidecarResult | null>(null);
     let error = $state<string | null>(null);
+    let xmpError = $state<string | null>(null);
 
     const selectClass = "h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/40";
 
@@ -41,6 +45,33 @@
             error = String(err);
         } finally {
             isExporting = false;
+        }
+    }
+
+    async function exportOriginalXmp() {
+        xmpBusy = "export";
+        xmpResult = null;
+        xmpError = null;
+        try {
+            xmpResult = await HologramAPI.exportXmpSidecars(allPhotos);
+        } catch (err) {
+            xmpError = String(err);
+        } finally {
+            xmpBusy = null;
+        }
+    }
+
+    async function importOriginalXmp() {
+        xmpBusy = "import";
+        xmpResult = null;
+        xmpError = null;
+        try {
+            xmpResult = await HologramAPI.importXmpSidecars(allPhotos);
+            await photoStore.loadMetadata(allPhotos.map((photo) => photo.id));
+        } catch (err) {
+            xmpError = String(err);
+        } finally {
+            xmpBusy = null;
         }
     }
 </script>
@@ -113,6 +144,35 @@
             {/if}
         </button>
 
+        <div class="grid grid-cols-2 gap-2">
+            <button
+                class="flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={xmpBusy !== null || allPhotos.length === 0}
+                onclick={exportOriginalXmp}
+                title="Export XMP sidecars beside original files"
+            >
+                {#if xmpBusy === "export"}
+                    <Loader2 size={13} class="animate-spin" />
+                {:else}
+                    <Download size={13} />
+                {/if}
+                XMP Out
+            </button>
+            <button
+                class="flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                disabled={xmpBusy !== null || allPhotos.length === 0}
+                onclick={importOriginalXmp}
+                title="Import XMP sidecars beside original files"
+            >
+                {#if xmpBusy === "import"}
+                    <Loader2 size={13} class="animate-spin" />
+                {:else}
+                    <Upload size={13} />
+                {/if}
+                XMP In
+            </button>
+        </div>
+
         {#if result}
             <div class="rounded-md border border-border bg-card p-2 text-xs text-muted-foreground">
                 <div class="mb-1 flex items-center gap-1.5 font-semibold text-foreground">
@@ -126,6 +186,20 @@
             </div>
         {:else if error}
             <div class="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{error}</div>
+        {/if}
+
+        {#if xmpResult}
+            <div class="rounded-md border border-border bg-card p-2 text-xs text-muted-foreground">
+                <div class="mb-1 flex items-center gap-1.5 font-semibold text-foreground">
+                    <Check size={13} class="text-pick" />
+                    {xmpResult.processed_count} sidecars processed
+                </div>
+                {#if xmpResult.skipped_count > 0}
+                    <div class="text-muted-foreground">{xmpResult.skipped_count} skipped</div>
+                {/if}
+            </div>
+        {:else if xmpError}
+            <div class="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{xmpError}</div>
         {/if}
     </div>
 </section>

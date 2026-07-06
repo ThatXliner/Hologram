@@ -14,8 +14,10 @@ jobs:
     if: "!startsWith(github.ref, 'refs/tags/v')"
     strategy:
       matrix:
-        os: [ubuntu-latest, macos-latest, windows-latest]
+        os: [ubuntu-latest, macos-15, windows-latest]
     runs-on: ${{ matrix.os }}
+    env:
+      ORT_CACHE_DIR: ${{ github.workspace }}/.cache/ort
     defaults:
       run:
         shell: bash
@@ -37,19 +39,31 @@ jobs:
           sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
 
       - name: Install libvips (macOS only)
-        if: matrix.os == 'macos-latest'
+        if: startsWith(matrix.os, 'macos-')
         run: brew install vips
 
       - name: Install dependencies
         run: bun install
+
+      - name: ONNX Runtime cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/ort
+          key: ${{ runner.os }}-ort-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ort-
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
         with:
           workspaces: "./src-tauri -> target"
 
+      - name: Refresh ONNX Runtime build metadata
+        working-directory: src-tauri
+        run: cargo clean -p ort-sys
+
       - name: Build the app
-        run: bun run tauri build
+        run: bun run tauri build --ci --config src-tauri/tauri.ci.conf.json
 
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
@@ -69,7 +83,7 @@ jobs:
       fail-fast: false
       matrix:
         include:
-          - platform: "macos-latest"
+          - platform: "macos-15"
             args: "--target aarch64-apple-darwin"
           - platform: "ubuntu-latest"
             args: ""
@@ -80,6 +94,7 @@ jobs:
     env:
       APPLE_ID: ${{ secrets.APPLE_ID }}
       APPLE_PASSWORD: ${{ secrets.APPLE_PASSWORD }}
+      ORT_CACHE_DIR: ${{ github.workspace }}/.cache/ort
     steps:
       - name: Checkout repository
         uses: actions/checkout@v4
@@ -100,7 +115,7 @@ jobs:
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@stable
         with:
-          targets: ${{ matrix.platform == 'macos-latest' && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
+          targets: ${{ startsWith(matrix.platform, 'macos-') && 'aarch64-apple-darwin,x86_64-apple-darwin' || '' }}
 
       - name: Rust cache
         uses: swatinem/rust-cache@v2
@@ -109,14 +124,26 @@ jobs:
           cache-on-failure: true
 
       - name: Install libvips (macOS only)
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos-')
         run: brew install vips
 
       - name: Install frontend dependencies
         run: bun install
 
+      - name: ONNX Runtime cache
+        uses: actions/cache@v4
+        with:
+          path: .cache/ort
+          key: ${{ runner.os }}-ort-${{ hashFiles('src-tauri/Cargo.lock') }}
+          restore-keys: |
+            ${{ runner.os }}-ort-
+
+      - name: Refresh ONNX Runtime build metadata
+        working-directory: src-tauri
+        run: cargo clean -p ort-sys
+
       - name: Import Apple Developer Certificate
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos-')
         env:
           APPLE_CERTIFICATE: ${{ secrets.APPLE_CERTIFICATE }}
           APPLE_CERTIFICATE_PASSWORD: ${{ secrets.APPLE_CERTIFICATE_PASSWORD }}
@@ -132,7 +159,7 @@ jobs:
           security find-identity -v -p codesigning build.keychain
 
       - name: Verify Certificate
-        if: matrix.platform == 'macos-latest'
+        if: startsWith(matrix.platform, 'macos-')
         run: |
           CERT_INFO=$(security find-identity -v -p codesigning build.keychain | grep "Developer ID Application")
           CERT_ID=$(echo "$CERT_INFO" | awk -F'"' '{print $2}')

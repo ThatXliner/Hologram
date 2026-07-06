@@ -22,9 +22,12 @@ use zip::{CompressionMethod, ZipWriter};
 
 mod raw_preview;
 use raw_preview::{
-    convert_raw_preview_to_jpeg, generate_embedded_thumbnail, generate_thumbnail_with_info,
-    is_raw_file, is_supported_file, render_raw_to_jpeg, EmbeddedJpegPreview,
+    convert_raw_display_preview_to_jpeg, generate_embedded_thumbnail, generate_thumbnail_with_info,
+    is_raw_file, is_supported_file, orient_image_to_jpeg_if_needed, render_raw_to_jpeg,
+    EmbeddedJpegPreview,
 };
+#[cfg(not(target_env = "msvc"))]
+use rsraw::RawImage;
 
 /// Managed state holding the DnCNN ONNX session for AI denoising.
 pub struct DenoiseModel(Arc<Mutex<Option<Session>>>);
@@ -135,6 +138,12 @@ pub struct ExportResult {
     pub metadata_path: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct XmpSidecarResult {
+    pub processed_count: usize,
+    pub skipped_count: usize,
+}
+
 fn first_exif_u32(value: &kamadak_exif::Value) -> Option<u32> {
     match value {
         kamadak_exif::Value::Byte(values) => values.first().map(|value| u32::from(*value)),
@@ -170,6 +179,121 @@ fn first_exif_ascii(value: &kamadak_exif::Value) -> Option<String> {
         }),
         _ => None,
     }
+}
+
+fn clean_metadata_string(value: impl AsRef<str>) -> Option<String> {
+    let value = value
+        .as_ref()
+        .trim_matches(char::from(0))
+        .trim()
+        .to_string();
+    (!value.is_empty()).then_some(value)
+}
+
+fn fill_missing<T>(target: &mut Option<T>, value: Option<T>) {
+    if target.is_none() {
+        *target = value;
+    }
+}
+
+fn format_shutter_speed(seconds: f32) -> Option<String> {
+    if !seconds.is_finite() || seconds <= 0.0 {
+        return None;
+    }
+
+    if seconds < 1.0 {
+        let denominator = (1.0 / seconds).round();
+        if denominator >= 1.0 {
+            return Some(format!("1/{denominator:.0} s"));
+        }
+    }
+
+    if (seconds.fract()).abs() < f32::EPSILON {
+        Some(format!("{seconds:.0} s"))
+    } else {
+        Some(format!("{seconds:.2} s"))
+    }
+}
+
+fn gps_parts_to_decimal(parts: [f32; 3]) -> Option<f64> {
+    if parts == [0.0, 0.0, 0.0] || parts.iter().any(|part| !part.is_finite()) {
+        return None;
+    }
+
+    let sign = if parts.iter().any(|part| *part < 0.0) {
+        -1.0
+    } else {
+        1.0
+    };
+    let degrees = f64::from(parts[0].abs());
+    let minutes = f64::from(parts[1].abs());
+    let seconds = f64::from(parts[2].abs());
+    Some(sign * (degrees + minutes / 60.0 + seconds / 3600.0))
+}
+
+#[cfg(not(target_env = "msvc"))]
+fn extract_raw_metadata(file_path: &Path) -> Result<ExifData> {
+    let raw_bytes = fs::read(file_path)?;
+    let raw_image = RawImage::open(&raw_bytes)?;
+    let info = raw_image.full_info();
+    let mut exif_data = ExifData::default();
+
+    exif_data.camera_make =
+        clean_metadata_string(&info.normalized_make).or_else(|| clean_metadata_string(&info.make));
+    exif_data.camera_model = clean_metadata_string(&info.normalized_model)
+        .or_else(|| clean_metadata_string(&info.model));
+    exif_data.lens_model = clean_metadata_string(&info.lens_info.lens_name);
+    exif_data.focal_length =
+        (info.focal_len.is_finite() && info.focal_len > 0.0).then_some(f64::from(info.focal_len));
+    exif_data.aperture =
+        (info.aperture.is_finite() && info.aperture > 0.0).then_some(f64::from(info.aperture));
+    exif_data.shutter_speed = format_shutter_speed(info.shutter);
+    exif_data.iso = (info.iso_speed > 0).then_some(info.iso_speed);
+    exif_data.date_taken = info.datetime.map(|datetime| datetime.with_timezone(&Utc));
+    exif_data.width = (info.width > 0).then_some(info.width);
+    exif_data.height = (info.height > 0).then_some(info.height);
+    exif_data.latitude = gps_parts_to_decimal(info.gps.latitude);
+    exif_data.longitude = gps_parts_to_decimal(info.gps.longitude);
+    if exif_data.latitude.is_some() && exif_data.longitude.is_some() {
+        exif_data.altitude = info
+            .gps
+            .altitude
+            .is_finite()
+            .then_some(f64::from(info.gps.altitude));
+    }
+
+    let exposure_seconds =
+        (info.shutter.is_finite() && info.shutter > 0.0).then_some(f64::from(info.shutter));
+    exif_data.ev100 = exposure_ev100(exif_data.aperture, exposure_seconds, exif_data.iso);
+
+    Ok(exif_data)
+}
+
+#[cfg(target_env = "msvc")]
+fn extract_raw_metadata(_file_path: &Path) -> Result<ExifData> {
+    Ok(ExifData::default())
+}
+
+fn merge_exif_data(target: &mut ExifData, fallback: ExifData) {
+    fill_missing(&mut target.camera_make, fallback.camera_make);
+    fill_missing(&mut target.camera_model, fallback.camera_model);
+    fill_missing(&mut target.lens_model, fallback.lens_model);
+    fill_missing(&mut target.focal_length, fallback.focal_length);
+    fill_missing(&mut target.aperture, fallback.aperture);
+    fill_missing(&mut target.shutter_speed, fallback.shutter_speed);
+    fill_missing(&mut target.iso, fallback.iso);
+    fill_missing(&mut target.exposure_mode, fallback.exposure_mode);
+    fill_missing(&mut target.flash, fallback.flash);
+    fill_missing(&mut target.white_balance, fallback.white_balance);
+    fill_missing(&mut target.date_taken, fallback.date_taken);
+    fill_missing(&mut target.exposure_bias, fallback.exposure_bias);
+    fill_missing(&mut target.ev100, fallback.ev100);
+    fill_missing(&mut target.latitude, fallback.latitude);
+    fill_missing(&mut target.longitude, fallback.longitude);
+    fill_missing(&mut target.altitude, fallback.altitude);
+    fill_missing(&mut target.width, fallback.width);
+    fill_missing(&mut target.height, fallback.height);
+    fill_missing(&mut target.orientation, fallback.orientation);
 }
 
 fn gps_coordinate(
@@ -291,6 +415,12 @@ fn extract_exif_data(file_path: &Path) -> Result<ExifData> {
                     exif_data.altitude = exif_data.altitude.map(|value| -value);
                 }
             }
+        }
+    }
+
+    if is_raw_file(file_path) {
+        if let Ok(raw_exif_data) = extract_raw_metadata(file_path) {
+            merge_exif_data(&mut exif_data, raw_exif_data);
         }
     }
 
@@ -459,20 +589,32 @@ fn is_browser_preview_file(path: &Path) -> bool {
         })
 }
 
+fn is_jpeg_file(path: &Path) -> bool {
+    path.extension()
+        .and_then(|ext| ext.to_str())
+        .is_some_and(|ext| matches!(ext.to_lowercase().as_str(), "jpg" | "jpeg"))
+}
+
 fn load_full_resolution_image(file_path: &Path) -> Response {
-    const RAW_VIEWER_PREVIEW_MAX_DIMENSION: u32 = 4096;
+    const RAW_VIEWER_PREVIEW_MAX_DIMENSION: u32 = 8192;
 
     // For RAW files, prefer the camera's embedded JPEG preview. A full LibRaw
     // render is still available to editing/export paths, but it is too slow for
     // every viewer navigation and preload.
     if is_raw_file(file_path) {
-        let data = convert_raw_preview_to_jpeg(file_path, RAW_VIEWER_PREVIEW_MAX_DIMENSION)
-            .map(|preview| preview.data)
+        let data = convert_raw_display_preview_to_jpeg(file_path, RAW_VIEWER_PREVIEW_MAX_DIMENSION)
             .unwrap_or_default();
         return tauri::ipc::Response::new(data);
     }
 
-    // For JPEG/PNG/TIFF, send the original file bytes directly (true full res)
+    if is_jpeg_file(file_path) {
+        if let Ok(Some(data)) = orient_image_to_jpeg_if_needed(file_path) {
+            return tauri::ipc::Response::new(data);
+        }
+    }
+
+    // For images without a required orientation transform, send the original
+    // file bytes directly.
     let data = fs::read(file_path).unwrap_or_default();
     tauri::ipc::Response::new(data)
 }
@@ -1056,6 +1198,14 @@ pub struct PhotoMetadata {
     pub flag: String,
 }
 
+#[derive(Debug, Clone, Default)]
+struct XmpMetadataPatch {
+    tags: Option<Vec<String>>,
+    notes: Option<String>,
+    rating: Option<u8>,
+    flag: Option<String>,
+}
+
 fn open_db(app: &AppHandle, folder_path: Option<&str>) -> Result<rusqlite::Connection, String> {
     let db_path = if let Some(folder_path) = folder_path.filter(|path| !path.trim().is_empty()) {
         let folder = Path::new(folder_path);
@@ -1189,6 +1339,90 @@ fn get_photo_metadata(
     }
 
     Ok(result)
+}
+
+#[tauri::command]
+async fn export_xmp_sidecars(photos: Vec<Photo>) -> Result<XmpSidecarResult, String> {
+    tokio::task::spawn_blocking(move || -> Result<XmpSidecarResult, String> {
+        let mut processed_count = 0usize;
+        let mut skipped_count = 0usize;
+
+        for photo in photos {
+            let photo_path = Path::new(&photo.file_path);
+            if !photo_path.is_file() {
+                skipped_count += 1;
+                continue;
+            }
+            let sidecar_path = xmp_sidecar_path(photo_path);
+            fs::write(&sidecar_path, lightroom_xmp(&photo)).map_err(|e| e.to_string())?;
+            processed_count += 1;
+        }
+
+        Ok(XmpSidecarResult {
+            processed_count,
+            skipped_count,
+        })
+    })
+    .await
+    .map_err(|e| format!("XMP export failed: {}", e))?
+}
+
+#[tauri::command]
+async fn import_xmp_sidecars(
+    app: AppHandle,
+    photos: Vec<Photo>,
+    folder_path: Option<String>,
+) -> Result<XmpSidecarResult, String> {
+    tokio::task::spawn_blocking(move || -> Result<XmpSidecarResult, String> {
+        let conn = open_db(&app, folder_path.as_deref())?;
+        let mut processed_count = 0usize;
+        let mut skipped_count = 0usize;
+
+        for photo in photos {
+            let sidecar_path = xmp_sidecar_path(Path::new(&photo.file_path));
+            if !sidecar_path.is_file() {
+                skipped_count += 1;
+                continue;
+            }
+            let contents = fs::read_to_string(&sidecar_path).map_err(|e| e.to_string())?;
+            let Some(patch) = parse_xmp_sidecar(&contents) else {
+                skipped_count += 1;
+                continue;
+            };
+
+            let existing = read_photo_metadata(&conn, &[photo.id.clone()])
+                .remove(&photo.id)
+                .unwrap_or(PhotoMetadata {
+                    tags: photo.tags.clone().unwrap_or_default(),
+                    notes: photo.notes.clone().unwrap_or_default(),
+                    rating: photo.rating.unwrap_or(0).min(5),
+                    flag: photo.flag.clone().unwrap_or_else(|| "none".to_string()),
+                });
+            let tags = patch.tags.unwrap_or(existing.tags);
+            let notes = patch.notes.unwrap_or(existing.notes);
+            let rating = patch.rating.unwrap_or(existing.rating).min(5);
+            let flag = patch.flag.unwrap_or(existing.flag);
+            let flag = match flag.as_str() {
+                "pick" | "reject" => flag,
+                _ => "none".to_string(),
+            };
+            let tags_json = serde_json::to_string(&tags).map_err(|e| e.to_string())?;
+            conn.execute(
+                "INSERT INTO photo_metadata (photo_id, tags, notes, rating, flag) VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes, rating=excluded.rating, flag=excluded.flag",
+                rusqlite::params![photo.id, tags_json, notes, rating, flag],
+            )
+            .map_err(|e| e.to_string())?;
+            processed_count += 1;
+        }
+
+        Ok(XmpSidecarResult {
+            processed_count,
+            skipped_count,
+        })
+    })
+    .await
+    .map_err(|e| format!("XMP import failed: {}", e))?
 }
 
 fn sanitize_path_component(value: &str) -> String {
@@ -1367,6 +1601,136 @@ fn xml_escape(value: &str) -> String {
         .replace('>', "&gt;")
         .replace('"', "&quot;")
         .replace('\'', "&apos;")
+}
+
+fn xml_unescape(value: &str) -> String {
+    value
+        .replace("&apos;", "'")
+        .replace("&quot;", "\"")
+        .replace("&gt;", ">")
+        .replace("&lt;", "<")
+        .replace("&amp;", "&")
+}
+
+fn xmp_sidecar_path(path: &Path) -> PathBuf {
+    match path.extension().and_then(|value| value.to_str()) {
+        Some(extension) if !extension.is_empty() => path.with_extension(format!("{extension}.xmp")),
+        _ => path.with_extension("xmp"),
+    }
+}
+
+fn xmp_attribute(contents: &str, name: &str) -> Option<String> {
+    for quote in ['"', '\''] {
+        let needle = format!("{name}={quote}");
+        if let Some(start) = contents.find(&needle) {
+            let value_start = start + needle.len();
+            let value_end = contents[value_start..].find(quote)? + value_start;
+            return Some(xml_unescape(&contents[value_start..value_end]));
+        }
+    }
+    None
+}
+
+fn xmp_block<'a>(contents: &'a str, tag: &str) -> Option<&'a str> {
+    let open = format!("<{tag}");
+    let close = format!("</{tag}>");
+    let start = contents.find(&open)?;
+    let after_open = contents[start..].find('>')? + start + 1;
+    let end = contents[after_open..].find(&close)? + after_open;
+    Some(&contents[after_open..end])
+}
+
+fn rdf_li_values(block: &str) -> Vec<String> {
+    let mut values = Vec::new();
+    let mut rest = block;
+    while let Some(start) = rest.find("<rdf:li") {
+        let candidate = &rest[start..];
+        let Some(open_end) = candidate.find('>') else {
+            break;
+        };
+        let content_start = open_end + 1;
+        let Some(close_start) = candidate[content_start..].find("</rdf:li>") else {
+            break;
+        };
+        let value = xml_unescape(candidate[content_start..content_start + close_start].trim());
+        if !value.is_empty() {
+            values.push(value);
+        }
+        rest = &candidate[content_start + close_start + "</rdf:li>".len()..];
+    }
+    values
+}
+
+fn parse_xmp_sidecar(contents: &str) -> Option<XmpMetadataPatch> {
+    let mut patch = XmpMetadataPatch::default();
+    let mut touched = false;
+
+    if let Some(rating) =
+        xmp_attribute(contents, "xmp:Rating").and_then(|value| value.parse::<u8>().ok())
+    {
+        patch.rating = Some(rating.min(5));
+        touched = true;
+    }
+
+    if let Some(label) = xmp_attribute(contents, "xmp:Label") {
+        patch.flag = Some(match label.trim().to_ascii_lowercase().as_str() {
+            "pick" | "select" | "selected" => "pick".to_string(),
+            "reject" | "rejected" => "reject".to_string(),
+            _ => "none".to_string(),
+        });
+        touched = true;
+    }
+
+    if let Some(subject) = xmp_block(contents, "dc:subject") {
+        patch.tags = Some(rdf_li_values(subject));
+        touched = true;
+    }
+
+    if let Some(description) = xmp_block(contents, "dc:description") {
+        if let Some(notes) = rdf_li_values(description).first() {
+            patch.notes = Some(notes.clone());
+            touched = true;
+        }
+    }
+
+    if touched {
+        Some(patch)
+    } else {
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn parses_rating_label_tags_and_notes_from_xmp() {
+        let patch = parse_xmp_sidecar(
+            r#"<?xpacket begin=""?>
+<x:xmpmeta xmlns:x="adobe:ns:meta/">
+  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
+    <rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="4" xmp:Label="Pick">
+      <dc:subject xmlns:dc="http://purl.org/dc/elements/1.1/">
+        <rdf:Bag><rdf:li>portfolio</rdf:li><rdf:li>client &amp; edit</rdf:li></rdf:Bag>
+      </dc:subject>
+      <dc:description xmlns:dc="http://purl.org/dc/elements/1.1/">
+        <rdf:Alt><rdf:li xml:lang="x-default">Hero frame</rdf:li></rdf:Alt>
+      </dc:description>
+    </rdf:Description>
+  </rdf:RDF>
+</x:xmpmeta>"#,
+        )
+        .expect("xmp patch");
+
+        assert_eq!(patch.rating, Some(4));
+        assert_eq!(patch.flag.as_deref(), Some("pick"));
+        assert_eq!(
+            patch.tags,
+            Some(vec!["portfolio".to_string(), "client & edit".to_string()])
+        );
+        assert_eq!(patch.notes.as_deref(), Some("Hero frame"));
+    }
 }
 
 fn metadata_csv(rows: &[(Photo, String)]) -> String {
@@ -1623,6 +1987,8 @@ pub fn run() {
             denoise_image,
             set_photo_metadata,
             get_photo_metadata,
+            export_xmp_sidecars,
+            import_xmp_sidecars,
             export_photos
         ])
         .run(tauri::generate_context!())

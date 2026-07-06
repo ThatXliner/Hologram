@@ -121,13 +121,26 @@
     });
 
     $effect(() => {
-        const key = photos
-            .map((photo) => `${photo.id}:${photo.thumbnail ? "t" : "n"}:${photo.rating ?? 0}:${photo.flag ?? "none"}:${photo.tags?.join(",") ?? ""}`)
-            .join("|");
+        const key = analysisInputKey();
         if (!key || key === lastAnalysisKey) return;
-        lastAnalysisKey = key;
-        void runAnalysis();
+        const timeout = window.setTimeout(() => {
+            lastAnalysisKey = key;
+            void runAnalysis();
+        }, 350);
+        return () => window.clearTimeout(timeout);
     });
+
+    function analysisInputKey(): string {
+        return photos
+            .map((photo) => [
+                photo.id,
+                photo.file_path,
+                photo.file_size,
+                photo.modified_at,
+                photo.thumbnail ? "t" : "n",
+            ].join(":"))
+            .join("|");
+    }
 
     async function runAnalysis() {
         if (photos.length === 0) return;

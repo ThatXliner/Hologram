@@ -22,7 +22,7 @@ use zip::{CompressionMethod, ZipWriter};
 
 mod raw_preview;
 use raw_preview::{
-    convert_raw_preview_to_jpeg, generate_embedded_thumbnail, generate_thumbnail_with_info,
+    convert_raw_display_preview_to_jpeg, generate_embedded_thumbnail, generate_thumbnail_with_info,
     is_raw_file, is_supported_file, orient_image_to_jpeg_if_needed, render_raw_to_jpeg,
     EmbeddedJpegPreview,
 };
@@ -596,14 +596,13 @@ fn is_jpeg_file(path: &Path) -> bool {
 }
 
 fn load_full_resolution_image(file_path: &Path) -> Response {
-    const RAW_VIEWER_PREVIEW_MAX_DIMENSION: u32 = 4096;
+    const RAW_VIEWER_PREVIEW_MAX_DIMENSION: u32 = 8192;
 
     // For RAW files, prefer the camera's embedded JPEG preview. A full LibRaw
     // render is still available to editing/export paths, but it is too slow for
     // every viewer navigation and preload.
     if is_raw_file(file_path) {
-        let data = convert_raw_preview_to_jpeg(file_path, RAW_VIEWER_PREVIEW_MAX_DIMENSION)
-            .map(|preview| preview.data)
+        let data = convert_raw_display_preview_to_jpeg(file_path, RAW_VIEWER_PREVIEW_MAX_DIMENSION)
             .unwrap_or_default();
         return tauri::ipc::Response::new(data);
     }

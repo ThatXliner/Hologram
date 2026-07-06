@@ -6,6 +6,8 @@
     import type { Photo } from "../types.ts";
 
     type PreviewQuality = "thumbnail" | "display";
+    const MAX_DISPLAY_PREVIEW_CACHE_SIZE = 12;
+    const displayPreviewUrlCache = new Map<string, string>();
 
     interface Props {
         photo: Photo;
@@ -29,8 +31,8 @@
     let displaySrc = $state("");
     let displayPhotoId = $state<string | null>(null);
     let failedDisplayPhotoId = $state<string | null>(null);
+    let loadingDisplayPhotoId = $state<string | null>(null);
     let displayRequestId = 0;
-    let displayObjectUrl: string | null = null;
 
     const fallbackSrc = $derived(failedPhotoId === photo.id ? "" : photoPreviewSrc(photo));
     const src = $derived(
@@ -39,11 +41,15 @@
             : fallbackSrc,
     );
     const fitClass = $derived(fit === "cover" ? "object-cover" : "object-contain");
+    const isLoadingDisplaySrc = $derived(
+        quality === "display" && loadingDisplayPhotoId === photo.id && displayPhotoId !== photo.id,
+    );
 
     $effect(() => {
         const photoId = photo.id;
         const filePath = photo.file_path;
         const fileType = photo.file_type;
+        const cacheKey = displayPreviewCacheKey(photo);
         const shouldLoadDisplay = quality === "display";
         failedPhotoId = null;
         failedDisplayPhotoId = null;
@@ -53,7 +59,7 @@
             return;
         }
 
-        void loadDisplayPreview(photoId, filePath, fileType);
+        void loadDisplayPreview(photoId, filePath, fileType, cacheKey);
     });
 
     onDestroy(() => {
@@ -70,28 +76,51 @@
         return "image/jpeg";
     }
 
+    function displayPreviewCacheKey(item: Photo): string {
+        return `${item.id}:${item.modified_at}:${item.file_size}`;
+    }
+
     function clearDisplayPreview() {
-        displayRequestId += 1;
-        if (displayObjectUrl) URL.revokeObjectURL(displayObjectUrl);
-        displayObjectUrl = null;
         displaySrc = "";
         displayPhotoId = null;
+        loadingDisplayPhotoId = null;
     }
 
     function setDisplayPreview(photoId: string, url: string) {
-        if (displayObjectUrl) URL.revokeObjectURL(displayObjectUrl);
-        displayObjectUrl = url;
         displaySrc = url;
         displayPhotoId = photoId;
+        loadingDisplayPhotoId = null;
     }
 
-    async function loadDisplayPreview(photoId: string, filePath: string, fileType: string) {
+    function cacheDisplayPreview(cacheKey: string, url: string) {
+        const existing = displayPreviewUrlCache.get(cacheKey);
+        if (existing) URL.revokeObjectURL(existing);
+        displayPreviewUrlCache.set(cacheKey, url);
+
+        while (displayPreviewUrlCache.size > MAX_DISPLAY_PREVIEW_CACHE_SIZE) {
+            const oldestKey = displayPreviewUrlCache.keys().next().value;
+            if (!oldestKey) break;
+            const oldestUrl = displayPreviewUrlCache.get(oldestKey);
+            if (oldestUrl) URL.revokeObjectURL(oldestUrl);
+            displayPreviewUrlCache.delete(oldestKey);
+        }
+    }
+
+    async function loadDisplayPreview(photoId: string, filePath: string, fileType: string, cacheKey: string) {
         const requestId = ++displayRequestId;
+        const cachedUrl = displayPreviewUrlCache.get(cacheKey);
+        if (cachedUrl) {
+            setDisplayPreview(photoId, cachedUrl);
+            return;
+        }
+
+        loadingDisplayPhotoId = photoId;
         try {
             const imageData = await HologramAPI.loadFullResolutionImage(filePath);
             if (requestId !== displayRequestId || photo.id !== photoId || quality !== "display") return;
             if (imageData.byteLength === 0) {
                 failedDisplayPhotoId = photoId;
+                loadingDisplayPhotoId = null;
                 clearDisplayPreview();
                 return;
             }
@@ -102,10 +131,12 @@
                 URL.revokeObjectURL(nextUrl);
                 return;
             }
+            cacheDisplayPreview(cacheKey, nextUrl);
             setDisplayPreview(photoId, nextUrl);
         } catch {
             if (requestId === displayRequestId && photo.id === photoId) {
                 failedDisplayPhotoId = photoId;
+                loadingDisplayPhotoId = null;
                 clearDisplayPreview();
             }
         }
@@ -124,14 +155,21 @@
 </script>
 
 {#if src}
-    <img
-        src={src}
-        alt={photo.file_name}
-        class="photo-preview-image h-full w-full bg-black {fitClass}"
-        loading={eager ? "eager" : "lazy"}
-        decoding="async"
-        onerror={markFailed}
-    />
+    <div class="relative h-full w-full bg-black">
+        <img
+            src={src}
+            alt={photo.file_name}
+            class="photo-preview-image h-full w-full bg-black {fitClass}"
+            loading={eager ? "eager" : "lazy"}
+            decoding="async"
+            onerror={markFailed}
+        />
+        {#if isLoadingDisplaySrc}
+            <div class="pointer-events-none absolute inset-x-0 top-0 h-0.5 overflow-hidden bg-black/40">
+                <div class="h-full w-1/2 animate-pulse rounded-full bg-primary"></div>
+            </div>
+        {/if}
+    </div>
 {:else}
     <div class="grid h-full w-full place-items-center bg-secondary">
         <div class="flex flex-col items-center gap-2 text-muted-foreground">

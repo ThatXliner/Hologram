@@ -97,6 +97,33 @@ pub fn convert_raw_preview_to_jpeg(_file_path: &Path, _max_dimension: u32) -> Re
     anyhow::bail!("RAW preview rendering is not supported on MSVC builds")
 }
 
+#[cfg(not(target_env = "msvc"))]
+pub fn convert_raw_display_preview_to_jpeg(
+    file_path: &Path,
+    max_dimension: u32,
+) -> Result<Vec<u8>> {
+    let cache_dir = raw_preview_cache_dir();
+    let cache_key = raw_preview_cache_key(file_path, max_dimension, "display");
+    let cache_path = cache_dir.join(&cache_key);
+
+    if let Some(data) = read_cached_jpeg(&cache_path) {
+        return Ok(data);
+    }
+
+    let data = extract_raw_display_preview(file_path, max_dimension)
+        .or_else(|_| render_raw_with_libraw(file_path, max_dimension))?;
+    write_cached_jpeg(&cache_path, &data);
+    Ok(data)
+}
+
+#[cfg(target_env = "msvc")]
+pub fn convert_raw_display_preview_to_jpeg(
+    _file_path: &Path,
+    _max_dimension: u32,
+) -> Result<Vec<u8>> {
+    anyhow::bail!("RAW display preview rendering is not supported on MSVC builds")
+}
+
 /// Render RAW pixels through LibRaw. This is intentionally separate from the
 /// preview path so editing/exporting can request a true render without being
 /// served a cached embedded JPEG preview.
@@ -342,6 +369,21 @@ fn extract_embedded_raw_preview(file_path: &Path, max_dimension: u32) -> Result<
         data: bounded_jpeg_from_image(image, max_dimension)?,
         embedded_jpeg_preview: Some(preview.info),
     })
+}
+
+#[cfg(not(target_env = "msvc"))]
+fn extract_raw_display_preview(file_path: &Path, max_dimension: u32) -> Result<Vec<u8>> {
+    let preview = extract_largest_embedded_jpeg_preview(file_path)?;
+    let orientation = read_exif_orientation_from_bytes(&preview.data)
+        .or_else(|| read_exif_orientation(file_path));
+
+    if matches!(orientation.unwrap_or(1), 1) {
+        return Ok(preview.data);
+    }
+
+    let image = image::load_from_memory(&preview.data)?;
+    let image = apply_exif_orientation(image, orientation);
+    bounded_jpeg_from_image(image, max_dimension)
 }
 
 #[cfg(not(target_env = "msvc"))]

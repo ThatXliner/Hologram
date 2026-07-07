@@ -202,6 +202,7 @@
         preferenceProfileFolderPath = folderPath;
         preferenceProfiles = loadPreferenceProfiles(folderPath);
         activePreferenceProfileId = loadActivePreferenceProfileId(folderPath);
+        loadConfirmedSignatures(folderPath);
     }
 
     function setPreferenceProfile(profileId: string) {
@@ -426,6 +427,8 @@
                 }
             }
             addPairwisePreferences(HologramAPI.getActiveFolderPath(), preferences, activePreferenceProfileId);
+            confirmedSignatures = new Set([...confirmedSignatures, clusterSignature(cluster)]);
+            persistConfirmedSignatures();
         }
         status = winners.length
             ? `Trained on ${winners.length} keeper${winners.length > 1 ? "s" : ""}`
@@ -525,12 +528,48 @@
         if (next) selectCluster(next);
     }
 
-    // A cluster is "resolved" once you've chosen a keeper (a manual pick) within it.
+    // A cluster is "kept" once you've chosen a keeper (a manual pick) within it,
+    // and "confirmed" once you've hit Confirm to train the model on it.
     function clusterHasPick(cluster: AutoCullCluster): boolean {
         return cluster.photo_ids.some((id) => photosById.get(id)?.flag === "pick");
     }
 
+    // "Confirmed" is keyed on the cluster's photo set (sorted ids), not the volatile
+    // cluster id, so the marker survives re-analysis and is persisted per folder.
+    function clusterSignature(cluster: AutoCullCluster): string {
+        return [...cluster.photo_ids].sort().join("|");
+    }
+
+    function confirmedStorageKey(folderPath: string | null | undefined): string {
+        return `hologram.autocull.confirmed:${folderPath ?? "none"}`;
+    }
+
+    let confirmedSignatures = $state<Set<string>>(new Set());
+
+    function loadConfirmedSignatures(folderPath: string | null | undefined) {
+        try {
+            const raw = localStorage.getItem(confirmedStorageKey(folderPath));
+            confirmedSignatures = new Set(raw ? (JSON.parse(raw) as string[]) : []);
+        } catch {
+            confirmedSignatures = new Set();
+        }
+    }
+
+    function persistConfirmedSignatures() {
+        try {
+            localStorage.setItem(
+                confirmedStorageKey(HologramAPI.getActiveFolderPath()),
+                JSON.stringify([...confirmedSignatures]),
+            );
+        } catch {
+            /* storage unavailable — keep the in-memory set */
+        }
+    }
+
     const resolvedClusterCount = $derived(clusterList.filter(clusterHasPick).length);
+    const confirmedClusterCount = $derived(
+        clusterList.filter((cluster) => confirmedSignatures.has(clusterSignature(cluster))).length,
+    );
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -693,21 +732,24 @@
 
                 {#if reviewMode === "bursts" && clusterList.length > 1}
                     <div class="mt-auto">
-                        {@render deckLabel(`Clusters · ${resolvedClusterCount}/${clusterList.length} picked`)}
+                        {@render deckLabel(`Clusters · ${resolvedClusterCount} kept · ${confirmedClusterCount} trained`)}
                         <div class="flex gap-1.5 overflow-x-auto pb-1">
                             {#each clusterList as cluster, index (cluster.id)}
                                 {@const top = photosById.get(cluster.top_pick_id)}
                                 {@const isActive = cluster.id === activeCluster?.id}
-                                {@const resolved = clusterHasPick(cluster)}
+                                {@const kept = clusterHasPick(cluster)}
+                                {@const confirmed = confirmedSignatures.has(clusterSignature(cluster))}
                                 <button
-                                    class="relative h-[62px] w-[92px] shrink-0 overflow-hidden rounded-[3px] transition-all {isActive ? 'outline outline-2 -outline-offset-2 outline-primary' : resolved ? 'border border-pick/40 opacity-40 hover:opacity-70' : 'border border-border opacity-70 hover:opacity-100'}"
+                                    class="relative h-[62px] w-[92px] shrink-0 overflow-hidden rounded-[3px] border transition-all {isActive ? 'border-transparent opacity-100 outline outline-2 -outline-offset-2 outline-primary' : kept ? 'border-border opacity-35 hover:opacity-70' : 'border-border opacity-80 hover:opacity-100'}"
                                     onclick={() => selectCluster(cluster)}
-                                    title={`Cluster ${index + 1} · ${clusterTitle(cluster)} · ${cluster.photo_ids.length} frames${resolved ? " · pick chosen" : ""}`}
+                                    title={`Cluster ${index + 1} · ${clusterTitle(cluster)} · ${cluster.photo_ids.length} frames${confirmed ? " · trained" : kept ? " · kept, not confirmed" : ""}`}
                                 >
                                     {#if top}<PhotoPreviewCard photo={top} detailMode="image" fit="cover" iconSize={14} showControls={false} containerClass="h-full w-full aspect-auto" />{/if}
                                     <span class="absolute left-1 top-1 rounded bg-black/60 px-1 font-mono text-[8px] text-white/90">{index + 1}</span>
-                                    {#if resolved}
-                                        <span class="absolute right-1 top-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-pick text-[8px] font-bold text-black" title="pick chosen"><Check size={9} /></span>
+                                    {#if confirmed}
+                                        <span class="absolute right-1 top-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-pick text-black" title="trained — keepers fed the model"><Check size={9} /></span>
+                                    {:else if kept}
+                                        <span class="absolute right-1 top-1 grid h-3.5 w-3.5 place-items-center rounded-full border border-white/50 bg-black/50 text-white/80" title="kept · not confirmed"><Check size={9} /></span>
                                     {:else}
                                         <span class="absolute bottom-0.5 right-1 font-mono text-[8px] text-white/80">{cluster.photo_ids.length}</span>
                                     {/if}

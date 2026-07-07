@@ -8,7 +8,6 @@
         RefreshCw,
         Sparkles,
         Star,
-        Trophy,
         XCircle,
     } from "@lucide/svelte";
     import { tick } from "svelte";
@@ -392,25 +391,46 @@
         }
     }
 
-    function acceptClusterWinner(cluster: AutoCullCluster | null = activeCluster) {
+    function clusterFlag(id: string): CullFlag {
+        return normalizedFlag(allPhotosById.get(id) ?? photosById.get(id));
+    }
+
+    // Shortcut: keep the AI's recommended frame as one of the cluster's keepers.
+    function acceptAiPick(cluster: AutoCullCluster | null = activeCluster) {
         if (!cluster) return;
         const winner = allPhotosById.get(cluster.top_pick_id) ?? photosById.get(cluster.top_pick_id);
         if (!winner) return;
-
-        const preferences: AutoCullPairwisePreference[] = cluster.photo_ids
-            .filter((id) => id !== cluster.top_pick_id)
-            .map((loserId) => ({
-                winner_photo_id: cluster.top_pick_id,
-                loser_photo_id: loserId,
-                confidence: 1,
-                source: "cluster_winner",
-                created_at: new Date().toISOString(),
-            }));
-        addPairwisePreferences(HologramAPI.getActiveFolderPath(), preferences, activePreferenceProfileId);
         setFlag(winner, "pick");
         setRating(winner, Math.max(5, winner.rating ?? 0));
-        status = "Winner saved";
-        void runAnalysis();
+        setSelectedPhoto(winner.id);
+        status = "AI pick kept";
+    }
+
+    // Confirm the cluster: train the taste model that every keeper (pick) beats every
+    // discarded frame — supports multiple keepers — then advance to the next cluster.
+    function confirmCluster(cluster: AutoCullCluster | null = activeCluster) {
+        if (!cluster) return;
+        const winners = cluster.photo_ids.filter((id) => clusterFlag(id) === "pick");
+        const losers = cluster.photo_ids.filter((id) => clusterFlag(id) !== "pick");
+        if (winners.length > 0 && losers.length > 0) {
+            const preferences: AutoCullPairwisePreference[] = [];
+            for (const winnerId of winners) {
+                for (const loserId of losers) {
+                    preferences.push({
+                        winner_photo_id: winnerId,
+                        loser_photo_id: loserId,
+                        confidence: 1,
+                        source: "cluster_winner",
+                        created_at: new Date().toISOString(),
+                    });
+                }
+            }
+            addPairwisePreferences(HologramAPI.getActiveFolderPath(), preferences, activePreferenceProfileId);
+        }
+        status = winners.length
+            ? `Trained on ${winners.length} keeper${winners.length > 1 ? "s" : ""}`
+            : "No keepers picked yet";
+        stepCluster(1);
     }
 
     function applyRejectSuggestions() {
@@ -504,6 +524,13 @@
         const next = clusterList[Math.max(0, Math.min(clusterList.length - 1, activeClusterIndex + delta))];
         if (next) selectCluster(next);
     }
+
+    // A cluster is "resolved" once you've chosen a keeper (a manual pick) within it.
+    function clusterHasPick(cluster: AutoCullCluster): boolean {
+        return cluster.photo_ids.some((id) => photosById.get(id)?.flag === "pick");
+    }
+
+    const resolvedClusterCount = $derived(clusterList.filter(clusterHasPick).length);
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -666,19 +693,24 @@
 
                 {#if reviewMode === "bursts" && clusterList.length > 1}
                     <div class="mt-auto">
-                        {@render deckLabel(`Clusters · ${clusterList.length}`)}
+                        {@render deckLabel(`Clusters · ${resolvedClusterCount}/${clusterList.length} picked`)}
                         <div class="flex gap-1.5 overflow-x-auto pb-1">
                             {#each clusterList as cluster, index (cluster.id)}
                                 {@const top = photosById.get(cluster.top_pick_id)}
                                 {@const isActive = cluster.id === activeCluster?.id}
+                                {@const resolved = clusterHasPick(cluster)}
                                 <button
-                                    class="relative h-[62px] w-[92px] shrink-0 overflow-hidden rounded-[3px] transition-all {isActive ? 'outline outline-2 -outline-offset-2 outline-primary' : 'border border-border opacity-70 hover:opacity-100'}"
+                                    class="relative h-[62px] w-[92px] shrink-0 overflow-hidden rounded-[3px] transition-all {isActive ? 'outline outline-2 -outline-offset-2 outline-primary' : resolved ? 'border border-pick/40 opacity-40 hover:opacity-70' : 'border border-border opacity-70 hover:opacity-100'}"
                                     onclick={() => selectCluster(cluster)}
-                                    title={`Cluster ${index + 1} · ${clusterTitle(cluster)} · ${cluster.photo_ids.length} frames`}
+                                    title={`Cluster ${index + 1} · ${clusterTitle(cluster)} · ${cluster.photo_ids.length} frames${resolved ? " · pick chosen" : ""}`}
                                 >
                                     {#if top}<PhotoPreviewCard photo={top} detailMode="image" fit="cover" iconSize={14} showControls={false} containerClass="h-full w-full aspect-auto" />{/if}
                                     <span class="absolute left-1 top-1 rounded bg-black/60 px-1 font-mono text-[8px] text-white/90">{index + 1}</span>
-                                    <span class="absolute bottom-0.5 right-1 font-mono text-[8px] text-white/80">{cluster.photo_ids.length}</span>
+                                    {#if resolved}
+                                        <span class="absolute right-1 top-1 grid h-3.5 w-3.5 place-items-center rounded-full bg-pick text-[8px] font-bold text-black" title="pick chosen"><Check size={9} /></span>
+                                    {:else}
+                                        <span class="absolute bottom-0.5 right-1 font-mono text-[8px] text-white/80">{cluster.photo_ids.length}</span>
+                                    {/if}
                                 </button>
                             {/each}
                         </div>
@@ -732,9 +764,9 @@
             {/if}
 
             <div class="grid grid-cols-3 gap-2">
-                <button class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-pick px-2 text-xs font-bold text-black transition-opacity hover:opacity-90" onclick={() => markSelected("pick")} aria-keyshortcuts="P"><Check size={14} />Pick</button>
+                <button class="inline-flex h-9 items-center justify-center gap-1 rounded-md px-2 text-xs font-bold transition-opacity hover:opacity-90 {normalizedFlag(selectedPhoto) === 'pick' ? 'bg-pick text-black' : 'bg-pick/20 text-pick'}" onclick={() => markSelected("pick")} aria-keyshortcuts="P" title="Keep this frame — you can keep several from one burst"><Check size={14} />Keep</button>
                 <button class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-secondary px-2 text-xs font-bold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={clearSelectedCull} aria-keyshortcuts="U"><Circle size={14} />Clear</button>
-                <button class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-reject px-2 text-xs font-bold text-white transition-opacity hover:opacity-90" onclick={() => markSelected("reject")} aria-keyshortcuts="X"><XCircle size={14} />Reject</button>
+                <button class="inline-flex h-9 items-center justify-center gap-1 rounded-md px-2 text-xs font-bold transition-opacity hover:opacity-90 {normalizedFlag(selectedPhoto) === 'reject' ? 'bg-reject text-white' : 'bg-reject/20 text-reject'}" onclick={() => markSelected("reject")} aria-keyshortcuts="X"><XCircle size={14} />Reject</button>
             </div>
             <div class="flex items-center gap-1">
                 {#each [1, 2, 3, 4, 5] as rating}
@@ -744,9 +776,30 @@
                 {/each}
             </div>
             {#if reviewMode === "bursts" && activeCluster && activeCluster.photo_ids.length > 1}
-                <button class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90" onclick={() => acceptClusterWinner(activeCluster)}><Trophy size={14} />Accept cluster winner</button>
+                {@const clusterPickCount = activeCluster.photo_ids.filter((id) => clusterFlag(id) === "pick").length}
+                <div class="rounded-md border border-border p-2.5">
+                    <div class="mb-1.5 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em] text-subtle">
+                        <span>This burst</span>
+                        <span class={clusterPickCount > 0 ? "text-pick" : ""}>{clusterPickCount} keeper{clusterPickCount === 1 ? "" : "s"}</span>
+                    </div>
+                    <p class="mb-2 text-[11px] leading-[1.45] text-muted-foreground">
+                        <span class="text-foreground">Keep</span> marks a frame as a keeper — pick several if the scene has more than one good shot.
+                    </p>
+                    <div class="flex flex-col gap-1.5">
+                        <button
+                            class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                            onclick={() => acceptAiPick()}
+                            title="Keep the AI's recommended frame (the ✦ top pick) without hunting for it"
+                        ><Sparkles size={13} />Accept AI pick</button>
+                        <button
+                            class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90"
+                            onclick={() => confirmCluster()}
+                            title="Teach your taste profile that this burst's keepers beat the frames you didn't keep, then jump to the next burst"
+                        >Confirm &amp; next cluster →</button>
+                    </div>
+                </div>
             {/if}
-            <div class="mt-auto font-mono text-[9.5px] leading-[1.5] text-subtle">Scores are advisory. Nothing is flagged until you accept or apply bulk rejects.</div>
+            <div class="mt-auto font-mono text-[9.5px] leading-[1.5] text-subtle">Scores are advisory. Nothing is flagged until you keep, reject, or apply bulk rejects.</div>
         </aside>
     {/if}
 </section>

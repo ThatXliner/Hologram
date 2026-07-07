@@ -12,24 +12,17 @@
         ChevronLeft,
         ChevronRight,
         Circle,
-        Clock,
-        Columns2,
         ExternalLink,
         FileImage,
         Image,
         Loader2,
-        Info,
         MapPin,
-        Maximize2,
         Monitor,
-        SlidersHorizontal,
         Star,
         Trash2,
         Upload,
         X,
         XCircle,
-        ZoomIn,
-        ZoomOut,
     } from "@lucide/svelte";
     import ImageEditor from "./ImageEditor.svelte";
     import { builtInRawPresets, parseRawPresetFile, presetSummary } from "../presets.ts";
@@ -918,13 +911,6 @@
         return !["JPEG", "JPG", "PNG", "WEBP", "GIF"].includes(item.file_type.toUpperCase());
     }
 
-    function ratingButtonClass(active: boolean): string {
-        return [
-            "grid h-8 w-8 place-items-center rounded-md transition-colors",
-            active ? "bg-rating text-black" : "bg-white/10 text-white/45 hover:text-rating",
-        ].join(" ");
-    }
-
     function panelRatingClass(active: boolean): string {
         return [
             "grid h-8 w-8 place-items-center rounded-md transition-colors",
@@ -937,130 +923,81 @@
 
 {#if activePhoto}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
-    <div class="fixed inset-0 z-[100] flex flex-col bg-black text-white" role="dialog" tabindex="-1" onclick={handleBackdropClick}>
-        <header class="flex h-14 shrink-0 items-center justify-between border-b border-white/10 bg-black/90 px-4">
-            <div class="flex min-w-0 items-center gap-4">
-                <div class="min-w-0">
-                    <h2 class="truncate text-sm font-semibold tracking-normal text-white">{activePhoto.file_name}</h2>
-                    <div class="text-xs tabular-nums text-white/45">{currentIndex + 1} / {photos.length}</div>
-                </div>
+    <div class="fixed inset-0 z-[100] flex flex-col bg-canvas text-foreground" role="dialog" tabindex="-1" onclick={handleBackdropClick}>
+        <header class="flex h-10 shrink-0 items-center gap-3.5 border-b border-border bg-canvas px-3.5">
+            <button
+                class="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-subtle transition-colors hover:text-foreground"
+                onclick={(event) => { event.stopPropagation(); closeViewer(); }}
+                title="Close"
+            >ESC</button>
+            <span class="truncate font-mono text-[12px] font-semibold text-foreground">{activePhoto.file_name}</span>
 
-                {#if isPaired}
+            {#if isPaired}
+                <div class="flex overflow-hidden rounded-[5px] border border-border font-mono text-[10px] font-semibold">
                     <button
-                        class="rounded-md px-3 py-1.5 text-xs font-bold transition-colors {viewingRaw ? 'bg-orange-600 text-white' : 'bg-sky-600 text-white'}"
-                        onclick={(event) => {
-                            event.stopPropagation();
-                            void toggleRawJpeg();
-                        }}
-                    >
-                        {viewingRaw ? "RAW" : "JPEG"}
-                    </button>
-                {/if}
+                        class="px-[9px] py-[3px] transition-colors {viewingRaw ? 'bg-secondary text-primary' : 'text-subtle hover:text-foreground'}"
+                        onclick={(event) => { event.stopPropagation(); if (!viewingRaw) void toggleRawJpeg(); }}
+                    >RAW</button>
+                    <button
+                        class="px-[9px] py-[3px] transition-colors {!viewingRaw ? 'bg-secondary text-primary' : 'text-subtle hover:text-foreground'}"
+                        onclick={(event) => { event.stopPropagation(); if (viewingRaw) void toggleRawJpeg(); }}
+                    >JPEG</button>
+                </div>
+            {/if}
 
-                {#if activeEmbeddedPreview}
-                    <span
-                        class="grid h-7 w-7 place-items-center rounded-full bg-primary/90 text-primary-foreground"
-                        title={embeddedPreviewTitle(activeEmbeddedPreview)}
-                        aria-label="RAW includes embedded JPEG preview"
-                    >
-                        <Info size={14} />
-                    </span>
-                {/if}
+            <!-- progressive-quality status -->
+            <span class="flex items-center gap-1.5 whitespace-nowrap font-mono text-[10px] {activeFullResLoaded ? 'text-pick' : 'text-info'}">
+                <span class="h-1.5 w-1.5 rounded-full {activeFullResLoaded ? 'bg-pick' : 'bg-info'}"></span>
+                {#if activeFullResLoaded}full resolution{:else if isLoadingFullRes}embedded preview → loading full res…{:else if activeEmbeddedPreview}embedded preview{:else}thumbnail{/if}
+            </span>
 
-                {#if activePhoto.flag === "pick"}
-                    <span class="inline-flex items-center gap-1 rounded-full bg-pick px-2 py-0.5 text-xs font-bold text-black">
-                        <Check size={12} />
-                        Pick
-                    </span>
-                {:else if activePhoto.flag === "reject"}
-                    <span class="inline-flex items-center gap-1 rounded-full bg-reject px-2 py-0.5 text-xs font-bold text-white">
-                        <XCircle size={12} />
-                        Reject
-                    </span>
-                {/if}
+            <div class="flex-1"></div>
+
+            <div class="flex items-center gap-2 font-mono text-[11px] text-muted-foreground">
+                <button class="transition-colors hover:text-foreground" onclick={(event) => { event.stopPropagation(); zoomOut(); }}>−</button>
+                <button class="text-foreground transition-colors hover:text-primary" onclick={(event) => { event.stopPropagation(); resetZoom(); }} title="Fit">{zoomPercent}%</button>
+                <button class="transition-colors hover:text-foreground" onclick={(event) => { event.stopPropagation(); zoomIn(); }}>+</button>
+                <span class="text-subtle">·</span>
+                <button class="transition-colors hover:text-foreground" onclick={(event) => { event.stopPropagation(); resetZoom(); }}>F fit</button>
+                <span class="text-subtle">·</span>
+                <span class="tabular-nums">{currentIndex + 1} / {photos.length}</span>
             </div>
 
-            <div class="flex items-center gap-2">
-                <div class="hidden items-center gap-1 md:flex">
-                    {#each [1, 2, 3, 4, 5] as rating}
-                        <button
-                            class={ratingButtonClass((activePhoto.rating ?? 0) >= rating)}
-                            onclick={(event) => {
-                                event.stopPropagation();
-                                setRatingForActive(activePhoto.rating === rating ? 0 : rating);
-                            }}
-                            title={`${rating} stars`}
-                        >
-                            <Star size={15} fill="currentColor" />
-                        </button>
-                    {/each}
-                </div>
-
-                <button
-                    class="inline-flex h-8 items-center gap-1.5 rounded-md bg-white/10 px-3 text-xs font-semibold text-white/70 transition-colors hover:bg-white/15 hover:text-white"
-                    class:bg-primary={compareMode}
-                    class:text-primary-foreground={compareMode}
-                    onclick={(event) => {
-                        event.stopPropagation();
-                        compareMode = !!comparePhoto && !compareMode;
-                    }}
-                    disabled={!comparePhoto}
-                    title={comparePhoto ? `Compare with ${comparePhoto.file_name}` : "No other photo to compare"}
-                >
-                    <Columns2 size={14} />
-                    Compare
-                </button>
+            <div class="flex items-center gap-1.5 font-mono text-[10px]">
                 {#if compareCandidates.length > 0}
                     <select
-                        class="h-8 w-32 max-w-[28vw] rounded-md border border-white/10 bg-white/10 px-2 text-xs font-semibold text-white/75 outline-none transition-colors hover:bg-white/15 focus:border-primary sm:w-48 md:w-64"
+                        class="h-6 max-w-[24vw] rounded border border-border bg-popover px-1.5 text-[10px] text-muted-foreground outline-none focus:border-primary"
                         bind:value={comparePhotoId}
                         onclick={(event) => event.stopPropagation()}
                         onchange={handleCompareSelectionChange}
                         title="Choose comparison photo"
                     >
                         {#each compareCandidates as candidate (candidate.photo.id)}
-                            <option class="bg-black text-white" value={candidate.photo.id}>
-                                {compareOptionLabel(candidate)}
-                            </option>
+                            <option class="bg-popover text-foreground" value={candidate.photo.id}>{compareOptionLabel(candidate)}</option>
                         {/each}
                     </select>
                 {/if}
                 <button
-                    class="inline-flex h-8 items-center gap-1.5 rounded-md bg-white/10 px-3 text-xs font-semibold text-white/70 transition-colors hover:bg-white/15 hover:text-white"
-                    onclick={(event) => {
-                        event.stopPropagation();
-                        showEditor = !showEditor;
-                    }}
+                    class="rounded border px-1.5 py-[3px] transition-colors {compareMode ? 'border-primary text-primary' : 'border-border text-subtle hover:text-foreground'}"
+                    onclick={(event) => { event.stopPropagation(); compareMode = !!comparePhoto && !compareMode; }}
+                    disabled={!comparePhoto}
+                    title={comparePhoto ? `Compare with ${comparePhoto.file_name}` : "No other photo to compare"}
+                >D compare</button>
+                <button
+                    class="rounded border px-1.5 py-[3px] transition-colors {showEditor ? 'border-primary text-primary' : 'border-border text-subtle hover:text-foreground'}"
+                    onclick={(event) => { event.stopPropagation(); showEditor = !showEditor; }}
                     title="Adjust"
-                >
-                    <SlidersHorizontal size={14} />
-                    Edit
-                </button>
+                >E edit</button>
                 <button
-                    class="grid h-8 w-8 place-items-center rounded-md bg-white/10 text-white/70 transition-colors hover:bg-white/15 hover:text-white"
-                    onclick={(event) => {
-                        event.stopPropagation();
-                        void openInEditor();
-                    }}
-                    title="Open externally"
-                >
-                    <ExternalLink size={15} />
-                </button>
-                <button
-                    class="grid h-8 w-8 place-items-center rounded-md bg-white/10 text-white/70 transition-colors hover:bg-white/15 hover:text-white"
-                    onclick={(event) => {
-                        event.stopPropagation();
-                        closeViewer();
-                    }}
-                    title="Close"
-                >
-                    <X size={18} />
-                </button>
+                    class="grid h-[22px] w-[22px] place-items-center rounded border border-border text-subtle transition-colors hover:text-foreground"
+                    onclick={(event) => { event.stopPropagation(); void openInEditor(); }}
+                    title="Open in system viewer"
+                ><ExternalLink size={12} /></button>
             </div>
         </header>
 
         <div class="flex min-h-0 flex-1">
-            <section class="relative flex min-w-0 flex-1 items-center justify-center overflow-hidden bg-black">
+            <section class="relative flex min-w-0 flex-1 items-center justify-center overflow-hidden bg-canvas">
                 {#if hasPrevious}
                     <button
                         class="absolute left-4 top-1/2 z-20 grid h-10 w-10 -translate-y-1/2 place-items-center rounded-full bg-black/55 text-white/60 transition-colors hover:bg-black/75 hover:text-white"
@@ -1094,11 +1031,9 @@
                             <p>{loadError}</p>
                         </div>
                     {:else if compareMode && comparePhoto}
-                        <div class="grid h-full w-full grid-cols-2 gap-px bg-white/10">
-                            <div class="relative flex min-w-0 items-center justify-center overflow-hidden bg-black">
-                                <div class="absolute left-3 top-3 z-10 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white/75">
-                                    {compareLabel(activePhoto, "Active")}
-                                </div>
+                        <div class="grid h-full w-full grid-cols-[1fr_auto_1fr] items-stretch gap-0 bg-canvas">
+                            <div class="relative flex min-w-0 items-center justify-center overflow-hidden rounded-[4px] outline outline-2 -outline-offset-2 outline-primary">
+                                <span class="absolute left-2.5 top-2.5 z-10 rounded bg-pick px-[7px] py-[3px] font-mono text-[9px] font-bold text-black">CURSOR</span>
                                 <img
                                     src={getImageSrc()}
                                     alt={activePhoto.file_name}
@@ -1107,14 +1042,13 @@
                                     onload={(event) => handleActiveImageLoad(event, activePhoto.id)}
                                     onerror={(event) => void handleActiveImageError(event, activePhoto.id)}
                                 />
-                                <div class="absolute inset-x-3 bottom-3 truncate rounded-full bg-black/70 px-2 py-0.5 text-center text-xs text-white/65">
-                                    {activePhoto.file_name}
-                                </div>
+                                <span class="absolute inset-x-2.5 bottom-2.5 truncate rounded bg-black/55 px-[7px] py-[3px] font-mono text-[10px] text-foreground">
+                                    {compareLabel(activePhoto, "Cursor")}
+                                </span>
                             </div>
-                            <div class="relative flex min-w-0 items-center justify-center overflow-hidden bg-black">
-                                <div class="absolute left-3 top-3 z-10 rounded-full bg-black/70 px-2 py-0.5 text-xs font-semibold text-white/75">
-                                    {compareLabel(comparePhoto, "Compare")}
-                                </div>
+                            <div class="grid w-11 place-items-center font-mono text-[12px] font-semibold text-subtle">VS</div>
+                            <div class="relative flex min-w-0 items-center justify-center overflow-hidden rounded-[4px]">
+                                <span class="absolute left-2.5 top-2.5 z-10 rounded bg-secondary px-[7px] py-[3px] font-mono text-[9px] font-bold text-foreground">CANDIDATE</span>
                                 {#if getVisiblePreviewSrc(comparePhoto)}
                                     <img
                                         src={getVisiblePreviewSrc(comparePhoto)}
@@ -1123,13 +1057,13 @@
                                         draggable="false"
                                     />
                                 {:else}
-                                    <div class="rounded-lg border border-white/10 bg-white/5 p-6 text-center text-white/55">
+                                    <div class="rounded-lg border border-border bg-secondary/40 p-6 text-center text-muted-foreground">
                                         <p>No preview</p>
                                     </div>
                                 {/if}
-                                <div class="absolute inset-x-3 bottom-3 truncate rounded-full bg-black/70 px-2 py-0.5 text-center text-xs text-white/65">
-                                    {comparePhoto.file_name}
-                                </div>
+                                <span class="absolute inset-x-2.5 bottom-2.5 truncate rounded bg-black/55 px-[7px] py-[3px] font-mono text-[10px] text-foreground">
+                                    {compareLabel(comparePhoto, "Candidate")}
+                                </span>
                             </div>
                         </div>
                     {:else}
@@ -1145,30 +1079,23 @@
                         />
                     {/if}
 
-                    <div class="absolute bottom-4 left-1/2 z-20 flex -translate-x-1/2 items-center gap-1 rounded-full bg-black/70 px-2 py-1">
-                        <button class="p-1 text-white/65 transition-colors hover:text-white" onclick={zoomOut} title="Zoom out">
-                            <ZoomOut size={16} />
-                        </button>
-                        <button class="min-w-12 px-1 text-center font-mono text-xs text-white/80 transition-colors hover:text-white" onclick={resetZoom} title="Fit">
-                            {zoomPercent}%
-                        </button>
-                        <button class="p-1 text-white/65 transition-colors hover:text-white" onclick={zoomIn} title="Zoom in">
-                            <ZoomIn size={16} />
-                        </button>
-                        <button class="p-1 text-white/65 transition-colors hover:text-white" onclick={resetZoom} title="Fit">
-                            <Maximize2 size={16} />
-                        </button>
+                    <div class="absolute bottom-3.5 left-3.5 z-20 flex items-center gap-1.5 font-mono text-[10px]">
+                        <button class="rounded border border-border bg-black/40 px-[7px] py-[3px] text-pick transition-colors hover:bg-black/60" onclick={(event) => { event.stopPropagation(); setFlagForActive('pick'); }} title="Pick">P</button>
+                        <button class="rounded border border-border bg-black/40 px-[7px] py-[3px] text-reject transition-colors hover:bg-black/60" onclick={(event) => { event.stopPropagation(); setFlagForActive('reject'); }} title="Reject">X</button>
+                        <span class="rounded border border-border bg-black/40 px-[7px] py-[3px] text-subtle">1–5 rate</span>
                     </div>
 
-                    <div class="absolute right-4 top-4 z-20 flex flex-col items-end gap-2">
+                    <div class="absolute right-3.5 top-3.5 z-20 flex flex-col items-end gap-2 font-mono">
                         {#if isPaired}
-                            <span class="inline-flex items-center gap-1 rounded-full bg-primary px-2 py-0.5 text-xs font-bold text-primary-foreground">
-                                <FileImage size={12} />
+                            <span class="inline-flex items-center gap-1 rounded bg-primary px-2 py-0.5 text-[10px] font-bold text-primary-foreground">
+                                <FileImage size={11} />
                                 RAW+JPEG
                             </span>
                         {/if}
-                        {#if activeFullResLoaded}
-                            <span class="rounded-full bg-pick px-2 py-0.5 text-xs font-bold text-black">Full Res</span>
+                        {#if activePhoto.flag === "pick"}
+                            <span class="rounded bg-pick px-2 py-0.5 text-[10px] font-bold text-black">✓ PICK</span>
+                        {:else if activePhoto.flag === "reject"}
+                            <span class="rounded bg-reject px-2 py-0.5 text-[10px] font-bold text-white">✕ REJECT</span>
                         {/if}
                     </div>
                 </div>
@@ -1184,10 +1111,10 @@
                 {/if}
             </section>
 
-            <aside class="h-full w-84 shrink-0 overflow-y-auto border-l border-border bg-card p-4 text-foreground">
+            <aside class="h-full w-[300px] shrink-0 overflow-y-auto border-l border-border bg-card p-4 text-foreground">
                 <section class="mb-5 rounded-lg border border-border bg-background p-3">
                     <div class="mb-3 flex items-center justify-between gap-2">
-                        <h3 class="text-xs font-bold uppercase text-foreground">Cull</h3>
+                        <h3 class="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Cull</h3>
                         <label class="flex items-center gap-2 text-xs text-muted-foreground">
                             <input type="checkbox" bind:checked={autoAdvance} class="accent-primary" />
                             Auto advance
@@ -1231,7 +1158,7 @@
 
                 <section class="mb-5 rounded-lg border border-border bg-background p-3">
                     <div class="mb-3 flex items-center justify-between gap-2">
-                        <h3 class="text-xs font-bold uppercase text-foreground">RAW Presets</h3>
+                        <h3 class="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">RAW Presets</h3>
                         <button
                             class="grid h-7 w-7 place-items-center rounded-md bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
                             onclick={() => presetInput?.click()}
@@ -1300,7 +1227,7 @@
 
                 <section class="space-y-4">
                     <div>
-                        <h3 class="mb-2 text-xs font-bold uppercase text-foreground">File</h3>
+                        <h3 class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">File</h3>
                         <div class="space-y-2 text-sm text-muted-foreground">
                             <div class="flex items-center gap-2">
                                 <FileImage size={14} class="shrink-0" />
@@ -1314,7 +1241,7 @@
                     </div>
 
                     <div>
-                        <h3 class="mb-2 text-xs font-bold uppercase text-foreground">Camera</h3>
+                        <h3 class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Camera</h3>
                         <div class="space-y-2 text-sm text-muted-foreground">
                             {#if activePhoto.exif.camera_model || activePhoto.exif.camera_make}
                                 <div class="flex items-center gap-2">
@@ -1332,7 +1259,7 @@
                     </div>
 
                     <div>
-                        <h3 class="mb-2 text-xs font-bold uppercase text-foreground">Exposure</h3>
+                        <h3 class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Exposure</h3>
                         <div class="grid grid-cols-2 gap-2 text-sm">
                             {#if activePhoto.exif.aperture}
                                 <div class="rounded-md bg-secondary p-2">
@@ -1375,7 +1302,7 @@
 
                     {#if activePhoto.exif.width && activePhoto.exif.height}
                         <div>
-                            <h3 class="mb-2 text-xs font-bold uppercase text-foreground">Dimensions</h3>
+                            <h3 class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Dimensions</h3>
                             <div class="grid grid-cols-2 gap-2 text-sm">
                                 <div class="rounded-md bg-secondary p-2">
                                     <div class="text-xs text-muted-foreground">Pixels</div>
@@ -1395,7 +1322,7 @@
 
                     {#if activePhoto.exif.latitude != null && activePhoto.exif.longitude != null}
                         <div>
-                            <h3 class="mb-2 text-xs font-bold uppercase text-foreground">Location</h3>
+                            <h3 class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Location</h3>
                             <div class="flex items-center gap-2 text-sm text-muted-foreground">
                                 <MapPin size={14} class="shrink-0" />
                                 <span class="font-mono tabular-nums">
@@ -1406,7 +1333,7 @@
                     {/if}
 
                     <div>
-                        <h3 class="mb-2 text-xs font-bold uppercase text-foreground">Full Metadata</h3>
+                        <h3 class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Full Metadata</h3>
                         <div class="max-h-72 overflow-y-auto rounded-md border border-border">
                             {#each metadataRows(activePhoto) as [label, value]}
                                 <div class="grid grid-cols-[6.5rem_minmax(0,1fr)] gap-2 border-b border-border px-2 py-1.5 text-xs last:border-b-0">
@@ -1418,7 +1345,7 @@
                     </div>
 
                     <div class="border-t border-border pt-4">
-                        <h3 class="mb-2 text-xs font-bold uppercase text-foreground">Tags & Notes</h3>
+                        <h3 class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Tags & Notes</h3>
                         <div class="mb-2 flex min-h-6 flex-wrap gap-1">
                             {#each (activePhoto.tags ?? []) as tag}
                                 <span class="inline-flex items-center gap-1 rounded-full bg-primary/20 px-2 py-0.5 text-xs text-primary">
@@ -1444,16 +1371,29 @@
                             onblur={saveNotes}
                         ></textarea>
                     </div>
+
+                    <div class="flex flex-col gap-1.5 border-t border-border pt-4">
+                        <button
+                            class="flex items-center justify-center gap-2 rounded-md border border-border py-[7px] text-center text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                            onclick={() => void openInEditor()}
+                        >
+                            <Monitor size={13} /> Open in system viewer
+                        </button>
+                        <div class="rounded-md border border-reject/35 py-[7px] text-center text-[11px] font-medium text-reject/80">
+                            <Trash2 size={12} class="mr-1 inline" /> Delete original <span class="text-subtle">— not enabled in this build</span>
+                        </div>
+                        <div class="text-center font-mono text-[9px] leading-[1.5] text-subtle">Hologram never modifies your originals.</div>
+                    </div>
                 </section>
             </aside>
         </div>
 
-        <footer class="flex h-24 shrink-0 items-center gap-2 overflow-x-auto border-t border-white/10 bg-black/90 px-3">
+        <footer class="flex h-[76px] shrink-0 items-center gap-1.5 overflow-x-auto border-t border-border bg-rail px-3">
             {#each filmstripPhotos as item, i (item.id)}
                 {@const actualIndex = filmstripStart + i}
                 {@const previewSrc = getFilmstripSrc(item)}
                 <button
-                    class="relative h-16 w-24 shrink-0 overflow-hidden rounded-md border transition-colors {actualIndex === currentIndex ? 'border-primary' : 'border-white/15 hover:border-white/45'}"
+                    class="relative h-14 w-20 shrink-0 overflow-hidden rounded-[3px] transition-all {actualIndex === currentIndex ? 'outline outline-2 -outline-offset-2 outline-primary' : 'opacity-80 hover:opacity-100'}"
                     onclick={() => navigateTo(actualIndex)}
                     title={item.file_name}
                 >
@@ -1467,21 +1407,14 @@
                             onerror={() => markPreviewFailed(item)}
                         />
                     {:else}
-                        <div class="grid h-full w-full place-items-center bg-white/5 text-white/30">
+                        <div class="grid h-full w-full place-items-center bg-secondary text-subtle">
                             <Image size={16} />
                         </div>
                     {/if}
-                    <div class="absolute inset-x-0 bottom-0 truncate bg-black/70 px-1 py-0.5 text-[10px] text-white/75">
-                        {item.file_name}
-                    </div>
                     {#if item.flag === "pick"}
-                        <span class="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-pick text-black">
-                            <Check size={10} />
-                        </span>
+                        <span class="absolute left-1 top-1 h-[11px] w-[11px] rounded-full bg-pick"></span>
                     {:else if item.flag === "reject"}
-                        <span class="absolute right-1 top-1 grid h-4 w-4 place-items-center rounded-full bg-reject text-white">
-                            <XCircle size={10} />
-                        </span>
+                        <span class="absolute left-1 top-1 h-[11px] w-[11px] rounded-full bg-reject"></span>
                     {/if}
                 </button>
             {/each}

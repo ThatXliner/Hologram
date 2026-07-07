@@ -630,18 +630,24 @@
 </script>
 
 <div class="space-y-4">
-    <!-- Header -->
-    <div class="flex items-center justify-between">
-        <h3 class="section-heading text-xs font-bold text-foreground uppercase tracking-wide">
-            Adjustments
-        </h3>
+    <!-- Editing banner -->
+    <div class="flex items-center gap-2">
+        <span class="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-primary">EDITING · PREVIEW ONLY</span>
         <button
-            class="text-xs text-muted-foreground hover:text-foreground transition-colors flex items-center gap-1"
+            class="ml-auto flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
             onclick={resetAll}
         >
             <RotateCcw size={12} />
-            Reset
+            Reset to neutral
         </button>
+    </div>
+    <p class="font-mono text-[9.5px] leading-[1.5] text-subtle">Original untouched — edits live in Hologram's catalog + optional XMP. Proxy preview only.</p>
+
+    <!-- Header -->
+    <div class="flex items-center justify-between">
+        <h3 class="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">
+            Adjust
+        </h3>
     </div>
 
     {#if !isSourceLoaded}
@@ -652,15 +658,19 @@
     {:else}
         <!-- Basic Sliders -->
         {#each sliders as slider}
+            {@const isDenoiseRow = slider.label.startsWith("Denoise")}
             <div class="space-y-1">
-                <div class="flex items-center justify-between text-xs text-muted-foreground">
-                    <div class="flex items-center gap-1.5">
-                        <slider.icon size={12} class="shrink-0" />
-                        <span>{slider.label}</span>
-                    </div>
-                    <span class="font-mono text-foreground font-medium tabular-nums min-w-[2.5rem] text-right">
-                        {slider.value() > 0 ? "+" : ""}{slider.value()}
-                    </span>
+                <div class="flex items-center justify-between font-mono text-[10.5px] text-muted-foreground">
+                    <span class="lowercase">{slider.label}</span>
+                    {#if isDenoiseRow && isDenoising}
+                        <span class="flex items-center gap-1 text-info">
+                            <Loader2 size={11} class="animate-spin" />{slider.value()} · processing
+                        </span>
+                    {:else}
+                        <span class="min-w-[2.5rem] text-right font-medium tabular-nums text-foreground">
+                            {slider.value() > 0 ? "+" : ""}{slider.value()}
+                        </span>
+                    {/if}
                 </div>
                 <input
                     type="range"
@@ -669,7 +679,7 @@
                     step="1"
                     value={slider.value()}
                     oninput={(e) => slider.set(Number(e.currentTarget.value))}
-                    class="w-full h-1.5 rounded-full appearance-none cursor-pointer accent-primary bg-secondary"
+                    class="grid-zoom-slider h-3 w-full cursor-pointer"
                 />
             </div>
         {/each}
@@ -677,7 +687,7 @@
         <!-- Tone Curve -->
         <div class="pt-2 border-t border-border">
             <div class="flex items-center justify-between mb-2">
-                <h3 class="section-heading text-xs font-bold text-foreground uppercase tracking-wide">
+                <h3 class="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">
                     Tone Curve
                 </h3>
                 <button
@@ -770,7 +780,7 @@
 
         <div class="pt-2 border-t border-border">
             <div class="mb-2 flex items-center justify-between">
-                <h3 class="section-heading text-xs font-bold text-foreground uppercase tracking-wide">
+                <h3 class="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">
                     Preset
                 </h3>
             </div>

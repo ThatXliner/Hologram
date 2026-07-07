@@ -116,7 +116,7 @@
                     </span>
                 {/if}
             </div>
-            <span class="rounded-full bg-black/55 px-2 py-0.5 text-[10px] font-bold uppercase text-white/85">
+            <span class="rounded-full bg-black/55 px-2 py-0.5 font-mono text-[10px] font-bold uppercase text-white/85">
                 {photo.file_type}
             </span>
         </div>
@@ -125,9 +125,9 @@
     {#if detailMode !== "image"}
         <div class={bottomPanelClass()}>
             <div class="mb-1 min-w-0">
-                <div class="truncate text-xs font-semibold text-white">{photo.file_name}</div>
+                <div class="truncate font-mono text-xs font-semibold text-white">{photo.file_name}</div>
                 {#if detailMode === "metadata"}
-                    <div class="mt-0.5 truncate text-[11px] text-white/65">
+                    <div class="mt-0.5 truncate font-mono text-[11px] text-white/65">
                         {photo.exif.camera_model ?? "Unknown camera"}
                         {#if exposureSummary(photo)}
                             <span class="text-white/35"> / </span>{exposureSummary(photo)}

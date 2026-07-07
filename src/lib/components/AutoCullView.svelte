@@ -1,14 +1,10 @@
 <script lang="ts">
     import {
-        AlertTriangle,
         Check,
         Circle,
-        Gauge,
         Loader2,
-        PanelRightOpen,
         Plus,
         RefreshCw,
-        Rows3,
         Sparkles,
         Star,
         Trophy,
@@ -58,7 +54,6 @@
     let status = $state("Ready");
     let rejectThreshold = $state(0.42);
     let reviewMode = $state<"bursts" | "all">("bursts");
-    let showDetails = $state(false);
     let analysisRun = 0;
     let preferenceProfiles = $state<AutoCullPreferenceProfile[]>([]);
     let activePreferenceProfileId = $state("default");
@@ -425,63 +420,8 @@
         status = `${rejectCandidates.length} rejects applied`;
     }
 
-    function labelClass(label: AutoCullLabel): string {
-        if (label === "SELECT") return "bg-pick text-black";
-        if (label === "REJECT") return "bg-reject text-white";
-        if (label === "NEEDS_REVIEW") return "bg-rating text-black";
-        return "bg-primary text-primary-foreground";
-    }
-
-    function labelIcon(label: AutoCullLabel) {
-        if (label === "SELECT") return Check;
-        if (label === "REJECT") return XCircle;
-        if (label === "NEEDS_REVIEW") return AlertTriangle;
-        return Circle;
-    }
-
     function normalizedFlag(photo: Photo | null | undefined): CullFlag {
         return photo?.flag === "pick" || photo?.flag === "reject" ? photo.flag : "none";
-    }
-
-    function displayRecommendation(label: AutoCullLabel | undefined): string {
-        return label ? label.replace("_", " ").toLowerCase() : "unmarked";
-    }
-
-    function statusText(photo: Photo, recommendation: AutoCullPhoto | null | undefined): string {
-        const flag = normalizedFlag(photo);
-        const model = recommendation ? ` / model ${displayRecommendation(recommendation.recommendation)}` : "";
-        if (flag === "pick") return `PICK${model}`;
-        if (flag === "reject") return `REJECT${model}`;
-        if ((photo.rating ?? 0) > 0) return `${photo.rating} STAR${model}`;
-        return recommendation ? `Suggested ${displayRecommendation(recommendation.recommendation)}` : "Unmarked";
-    }
-
-    function statusClass(photo: Photo, recommendation: AutoCullPhoto | null | undefined): string {
-        const flag = normalizedFlag(photo);
-        if (flag === "pick") return "bg-pick text-black";
-        if (flag === "reject") return "bg-reject text-white";
-        if ((photo.rating ?? 0) > 0) return "bg-rating text-black";
-        return recommendation ? labelClass(recommendation.recommendation) : "bg-secondary text-muted-foreground";
-    }
-
-    function statusIcon(photo: Photo, recommendation: AutoCullPhoto | null | undefined) {
-        const flag = normalizedFlag(photo);
-        if (flag === "pick") return Check;
-        if (flag === "reject") return XCircle;
-        if ((photo.rating ?? 0) > 0) return Star;
-        return recommendation ? labelIcon(recommendation.recommendation) : Circle;
-    }
-
-    function recommendationRowClass(photo: Photo, selected: boolean): string {
-        const flag = normalizedFlag(photo);
-        if (selected) {
-            if (flag === "pick") return "bg-pick text-black";
-            if (flag === "reject") return "bg-reject text-white";
-            return "bg-primary text-primary-foreground";
-        }
-        if (flag === "pick") return "text-pick hover:bg-pick/15";
-        if (flag === "reject") return "text-reject hover:bg-reject/15";
-        return "text-muted-foreground hover:bg-accent hover:text-foreground";
     }
 
     function scoreWidth(score: number): string {
@@ -508,411 +448,253 @@
         return 2;
     }
 
-    function recommendationPhoto(item: AutoCullPhoto): Photo | undefined {
-        return photosById.get(item.photo_id);
+    // 3a badge for a burst frame, from the model recommendation.
+    function frameBadge(label: AutoCullLabel | undefined): { text: string; cls: string } {
+        switch (label) {
+            case "SELECT":
+                return { text: "TOP PICK", cls: "bg-pick text-black" };
+            case "MAYBE":
+                return { text: "MAYBE", cls: "border border-maybe/50 bg-maybe/10 text-maybe" };
+            case "NEEDS_REVIEW":
+                return { text: "NEEDS REVIEW", cls: "border border-info/50 bg-info/10 text-info" };
+            case "REJECT":
+                return { text: "REJECT", cls: "border border-reject/50 bg-reject/10 text-reject" };
+            default:
+                return { text: "UNRATED", cls: "bg-secondary text-muted-foreground" };
+        }
     }
 
-    function workspaceClass(): string {
-        return [
-            "grid min-h-0 flex-1",
-            showDetails
-                ? "grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)_minmax(17rem,22rem)]"
-                : "grid-cols-[minmax(13rem,18rem)_minmax(0,1fr)]",
-        ].join(" ");
-    }
+    // Frames shown in the main area: cluster members in bursts mode, worst-first in all mode.
+    const mainFrames = $derived<{ photo: Photo; rec: AutoCullPhoto | null }[]>(
+        reviewMode === "bursts"
+            ? clusterPhotos.map((photo) => ({ photo, rec: recommendationsById.get(photo.id) ?? null }))
+            : rankedRecommendations
+                  .map((item) => ({ photo: photosById.get(item.photo_id), rec: item }))
+                  .filter((frame): frame is { photo: Photo; rec: AutoCullPhoto } => Boolean(frame.photo)),
+    );
 
-    function modeButtonClass(active: boolean): string {
-        return [
-            "h-8 flex-1 rounded-md px-2 text-xs font-semibold transition-colors",
-            active
-                ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground",
-        ].join(" ");
+    // Clusters queued after the active one, for the UP NEXT strip.
+    const upNextClusters = $derived(
+        (() => {
+            const idx = clusterList.findIndex((cluster) => cluster.id === activeCluster?.id);
+            return clusterList.slice(idx + 1, idx + 6);
+        })(),
+    );
+
+    function scorePct10(score: number | undefined): string {
+        return score == null ? "--" : (Math.max(0, Math.min(1, score)) * 10).toFixed(1);
     }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
 
-<section class="flex h-full min-h-0 flex-col bg-background" data-autocull-view>
-    <div class="flex h-14 shrink-0 items-center gap-4 border-b border-border bg-card/70 px-5">
-        <div class="min-w-0">
-            <div class="flex items-center gap-2 text-[10px] font-bold uppercase text-primary">
-                <Sparkles size={13} />
-                AutoCull
-            </div>
-            <h2 class="truncate text-sm font-semibold text-foreground">
-                {status}
-                {#if session}
-                    <span class="text-muted-foreground">/ {burstCount} bursts</span>
-                {/if}
-            </h2>
-        </div>
+{#snippet deckLabel(text: string)}
+    <div class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">{text}</div>
+{/snippet}
 
-        <div class="ml-auto flex items-center gap-2">
-            <label class="flex h-8 items-center gap-1.5 rounded-md bg-secondary px-2 text-xs font-semibold text-muted-foreground">
-                <span>Profile</span>
-                <select
-                    class="h-6 max-w-36 bg-transparent text-foreground outline-none"
-                    value={activePreferenceProfileId}
-                    onchange={(event) => setPreferenceProfile(event.currentTarget.value)}
-                    aria-label="Preference profile"
-                >
-                    {#each preferenceProfiles as profile}
-                        <option value={profile.id}>{profile.name}</option>
-                    {/each}
-                </select>
-            </label>
+<section class="flex h-full min-h-0 bg-background" data-autocull-view>
+    <!-- DECK: analysis / threshold / taste -->
+    <aside class="flex w-[248px] shrink-0 flex-col gap-[18px] overflow-y-auto border-r border-border bg-card p-[16px_14px]">
+        <!-- ANALYSIS -->
+        <section>
+            {@render deckLabel("AutoCull")}
+            {#if isAnalyzing}
+                <div class="text-[13px] font-semibold text-foreground">Analyzing…</div>
+                <div class="mt-1 font-mono text-[11px] text-info">{progress.current}/{progress.total} indexed</div>
+                <div class="mt-2 h-1 overflow-hidden rounded-full bg-secondary">
+                    <div class="h-full rounded-full bg-info" style:width={progress.total ? scoreWidth(progress.current / progress.total) : "8%"}></div>
+                </div>
+            {:else if session}
+                <div class="text-[13px] font-semibold text-foreground">Analysis complete</div>
+                <div class="mt-1 font-mono text-[11px] leading-[1.6] text-muted-foreground">
+                    {session.stats.total} photos → {burstCount} clusters<br />
+                    {session.stats.indexed}/{session.stats.total} indexed
+                    {#if session.embedding_backend}· {selectedRecommendation?.embedding ? session.embedding_backend : "metadata"}{/if}
+                </div>
+            {:else}
+                <div class="text-[13px] font-semibold text-foreground">Not analyzed yet</div>
+                <div class="mt-1 font-mono text-[11px] text-muted-foreground">{photos.length} photos ready</div>
+            {/if}
             <button
-                class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2.5 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                onclick={createProfile}
-            >
-                <Plus size={14} />
-                New Profile
-            </button>
-            <button
-                class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-3 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
+                class="mt-2 flex w-full items-center justify-center gap-1.5 rounded-md border border-border py-[6px] font-sans text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-50"
                 onclick={runAnalysis}
                 disabled={isAnalyzing}
             >
-                {#if isAnalyzing}
-                    <Loader2 size={14} class="animate-spin" />
-                {:else}
-                    <RefreshCw size={14} />
-                {/if}
-                Analyze
+                {#if isAnalyzing}<Loader2 size={13} class="animate-spin" />{:else}<RefreshCw size={13} />{/if}
+                Re-run analysis
             </button>
+        </section>
+
+        <!-- REJECT THRESHOLD -->
+        <section>
+            {@render deckLabel("Reject threshold")}
+            <div class="mb-1.5 flex items-center justify-between font-mono text-[10px]">
+                <span class="text-muted-foreground">score ≤ <span class="text-foreground">{scorePct10(rejectThreshold)}</span></span>
+                <span class="text-reject">{rejectCandidates.length} candidates</span>
+            </div>
+            <input class="grid-zoom-slider mb-2.5 h-3 w-full" type="range" min="0.25" max="0.55" step="0.01" bind:value={rejectThreshold} aria-label="Reject threshold" />
             <button
-                class="grid h-8 w-8 place-items-center rounded-md bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground {showDetails ? 'bg-primary text-primary-foreground' : ''}"
-                onclick={() => (showDetails = !showDetails)}
-                title="Toggle details"
-                aria-label="Toggle details"
+                class="w-full rounded-md bg-reject py-[7px] text-center font-sans text-[11px] font-semibold text-white transition-opacity hover:opacity-90 disabled:opacity-40"
+                onclick={applyRejectSuggestions}
+                disabled={!session || rejectCandidates.length === 0}
             >
-                <PanelRightOpen size={15} />
+                Apply {rejectCandidates.length} bulk rejects
             </button>
-        </div>
+            <div class="mt-1.5 font-mono text-[9.5px] leading-[1.5] text-subtle">Your manual flags always take precedence. Reversible until export.</div>
+        </section>
+
+        <!-- TASTE PROFILE -->
+        <section>
+            {@render deckLabel("Taste profile")}
+            <div class="flex flex-col gap-[2px]">
+                {#each preferenceProfiles as profile (profile.id)}
+                    <button
+                        class="flex items-center justify-between rounded-[5px] px-2 py-[6px] text-left font-sans text-[12px] font-medium transition-colors {activePreferenceProfileId === profile.id ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                        onclick={() => setPreferenceProfile(profile.id)}
+                    >
+                        <span class="truncate">{profile.name}</span>
+                        {#if activePreferenceProfileId === profile.id}<span class="font-mono text-[10px] text-pick">active</span>{/if}
+                    </button>
+                {/each}
+                <button class="flex items-center gap-1 px-2 py-[6px] text-left font-sans text-[12px] text-subtle transition-colors hover:text-foreground" onclick={createProfile}>
+                    <Plus size={12} /> New profile
+                </button>
+            </div>
+            <div class="mt-2 rounded-md border border-primary/40 px-2.5 py-[6px] text-center font-sans text-[11px] font-medium text-primary">
+                Picks &amp; ratings train this profile
+            </div>
+        </section>
+    </aside>
+    <!-- MAIN -->
+    <div class="flex min-w-0 flex-1 flex-col">
+        {#if isAnalyzing}
+            <div class="h-[2px] shrink-0 bg-secondary"><div class="h-full bg-info transition-[width]" style:width={progress.total ? scoreWidth(progress.current / progress.total) : "8%"}></div></div>
+        {/if}
+
+        {#if !session && !isAnalyzing}
+            <div class="grid flex-1 place-items-center px-8">
+                <button class="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90" onclick={runAnalysis}>
+                    <Sparkles size={16} /> Analyze {photos.length} photos
+                </button>
+            </div>
+        {:else}
+            <!-- mode + meta -->
+            <div class="flex h-11 shrink-0 items-center gap-3 border-b border-border px-3.5">
+                <div class="flex overflow-hidden rounded-md border border-border font-sans text-[11px] font-medium">
+                    <button class="px-3 py-[6px] transition-colors {reviewMode === 'bursts' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}" onclick={() => setReviewMode("bursts")} disabled={burstCount === 0}>Clusters</button>
+                    <button class="px-3 py-[6px] transition-colors {reviewMode === 'all' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}" onclick={() => setReviewMode("all")}>Ranked · worst first</button>
+                </div>
+                {#if reviewMode === "bursts" && activeCluster}
+                    <div class="font-mono text-[11px] text-muted-foreground">
+                        cluster <span class="text-foreground">{clusterList.findIndex((cluster) => cluster.id === activeCluster.id) + 1}</span> / {burstCount} · {clusterTitle(activeCluster).toLowerCase()}
+                    </div>
+                {:else}
+                    <div class="font-mono text-[11px] text-muted-foreground">{mainFrames.length} photos · worst first</div>
+                {/if}
+                <div class="flex-1"></div>
+                <div class="flex gap-1.5 font-mono text-[10px] text-subtle">
+                    <span class="rounded border border-border px-1.5 py-[3px]">↵ accept</span>
+                    <span class="rounded border border-border px-1.5 py-[3px]">←→ frames</span>
+                    <span class="rounded border border-border px-1.5 py-[3px]">⇥ next</span>
+                </div>
+            </div>
+
+            <!-- frame grid -->
+            <div class="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3.5">
+                <div class="flex flex-wrap gap-2">
+                    {#each mainFrames as frame (frame.photo.id)}
+                        {@const rec = frame.rec}
+                        {@const badge = frameBadge(rec?.recommendation)}
+                        {@const flag = normalizedFlag(frame.photo)}
+                        <button
+                            class="relative h-[194px] w-[290px] shrink-0 overflow-hidden rounded-[5px] border transition-all {selectedPhotoId === frame.photo.id ? 'border-primary shadow-[0_0_0_4px_rgba(92,232,164,.15)]' : 'border-border hover:border-ring'} {flag === 'reject' ? 'opacity-50' : ''}"
+                            data-autocull-photo-id={frame.photo.id}
+                            onclick={() => selectPhoto(frame.photo.id)}
+                            title={frame.photo.file_name}
+                        >
+                            <PhotoPreviewCard photo={frame.photo} detailMode="image" fit="cover" iconSize={22} showControls={false} containerClass="h-full w-full aspect-auto" />
+                            <span class="absolute left-2 top-2 rounded px-[7px] py-[2px] font-mono text-[9px] font-bold {badge.cls}">{badge.text}{#if rec && badge.text === "TOP PICK"} · {percent(rec.final_score)}{/if}</span>
+                            {#if flag === "pick"}<span class="absolute right-2 top-2 grid h-4 w-4 place-items-center rounded-full bg-pick text-[10px] font-bold text-black" title="manual pick overrides">✓</span>{/if}
+                            <span class="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/75 to-transparent px-2 pb-[5px] pt-3.5 font-mono text-[10px] text-white">
+                                <span class="truncate">{frame.photo.file_name}</span>
+                                <span class="{flag === 'none' && rec?.recommendation === 'SELECT' ? 'text-pick' : 'text-white/85'}">{scorePct10(rec?.final_score)}</span>
+                            </span>
+                        </button>
+                    {/each}
+                    {#if mainFrames.length === 0}
+                        <div class="rounded-md border border-dashed border-border px-4 py-6 font-mono text-[11px] text-muted-foreground">No frames in this view.</div>
+                    {/if}
+                </div>
+
+                {#if reviewMode === "bursts" && upNextClusters.length > 0}
+                    <div class="mt-auto">
+                        {@render deckLabel("Up next")}
+                        <div class="flex gap-1.5">
+                            {#each upNextClusters as cluster (cluster.id)}
+                                {@const top = photosById.get(cluster.top_pick_id)}
+                                <button class="relative h-[62px] w-[92px] shrink-0 overflow-hidden rounded-[3px] border border-border transition-colors hover:border-ring" onclick={() => selectCluster(cluster)} title={clusterTitle(cluster)}>
+                                    {#if top}<PhotoPreviewCard photo={top} detailMode="image" fit="cover" iconSize={14} showControls={false} containerClass="h-full w-full aspect-auto" />{/if}
+                                    <span class="absolute bottom-0.5 left-1 font-mono text-[8px] text-white/80">{cluster.photo_ids.length}</span>
+                                </button>
+                            {/each}
+                        </div>
+                    </div>
+                {/if}
+            </div>
+        {/if}
     </div>
 
-    {#if isAnalyzing}
-        <div class="h-1 shrink-0 bg-secondary">
-            <div
-                class="h-full bg-primary transition-[width]"
-                style:width={progress.total ? scoreWidth(progress.current / progress.total) : "8%"}
-            ></div>
-        </div>
-    {/if}
-
-    {#if !session && !isAnalyzing}
-        <div class="grid flex-1 place-items-center px-8">
-            <button
-                class="inline-flex h-10 items-center justify-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90"
-                onclick={runAnalysis}
-            >
-                <Sparkles size={16} />
-                Analyze Photos
-            </button>
-        </div>
-    {:else}
-        <div class={workspaceClass()}>
-            <aside class="min-h-0 overflow-y-auto border-r border-border bg-sidebar/50 p-3">
-                <div class="mb-3 flex gap-1" aria-label="AutoCull layer">
-                    <button class={modeButtonClass(reviewMode === "bursts")} onclick={() => setReviewMode("bursts")} disabled={burstCount === 0}>
-                        Bursts
-                    </button>
-                    <button class={modeButtonClass(reviewMode === "all")} onclick={() => setReviewMode("all")}>
-                        All Photos
-                    </button>
-                </div>
-
-                {#if reviewMode === "bursts"}
-                    <div class="mb-2 flex items-center gap-2 px-1 text-xs font-bold uppercase text-foreground">
-                        <Rows3 size={13} class="text-primary" />
-                        Burst Winners
-                        <span class="ml-auto text-muted-foreground">{clusterList.length}</span>
-                    </div>
-                    {#if clusterList.length === 0}
-                        <div class="rounded-md border border-dashed border-border bg-card px-3 py-3 text-xs text-muted-foreground">
-                            No burst groups detected. Use All Photos for the general cull layer.
-                        </div>
-                    {:else}
-                        <div class="space-y-1">
-                            {#each clusterList as cluster (cluster.id)}
-                                {@const topPhoto = photosById.get(cluster.top_pick_id)}
-                                {@const topRecommendation = recommendationsById.get(cluster.top_pick_id)}
-                                <button
-                                    class="w-full rounded-md px-2 py-2 text-left transition-colors {activeCluster?.id === cluster.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
-                                    onclick={() => selectCluster(cluster)}
-                                >
-                                    <span class="flex items-center gap-2">
-                                        <span class="truncate text-xs font-semibold">{clusterTitle(cluster)}</span>
-                                        <span class="ml-auto rounded bg-black/20 px-1.5 py-0.5 text-[10px] tabular-nums">{cluster.photo_ids.length}</span>
-                                    </span>
-                                    <span class="mt-1 block truncate text-[11px] opacity-75">
-                                        {topPhoto?.file_name ?? "Missing photo"} / {formatScore(topRecommendation?.final_score)}
-                                    </span>
-                                </button>
-                            {/each}
-                        </div>
-                    {/if}
-                {:else}
-                    <div class="mb-2 flex items-center gap-2 px-1 text-xs font-bold uppercase text-foreground">
-                        <Gauge size={13} class="text-primary" />
-                        General Cull
-                        <span class="ml-auto text-muted-foreground">{rankedRecommendations.length}</span>
-                    </div>
-                    <div class="space-y-1">
-                        {#each rankedRecommendations as item (item.photo_id)}
-                            {@const photo = recommendationPhoto(item)}
-                            {#if photo}
-                                <button
-                                    class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {recommendationRowClass(photo, selectedPhotoId === item.photo_id)}"
-                                    data-autocull-photo-id={item.photo_id}
-                                    onclick={() => selectPhoto(item.photo_id)}
-                                >
-                                    <span class="min-w-0 flex-1">
-                                        <span class="block truncate font-semibold">{photo.file_name}</span>
-                                        <span class="block truncate text-[10px] opacity-75">{statusText(photo, item)}</span>
-                                    </span>
-                                    <span class="tabular-nums">{formatScore(item.final_score)}</span>
-                                </button>
-                            {/if}
-                        {/each}
-                    </div>
+    <!-- SCORE CARD -->
+    {#if session && selectedPhoto}
+        {@const rec = selectedRecommendation}
+        <aside class="flex w-[280px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-border p-4">
+            <div>
+                {@render deckLabel(`Score — ${selectedPhoto.file_name}`)}
+                {#if rec}
+                    {@const badge = frameBadge(rec.recommendation)}
+                    <span class="inline-block rounded px-[9px] py-1 font-mono text-[11px] font-bold {badge.cls}">{rec.recommendation?.replace("_", " ") ?? "—"}</span>
                 {/if}
-            </aside>
-
-            <main class="flex min-w-0 flex-col">
-                <div class="grid min-h-0 flex-1 place-items-center bg-black">
-                    {#if selectedPhoto}
-                        <div class="flex h-full w-full flex-col">
-                            <div class="grid min-h-0 flex-1 place-items-center p-4">
-                                <div class="w-full max-w-5xl">
-                                    <PhotoPreviewCard
-                                        photo={selectedPhoto}
-                                        detailMode="metadata"
-                                        eager
-                                        previewQuality="display"
-                                        selected
-                                        showControls={false}
-                                        containerClass="rounded-md border border-border shadow-lg"
-                                    />
-                                </div>
-                            </div>
-                            <div class="flex h-12 shrink-0 items-center gap-3 border-t border-white/10 bg-black/70 px-4">
-                                {#if selectedPhoto}
-                                    {@const StatusIcon = statusIcon(selectedPhoto, selectedRecommendation)}
-                                    <span class="inline-flex items-center gap-1.5 rounded-md px-2.5 py-1 text-xs font-bold {statusClass(selectedPhoto, selectedRecommendation)}">
-                                        <StatusIcon size={13} />
-                                        {normalizedFlag(selectedPhoto) === "none" ? statusText(selectedPhoto, selectedRecommendation) : normalizedFlag(selectedPhoto).toUpperCase()}
-                                    </span>
-                                    {#if selectedRecommendation && normalizedFlag(selectedPhoto) !== "none"}
-                                        <span class="truncate text-xs text-white/45">
-                                            Model {displayRecommendation(selectedRecommendation.recommendation)} / {formatScore(selectedRecommendation.final_score)}
-                                        </span>
-                                    {/if}
-                                {/if}
-                                <div class="min-w-0 flex-1"></div>
-                                <button
-                                    class="hidden h-8 items-center justify-center gap-1.5 rounded-md bg-pick px-3 text-xs font-bold text-black transition-opacity hover:opacity-90 md:inline-flex"
-                                    onclick={() => markSelected("pick")}
-                                    aria-keyshortcuts="P"
-                                >
-                                    <Check size={14} />
-                                    Pick
-                                    <kbd class="rounded bg-black/15 px-1.5 py-0.5 text-[10px] font-black leading-none">P</kbd>
-                                </button>
-                                <button
-                                    class="hidden h-8 items-center justify-center gap-1.5 rounded-md bg-reject px-3 text-xs font-bold text-white transition-opacity hover:opacity-90 md:inline-flex"
-                                    onclick={() => markSelected("reject")}
-                                    aria-keyshortcuts="X"
-                                >
-                                    <XCircle size={14} />
-                                    Reject
-                                    <kbd class="rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-black leading-none">X</kbd>
-                                </button>
-                                {#if reviewMode === "bursts" && activeCluster && activeCluster.photo_ids.length > 1}
-                                    <button
-                                        class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90"
-                                        onclick={() => acceptClusterWinner(activeCluster)}
-                                    >
-                                        <Trophy size={14} />
-                                        Winner
-                                    </button>
-                                {/if}
-                            </div>
-                        </div>
-                    {/if}
+            </div>
+            {#if rec}
+                <div class="flex items-baseline gap-2">
+                    <span class="font-mono text-[34px] font-bold leading-none text-foreground">{scorePct10(rec.final_score)}</span>
+                    <span class="font-mono text-[11px] text-subtle">final / 10</span>
                 </div>
-
-                {#if reviewMode === "bursts" && clusterPhotos.length > 1}
-                    <div class="flex h-24 shrink-0 gap-2 overflow-x-auto border-t border-border bg-card/70 p-2">
-                        {#each clusterPhotos as photo (photo.id)}
-                            {@const recommendation = recommendationsById.get(photo.id)}
-                            <button
-                                class="relative aspect-[3/2] h-full overflow-hidden rounded-md border bg-black transition-colors {selectedPhotoId === photo.id ? 'border-primary shadow-[0_0_0_2px_var(--color-primary)]' : 'border-border hover:border-ring'}"
-                                data-autocull-photo-id={photo.id}
-                                onclick={() => selectPhoto(photo.id)}
-                                title={photo.file_name}
-                            >
-                                <PhotoPreviewCard
-                                    {photo}
-                                    detailMode="image"
-                                    fit="cover"
-                                    iconSize={20}
-                                    showControls={false}
-                                    containerClass="h-full w-full aspect-auto"
-                                />
-                                {#if recommendation}
-                                    <span class="absolute bottom-1 right-1 rounded bg-black/70 px-1.5 py-0.5 text-[10px] font-bold text-white">
-                                        {formatScore(recommendation.final_score)}
-                                    </span>
-                                {/if}
-                            </button>
-                        {/each}
+                <div class="flex flex-col gap-2.5">
+                    <div>
+                        <div class="mb-1 flex justify-between font-mono text-[10.5px] text-muted-foreground"><span>TECHNICAL</span><span class="text-foreground">{scorePct10(rec.technical_score)}</span></div>
+                        <div class="h-1 rounded-full bg-secondary"><div class="h-1 rounded-full bg-info" style:width={scoreWidth(rec.technical_score)}></div></div>
                     </div>
-                {/if}
-            </main>
-
-            {#if showDetails}
-                <aside class="min-h-0 overflow-y-auto border-l border-border bg-card/50 p-4">
-                    {#if selectedPhoto && selectedRecommendation}
-                        <div class="mb-4 flex items-start gap-3">
-                            <div class="grid h-10 w-10 shrink-0 place-items-center rounded-md bg-primary/15 text-primary">
-                                <Gauge size={20} />
-                            </div>
-                            <div class="min-w-0">
-                                <h3 class="truncate text-sm font-semibold text-foreground">{selectedPhoto.file_name}</h3>
-                                <p class="mt-0.5 text-xs text-muted-foreground">
-                                    {selectedRecommendation.embedding ? session?.embedding_backend : "metadata fallback"}
-                                </p>
-                            </div>
-                        </div>
-
-                        <div class="space-y-3">
-                            <div>
-                                <div class="mb-1 flex items-center justify-between text-xs">
-                                    <span class="font-semibold text-muted-foreground">Final</span>
-                                    <span class="tabular-nums text-foreground">{formatScore(selectedRecommendation.final_score)}</span>
-                                </div>
-                                <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
-                                    <div class="h-full rounded-full bg-primary" style:width={scoreWidth(selectedRecommendation.final_score)}></div>
-                                </div>
-                            </div>
-                            <div>
-                                <div class="mb-1 flex items-center justify-between text-xs">
-                                    <span class="font-semibold text-muted-foreground">Personal</span>
-                                    <span class="tabular-nums text-foreground">{formatScore(selectedRecommendation.personal_score)}</span>
-                                </div>
-                                <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
-                                    <div class="h-full rounded-full bg-pick" style:width={scoreWidth(selectedRecommendation.personal_score)}></div>
-                                </div>
-                            </div>
-                            <div>
-                                <div class="mb-1 flex items-center justify-between text-xs">
-                                    <span class="font-semibold text-muted-foreground">Technical</span>
-                                    <span class="tabular-nums text-foreground">{formatScore(selectedRecommendation.technical_score)}</span>
-                                </div>
-                                <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
-                                    <div class="h-full rounded-full bg-rating" style:width={scoreWidth(selectedRecommendation.technical_score)}></div>
-                                </div>
-                            </div>
-                        </div>
-
-                        <div class="mt-5 grid grid-cols-3 gap-2">
-                            <button
-                                class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-pick px-2 text-xs font-bold text-black transition-opacity hover:opacity-90"
-                                onclick={() => markSelected("pick")}
-                                aria-keyshortcuts="P"
-                            >
-                                <Check size={14} />
-                                Pick
-                                <kbd class="rounded bg-black/15 px-1.5 py-0.5 text-[10px] font-black leading-none">P</kbd>
-                            </button>
-                            <button
-                                class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-secondary px-2 text-xs font-bold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                                onclick={clearSelectedCull}
-                                aria-keyshortcuts="U"
-                            >
-                                <Circle size={14} />
-                                Clear
-                                <kbd class="rounded bg-foreground/10 px-1.5 py-0.5 text-[10px] font-black leading-none">U</kbd>
-                            </button>
-                            <button
-                                class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-reject px-2 text-xs font-bold text-white transition-opacity hover:opacity-90"
-                                onclick={() => markSelected("reject")}
-                                aria-keyshortcuts="X"
-                            >
-                                <XCircle size={14} />
-                                Reject
-                                <kbd class="rounded bg-white/20 px-1.5 py-0.5 text-[10px] font-black leading-none">X</kbd>
-                            </button>
-                        </div>
-
-                        <div class="mt-3 flex items-center gap-1">
-                            {#each [1, 2, 3, 4, 5] as rating}
-                                <button
-                                    class="flex h-8 flex-1 items-center justify-center gap-1 rounded-md transition-colors {(selectedPhoto.rating ?? 0) >= rating ? 'bg-rating text-black' : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-rating'}"
-                                    onclick={() => rateSelected((selectedPhoto.rating ?? 0) === rating ? 0 : rating)}
-                                    aria-keyshortcuts={`${rating}`}
-                                    title={`${rating} stars`}
-                                >
-                                    <Star size={14} fill="currentColor" />
-                                    <span class="text-[10px] font-black leading-none">{rating}</span>
-                                </button>
-                            {/each}
-                        </div>
-                    {/if}
-
-                    <div class="mt-6 space-y-3 border-t border-border pt-4">
-                        <label class="flex items-center gap-2 text-xs text-muted-foreground">
-                            Reject threshold
-                            <input
-                                class="min-w-0 flex-1 accent-primary"
-                                type="range"
-                                min="0.25"
-                                max="0.55"
-                                step="0.01"
-                                bind:value={rejectThreshold}
-                            />
-                            <span class="w-9 tabular-nums">{percent(rejectThreshold)}</span>
-                        </label>
-                        <button
-                            class="inline-flex h-9 w-full items-center justify-center gap-2 rounded-md bg-reject px-3 text-sm font-semibold text-white transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-40"
-                            onclick={applyRejectSuggestions}
-                            disabled={!session || rejectCandidates.length === 0}
-                        >
-                            <XCircle size={15} />
-                            Apply {rejectCandidates.length} Rejects
-                        </button>
+                    <div>
+                        <div class="mb-1 flex justify-between font-mono text-[10.5px] text-muted-foreground"><span>PERSONAL</span><span class="text-foreground">{scorePct10(rec.personal_score)}</span></div>
+                        <div class="h-1 rounded-full bg-secondary"><div class="h-1 rounded-full bg-pick" style:width={scoreWidth(rec.personal_score)}></div></div>
                     </div>
-
-                    {#if rankedRecommendations.length > 0}
-                        <div class="mt-6">
-                            <div class="mb-2 flex items-center gap-2 text-xs font-bold uppercase text-foreground">
-                                <AlertTriangle size={13} class="text-rating" />
-                                Lowest Ranked
-                            </div>
-                            <div class="space-y-1">
-                                {#each rankedRecommendations.slice(0, 7) as item (item.photo_id)}
-                                    {@const photo = recommendationPhoto(item)}
-                                    {#if photo}
-                                        <button
-                                            class="flex w-full items-center gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {recommendationRowClass(photo, selectedPhotoId === item.photo_id)}"
-                                            data-autocull-photo-id={item.photo_id}
-                                            onclick={() => selectPhoto(item.photo_id)}
-                                        >
-                                            <span class="min-w-0 flex-1">
-                                                <span class="block truncate">{photo.file_name}</span>
-                                                <span class="block truncate text-[10px] opacity-70">{statusText(photo, item)}</span>
-                                            </span>
-                                            <span class="tabular-nums">{formatScore(item.final_score)}</span>
-                                        </button>
-                                    {/if}
-                                {/each}
-                            </div>
-                        </div>
-                    {/if}
-                </aside>
+                </div>
+                <div class="flex flex-col gap-[7px] border-t border-border pt-3 font-mono text-[10.5px] text-muted-foreground">
+                    <div class="flex justify-between"><span>final</span><span class="text-foreground">{formatScore(rec.final_score)}</span></div>
+                    <div class="flex justify-between"><span>technical</span><span class="text-foreground">{formatScore(rec.technical_score)}</span></div>
+                    <div class="flex justify-between"><span>personal</span><span class="text-foreground">{formatScore(rec.personal_score)}</span></div>
+                    <div class="flex justify-between"><span>signal</span><span class="text-foreground">{rec.embedding ? (session.embedding_backend ?? "embedding") : "metadata"}</span></div>
+                    {#if activeCluster}<div class="flex justify-between"><span>cluster size</span><span class="text-foreground">{activeCluster.photo_ids.length}</span></div>{/if}
+                </div>
             {/if}
-        </div>
+
+            <div class="grid grid-cols-3 gap-2">
+                <button class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-pick px-2 text-xs font-bold text-black transition-opacity hover:opacity-90" onclick={() => markSelected("pick")} aria-keyshortcuts="P"><Check size={14} />Pick</button>
+                <button class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-secondary px-2 text-xs font-bold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground" onclick={clearSelectedCull} aria-keyshortcuts="U"><Circle size={14} />Clear</button>
+                <button class="inline-flex h-9 items-center justify-center gap-1 rounded-md bg-reject px-2 text-xs font-bold text-white transition-opacity hover:opacity-90" onclick={() => markSelected("reject")} aria-keyshortcuts="X"><XCircle size={14} />Reject</button>
+            </div>
+            <div class="flex items-center gap-1">
+                {#each [1, 2, 3, 4, 5] as rating}
+                    <button class="flex h-8 flex-1 items-center justify-center rounded-md transition-colors {(selectedPhoto.rating ?? 0) >= rating ? 'bg-rating text-black' : 'bg-secondary text-muted-foreground hover:bg-accent hover:text-rating'}" onclick={() => rateSelected((selectedPhoto.rating ?? 0) === rating ? 0 : rating)} aria-keyshortcuts={`${rating}`} title={`${rating} stars`}>
+                        <Star size={13} fill="currentColor" />
+                    </button>
+                {/each}
+            </div>
+            {#if reviewMode === "bursts" && activeCluster && activeCluster.photo_ids.length > 1}
+                <button class="inline-flex h-9 items-center justify-center gap-1.5 rounded-md bg-primary px-3 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90" onclick={() => acceptClusterWinner(activeCluster)}><Trophy size={14} />Accept cluster winner</button>
+            {/if}
+            <div class="mt-auto font-mono text-[9.5px] leading-[1.5] text-subtle">Scores are advisory. Nothing is flagged until you accept or apply bulk rejects.</div>
+        </aside>
     {/if}
 </section>

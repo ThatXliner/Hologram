@@ -1,7 +1,8 @@
 <script lang="ts">
-    import { Archive, Check, Download, FolderDown, Loader2, Upload } from "@lucide/svelte";
+    import { Archive, Check, Download, Loader2, Upload, XCircle } from "@lucide/svelte";
     import { HologramAPI } from "../api.ts";
     import { photoStore } from "../stores/photoStore.ts";
+    import PhotoPreviewCard from "./PhotoPreviewCard.svelte";
     import type { ExportOptions, ExportResult, Photo, XmpSidecarResult } from "../types.ts";
 
     interface Props {
@@ -24,6 +25,29 @@
     let xmpError = $state<string | null>(null);
 
     const selectClass = "h-8 w-full rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none focus:border-ring focus:ring-2 focus:ring-ring/40";
+
+    const exportAsOptions: { value: ExportOptions["mode"]; label: string }[] = [
+        { value: "folder", label: "Plain folder" },
+        { value: "zip", label: "Zip archive" },
+        { value: "lightroom", label: "Lightroom-ready" },
+    ];
+    const pairOptions: { value: ExportOptions["pair_mode"]; label: string }[] = [
+        { value: "visible", label: "Visible half" },
+        { value: "both", label: "Both (RAW + JPEG)" },
+        { value: "raw", label: "RAW only" },
+        { value: "jpeg", label: "JPEG only" },
+    ];
+    const organizeOptions: { value: ExportOptions["organize_by"]; label: string }[] = [
+        { value: "flat", label: "Flat" },
+        { value: "date", label: "Date folders" },
+        { value: "camera", label: "Camera folders" },
+    ];
+
+    function rowClass(active: boolean): string {
+        return active
+            ? "rounded-[5px] bg-secondary px-2 py-[6px] text-left text-[12px] font-medium text-foreground"
+            : "rounded-[5px] px-2 py-[6px] text-left text-[12px] font-medium text-muted-foreground transition-colors hover:bg-accent hover:text-foreground";
+    }
 
     async function exportVisible() {
         const destination = await HologramAPI.selectExportFolder();
@@ -76,130 +100,141 @@
     }
 </script>
 
-<section class="border-b border-sidebar-border p-4">
-    <div class="mb-3 flex items-center gap-2">
-        <FolderDown size={14} class="text-primary" />
-        <h2 class="text-xs font-bold uppercase text-foreground">Export</h2>
-        <span class="ml-auto text-xs tabular-nums text-muted-foreground">{photos.length} visible</span>
-    </div>
+{#snippet deckLabel(text: string)}
+    <div class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">{text}</div>
+{/snippet}
 
-    <div class="space-y-3">
-        <div class="grid grid-cols-2 gap-2">
-            <label class="space-y-1">
-                <span class="text-[11px] font-semibold text-muted-foreground">Format</span>
-                <select class={selectClass} bind:value={mode}>
-                    <option value="folder">Folder</option>
-                    <option value="zip">Zip</option>
-                    <option value="lightroom">Lightroom</option>
-                </select>
+<section class="flex h-full min-h-0 bg-background">
+    <!-- CONFIG DECK -->
+    <aside class="flex w-[248px] shrink-0 flex-col gap-4 overflow-y-auto border-r border-border bg-card p-[16px_14px]">
+        <section>
+            {@render deckLabel("Export as")}
+            <div class="flex flex-col gap-[2px]">
+                {#each exportAsOptions as opt (opt.value)}
+                    <button class={rowClass(mode === opt.value)} onclick={() => (mode = opt.value)}>{opt.label}</button>
+                {/each}
+            </div>
+        </section>
+
+        <section>
+            {@render deckLabel("Pair handling")}
+            <div class="flex flex-col gap-[2px]">
+                {#each pairOptions as opt (opt.value)}
+                    <button class={rowClass(pairMode === opt.value)} onclick={() => (pairMode = opt.value)}>{opt.label}</button>
+                {/each}
+            </div>
+        </section>
+
+        <section>
+            {@render deckLabel("Organization")}
+            <div class="flex flex-col gap-[2px]">
+                {#each organizeOptions as opt (opt.value)}
+                    <button class={rowClass(organizeBy === opt.value)} onclick={() => (organizeBy = opt.value)}>{opt.label}</button>
+                {/each}
+            </div>
+        </section>
+
+        <section>
+            {@render deckLabel("Rename pattern")}
+            <input class={selectClass} placeholder="date-index-name" bind:value={renamePattern} />
+        </section>
+
+        <section>
+            {@render deckLabel("Sidecar")}
+            <label class="flex items-center gap-2 text-[12px] text-muted-foreground">
+                <input type="checkbox" bind:checked={includeMetadata} class="accent-primary" />
+                Write metadata sidecar
             </label>
-            <label class="space-y-1">
-                <span class="text-[11px] font-semibold text-muted-foreground">Pairs</span>
-                <select class={selectClass} bind:value={pairMode}>
-                    <option value="visible">Visible</option>
-                    <option value="both">RAW + JPEG</option>
-                    <option value="raw">RAW only</option>
-                    <option value="jpeg">JPEG only</option>
-                </select>
-            </label>
-        </div>
-
-        <label class="space-y-1">
-            <span class="text-[11px] font-semibold text-muted-foreground">Organize</span>
-            <select class={selectClass} bind:value={organizeBy}>
-                <option value="flat">Flat</option>
-                <option value="date">Date folders</option>
-                <option value="camera">Camera folders</option>
-            </select>
-        </label>
-
-        <label class="space-y-1">
-            <span class="text-[11px] font-semibold text-muted-foreground">Rename</span>
-            <input
-                class={selectClass}
-                placeholder="date-index-name"
-                bind:value={renamePattern}
-            />
-        </label>
-
-        <label class="flex items-center gap-2 text-xs text-muted-foreground">
-            <input type="checkbox" bind:checked={includeMetadata} class="accent-primary" />
-            Metadata sidecar
-        </label>
+            <div class="mt-2 grid grid-cols-2 gap-2">
+                <button
+                    class="flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2 font-sans text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                    disabled={xmpBusy !== null || allPhotos.length === 0}
+                    onclick={exportOriginalXmp}
+                    title="Write XMP sidecars beside originals"
+                >
+                    {#if xmpBusy === "export"}<Loader2 size={12} class="animate-spin" />{:else}<Download size={12} />{/if}
+                    XMP out
+                </button>
+                <button
+                    class="flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2 font-sans text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
+                    disabled={xmpBusy !== null || allPhotos.length === 0}
+                    onclick={importOriginalXmp}
+                    title="Read XMP sidecars beside originals"
+                >
+                    {#if xmpBusy === "import"}<Loader2 size={12} class="animate-spin" />{:else}<Upload size={12} />{/if}
+                    XMP in
+                </button>
+            </div>
+            {#if xmpResult}
+                <div class="mt-2 font-mono text-[10px] text-pick">✓ {xmpResult.processed_count} sidecars{#if xmpResult.skipped_count > 0} · {xmpResult.skipped_count} skipped{/if}</div>
+            {:else if xmpError}
+                <div class="mt-2 font-mono text-[10px] text-reject">{xmpError}</div>
+            {/if}
+        </section>
 
         <button
-            class="flex h-9 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
+            class="mt-auto flex h-10 w-full items-center justify-center gap-2 rounded-md bg-primary px-3 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
             disabled={isExporting || photos.length === 0}
             onclick={exportVisible}
         >
             {#if isExporting}
-                <Loader2 size={15} class="animate-spin" />
-                Exporting
+                <Loader2 size={15} class="animate-spin" /> Exporting…
             {:else if mode === "zip"}
-                <Archive size={15} />
-                Export
+                <Archive size={15} /> Export {photos.length}
             {:else}
-                <Download size={15} />
-                Export
+                <Download size={15} /> Export {photos.length}
             {/if}
         </button>
+    </aside>
 
-        <div class="grid grid-cols-2 gap-2">
-            <button
-                class="flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={xmpBusy !== null || allPhotos.length === 0}
-                onclick={exportOriginalXmp}
-                title="Export XMP sidecars beside original files"
-            >
-                {#if xmpBusy === "export"}
-                    <Loader2 size={13} class="animate-spin" />
-                {:else}
-                    <Download size={13} />
-                {/if}
-                XMP Out
-            </button>
-            <button
-                class="flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:cursor-not-allowed disabled:opacity-50"
-                disabled={xmpBusy !== null || allPhotos.length === 0}
-                onclick={importOriginalXmp}
-                title="Import XMP sidecars beside original files"
-            >
-                {#if xmpBusy === "import"}
-                    <Loader2 size={13} class="animate-spin" />
-                {:else}
-                    <Upload size={13} />
-                {/if}
-                XMP In
-            </button>
+    <!-- MAIN -->
+    <div class="flex min-w-0 flex-1 flex-col">
+        <div class="flex h-11 shrink-0 items-center gap-3 border-b border-border px-3.5">
+            <span class="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Export set</span>
+            <span class="font-mono text-[11px] text-muted-foreground">{photos.length} visible photos · {mode}</span>
         </div>
 
         {#if result}
-            <div class="rounded-md border border-border bg-card p-2 text-xs text-muted-foreground">
-                <div class="mb-1 flex items-center gap-1.5 font-semibold text-foreground">
-                    <Check size={13} class="text-pick" />
-                    {result.exported_count} exported
+            <div class="grid flex-1 place-items-center p-8">
+                <div class="w-full max-w-md rounded-lg border border-pick/30 bg-card p-6 text-center">
+                    <div class="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-pick/15 text-pick"><Check size={24} /></div>
+                    <div class="text-lg font-semibold text-foreground">{result.exported_count} exported</div>
+                    <div class="mt-1 truncate font-mono text-[11px] text-muted-foreground">{result.output_path}</div>
+                    {#if result.skipped_count > 0}
+                        <div class="mt-2 font-mono text-[11px] text-maybe">{result.skipped_count} skipped</div>
+                    {/if}
+                    <button class="mt-4 rounded-md border border-border px-3 py-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" onclick={() => (result = null)}>Export again</button>
                 </div>
-                <div class="truncate">{result.output_path}</div>
-                {#if result.skipped_count > 0}
-                    <div class="mt-1 text-reject">{result.skipped_count} skipped</div>
-                {/if}
             </div>
         {:else if error}
-            <div class="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{error}</div>
-        {/if}
-
-        {#if xmpResult}
-            <div class="rounded-md border border-border bg-card p-2 text-xs text-muted-foreground">
-                <div class="mb-1 flex items-center gap-1.5 font-semibold text-foreground">
-                    <Check size={13} class="text-pick" />
-                    {xmpResult.processed_count} sidecars processed
+            <div class="grid flex-1 place-items-center p-8">
+                <div class="w-full max-w-md rounded-lg border border-reject/40 bg-reject/5 p-6 text-center">
+                    <div class="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-reject/15 text-reject"><XCircle size={24} /></div>
+                    <div class="text-lg font-semibold text-foreground">Export failed</div>
+                    <div class="mt-1 font-mono text-[11px] text-reject">{error}</div>
+                    <button class="mt-4 rounded-md border border-border px-3 py-1.5 text-[12px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" onclick={() => (error = null)}>Dismiss</button>
                 </div>
-                {#if xmpResult.skipped_count > 0}
-                    <div class="text-muted-foreground">{xmpResult.skipped_count} skipped</div>
+            </div>
+        {:else if photos.length === 0}
+            <div class="grid flex-1 place-items-center px-8 text-center">
+                <div class="max-w-sm">
+                    <div class="font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-subtle">Nothing to export</div>
+                    <p class="mt-2 text-[13px] text-muted-foreground">Adjust filters in the library to build the set you want to export.</p>
+                </div>
+            </div>
+        {:else}
+            <div class="min-h-0 flex-1 overflow-y-auto p-3.5">
+                <div class="flex flex-wrap gap-2">
+                    {#each photos.slice(0, 60) as item (item.id)}
+                        <div class="h-[120px] w-[180px] shrink-0 overflow-hidden rounded-[4px] border border-border">
+                            <PhotoPreviewCard photo={item} detailMode="image" fit="cover" iconSize={20} showControls={false} containerClass="h-full w-full aspect-auto" />
+                        </div>
+                    {/each}
+                </div>
+                {#if photos.length > 60}
+                    <div class="mt-3 font-mono text-[11px] text-subtle">+ {photos.length - 60} more in this set</div>
                 {/if}
             </div>
-        {:else if xmpError}
-            <div class="rounded-md border border-destructive/40 bg-destructive/10 p-2 text-xs text-destructive">{xmpError}</div>
         {/if}
     </div>
 </section>

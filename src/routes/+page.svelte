@@ -14,24 +14,26 @@
     import TimelineView from "../lib/components/TimelineView.svelte";
     import Sidebar from "../lib/components/Sidebar.svelte";
     import PhotoViewer from "../lib/components/PhotoViewer.svelte";
+    import ExportPanel from "../lib/components/ExportPanel.svelte";
     import { HologramAPI } from "../lib/api.ts";
     import { buildSmartCollections } from "../lib/collections.ts";
     import { indexPhotoVisuals } from "../lib/visualIndex.ts";
     import type { CullFlag, Photo, PhotoFilter, SavedSearch, ThumbnailReady, VisualIndexEntry, VisualIndexProgress } from "../lib/types.ts";
     import {
-        Bookmark,
-        CalendarRange,
         Check,
         Circle,
+        Download,
         FolderOpen,
-        Grid,
+        GitCompareArrows,
         Image as ImageIcon,
+        LayoutGrid,
         Loader2,
         Minus,
         Plus,
         Rows3,
-        Search,
         Save,
+        Search,
+        Settings,
         Sparkles,
         Star,
         XCircle,
@@ -40,7 +42,8 @@
     type CullFilter = "all" | CullFlag;
     type LegacyDensity = "compact" | "balanced" | "large" | "lightbox";
     type GridDetails = "image" | "essentials" | "metadata";
-    type LibraryView = "grid" | "timeline" | "autocull";
+    type LibraryView = "grid" | "timeline";
+    type RailView = "library" | "autocull" | "export";
     const GRID_PREFERENCES_KEY = "hologram.gridPreferences";
     const GRID_ZOOM_STEPS = [120, 150, 180, 220, 270, 340, 430, 520] as const;
     const DEFAULT_GRID_ZOOM_LEVEL = 3;
@@ -53,6 +56,8 @@
     let gridZoomLevel = $state(DEFAULT_GRID_ZOOM_LEVEL);
     let gridDetailMode = $state<GridDetails>("metadata");
     let libraryView = $state<LibraryView>("grid");
+    let railView = $state<RailView>("library");
+    let searchInput = $state<HTMLInputElement>();
     let savedSearches = $state<SavedSearch[]>([]);
     let activeSavedSearchId = $state<string | null>(null);
     let savedSearchName = $state("");
@@ -70,16 +75,35 @@
 
     const hasLibrary = $derived($photos.length > 0);
     const cursorPhoto = $derived($displayPhotos[$selectedIndex]);
-    const pickedCount = $derived($displayPhotos.filter((photo) => photo.flag === "pick").length);
-    const rejectedCount = $derived($displayPhotos.filter((photo) => photo.flag === "reject").length);
-    const unmarkedCount = $derived(
-        $displayPhotos.filter((photo) => (photo.flag ?? "none") === "none" && (photo.rating ?? 0) === 0).length,
-    );
     const smartCollections = $derived(
         smartCollectionsEnabled ? buildSmartCollections($photos, visualIndex) : [],
     );
     const gridTileSize = $derived(GRID_ZOOM_STEPS[gridZoomLevel] ?? GRID_ZOOM_STEPS[DEFAULT_GRID_ZOOM_LEVEL]);
     const maxGridZoomLevel = GRID_ZOOM_STEPS.length - 1;
+
+    // Session totals are library-wide (independent of the active filter), for the HUD.
+    const sessionPicks = $derived($photos.filter((photo) => photo.flag === "pick").length);
+    const sessionRejects = $derived($photos.filter((photo) => photo.flag === "reject").length);
+    const reviewedCount = $derived(
+        $photos.filter((photo) => photo.flag === "pick" || photo.flag === "reject" || (photo.rating ?? 0) > 0).length,
+    );
+    const reviewPct = $derived($photos.length ? Math.round((reviewedCount / $photos.length) * 100) : 0);
+    const effectiveRail = $derived<RailView>(hasLibrary ? railView : "library");
+    const RATING_STEPS = [0, 1, 3, 5] as const;
+
+    function focusSearch() {
+        railView = "library";
+        queueMicrotask(() => searchInput?.focus());
+    }
+
+    function openCompare() {
+        if (hasLibrary) photoStore.setViewMode("viewer");
+    }
+
+    function cycleMinRating() {
+        const idx = RATING_STEPS.indexOf(minRating as (typeof RATING_STEPS)[number]);
+        setMinRating(RATING_STEPS[(idx + 1) % RATING_STEPS.length]);
+    }
 
     onMount(() => {
         loadSavedSearches();
@@ -427,24 +451,6 @@
         return text;
     }
 
-    function segmentClass(active: boolean): string {
-        return [
-            "inline-flex h-8 items-center justify-center gap-1.5 rounded-md px-3 text-xs font-semibold transition-colors",
-            active
-                ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground",
-        ].join(" ");
-    }
-
-    function iconButtonClass(active: boolean): string {
-        return [
-            "inline-flex h-8 min-w-8 items-center justify-center rounded-md px-2 text-xs font-semibold transition-colors",
-            active
-                ? "bg-primary text-primary-foreground"
-                : "bg-secondary text-muted-foreground hover:bg-accent hover:text-foreground",
-        ].join(" ");
-    }
-
     function displaySegmentClass(active: boolean): string {
         return [
             "grid h-8 w-9 place-items-center border-r border-border text-xs transition-colors last:border-r-0",
@@ -478,7 +484,41 @@
     <title>Hologram - Lighttable</title>
 </svelte:head>
 
+{#snippet railBtn(Icon: any, active: boolean, label: string, onclick: () => void, dot = false)}
+    <button
+        class="relative grid h-9 w-9 place-items-center rounded-lg transition-colors {active ? 'bg-secondary' : 'hover:bg-secondary/60'}"
+        {onclick}
+        title={label}
+        aria-label={label}
+        aria-pressed={active}
+    >
+        <Icon size={16} class={active ? "text-primary" : "text-muted-foreground"} />
+        {#if dot}<span class="absolute right-1.5 top-1.5 h-[7px] w-[7px] rounded-full bg-info"></span>{/if}
+    </button>
+{/snippet}
+
 <div class="flex h-screen overflow-hidden bg-background text-foreground">
+    <!-- ICON RAIL -->
+    <nav class="flex w-[52px] shrink-0 flex-col items-center gap-1.5 border-r border-border bg-rail py-3">
+        <div class="mb-3.5 h-5 w-5 rotate-45 rounded border-2 border-primary" title="Hologram"></div>
+        {@render railBtn(LayoutGrid, effectiveRail === "library", "Library", () => (railView = "library"))}
+        {@render railBtn(Search, false, "Search", focusSearch)}
+        {@render railBtn(Sparkles, effectiveRail === "autocull", "AutoCull", () => { if (hasLibrary) railView = "autocull"; }, isVisualIndexing)}
+        {@render railBtn(GitCompareArrows, false, "Compare", openCompare)}
+        {@render railBtn(Download, effectiveRail === "export", "Export", () => { if (hasLibrary) railView = "export"; })}
+        <div class="flex-1"></div>
+        {@render railBtn(Settings, false, "Settings", () => {})}
+    </nav>
+
+    {#if effectiveRail === "autocull"}
+        <div class="min-w-0 flex-1 overflow-y-auto bg-background">
+            <AutoCullView photos={$displayPhotos} allPhotos={$photos} />
+        </div>
+    {:else if effectiveRail === "export"}
+        <div class="min-w-0 flex-1 overflow-y-auto bg-background">
+            <ExportPanel photos={$displayPhotos} allPhotos={$photos} />
+        </div>
+    {:else}
     <Sidebar
         photos={$displayPhotos}
         allPhotos={$photos}
@@ -534,206 +574,140 @@
                     <p class="mt-4 text-sm">Scanning photos...</p>
                 </div>
             {:else}
-                <div class="flex h-16 shrink-0 items-center gap-4 border-b border-border bg-card/80 px-5">
-                    <div class="min-w-[9rem]">
-                        <div class="text-[10px] font-bold uppercase text-primary">Lighttable</div>
-                        <h1 class="truncate text-sm font-semibold tracking-normal text-foreground">
-                            {$displayPhotos.length} visible
-                            <span class="text-muted-foreground">/ {$photos.length} files</span>
-                        </h1>
-                    </div>
-
-                    <div class="relative min-w-[15rem] max-w-xl flex-1">
-                        <Search size={16} class="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-muted-foreground" />
+                <div class="flex h-11 shrink-0 items-center gap-2.5 border-b border-border px-3.5">
+                    <!-- search -->
+                    <div class="relative w-[300px] shrink-0">
+                        <Search size={13} class="pointer-events-none absolute left-2.5 top-1/2 -translate-y-1/2 text-subtle" />
                         <input
+                            bind:this={searchInput}
                             type="text"
-                            placeholder="Search filename, camera, lens, tags"
-                            class="h-9 w-full rounded-md border border-input bg-background pl-9 pr-3 text-sm text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/40"
+                            placeholder="Search filename, EXIF, tags…"
+                            class="h-8 w-full rounded-md border border-border bg-popover pl-8 pr-8 text-[12px] text-foreground outline-none placeholder:text-subtle focus:border-primary/60"
                             bind:value={searchQuery}
                             oninput={handleSearchInput}
                         />
+                        <span class="pointer-events-none absolute right-2 top-1/2 -translate-y-1/2 rounded border border-border px-[5px] py-px font-mono text-[10px] text-subtle">/</span>
                     </div>
 
-                    <div class="hidden items-center gap-1 lg:flex" aria-label="View mode">
-                        <button class={segmentClass(libraryView === "grid")} onclick={() => (libraryView = "grid")}>
-                            <Grid size={14} />
-                            Grid
-                        </button>
-                        <button class={segmentClass(libraryView === "timeline")} onclick={() => (libraryView = "timeline")}>
-                            <CalendarRange size={14} />
-                            Timeline
-                        </button>
-                        <button class={segmentClass(libraryView === "autocull")} onclick={() => (libraryView = "autocull")}>
-                            <Sparkles size={14} />
-                            AutoCull
-                        </button>
+                    <!-- cull status -->
+                    <div class="flex overflow-hidden rounded-md border border-border font-sans text-[11px] font-medium">
+                        <button class="px-[11px] py-[6px] transition-colors {cullFilter === 'all' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}" onclick={() => setCullFilter("all")}>All</button>
+                        <button class="px-[11px] py-[6px] transition-colors {cullFilter === 'pick' ? 'bg-secondary text-pick' : 'text-pick/80 hover:text-pick'}" onclick={() => setCullFilter("pick")}>Picks {sessionPicks}</button>
+                        <button class="px-[11px] py-[6px] transition-colors {cullFilter === 'reject' ? 'bg-secondary text-reject' : 'text-reject/80 hover:text-reject'}" onclick={() => setCullFilter("reject")}>Rejects {sessionRejects}</button>
+                        <button class="px-[11px] py-[6px] transition-colors {cullFilter === 'none' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}" onclick={() => setCullFilter("none")}>Unmarked</button>
                     </div>
 
-                    <div class="hidden min-w-[14rem] items-center gap-1 min-[1850px]:flex" aria-label="Saved search">
-                        <Bookmark size={14} class="shrink-0 text-muted-foreground" />
-                        <input
-                            class="h-8 min-w-0 flex-1 rounded-md border border-input bg-background px-2 text-xs text-foreground outline-none placeholder:text-muted-foreground focus:border-ring focus:ring-2 focus:ring-ring/40"
-                            placeholder="Search name"
-                            bind:value={savedSearchName}
-                        />
-                        <button class={iconButtonClass(false)} onclick={saveCurrentSearch} title="Save search">
-                            <Save size={14} />
-                        </button>
-                    </div>
-
-                    <div class="hidden items-center gap-1 lg:flex" aria-label="Cull status filters">
-                        <button class={segmentClass(cullFilter === "all")} onclick={() => setCullFilter("all")}>
-                            <Grid size={14} />
-                            All
-                        </button>
-                        <button class={segmentClass(cullFilter === "pick")} onclick={() => setCullFilter("pick")}>
-                            <Check size={14} />
-                            Picks
-                        </button>
-                        <button class={segmentClass(cullFilter === "reject")} onclick={() => setCullFilter("reject")}>
-                            <XCircle size={14} />
-                            Rejects
-                        </button>
-                        <button class={segmentClass(cullFilter === "none")} onclick={() => setCullFilter("none")}>
-                            <Circle size={14} />
-                            Unmarked
-                        </button>
-                    </div>
-
-                    <div class="hidden items-center gap-1 xl:flex" aria-label="Minimum rating">
-                        {#each [0, 1, 3, 5] as rating}
-                            <button
-                                class={iconButtonClass(minRating === rating)}
-                                onclick={() => setMinRating(rating)}
-                                title={rating === 0 ? "Any rating" : `${rating}+ stars`}
-                            >
-                                {#if rating === 0}
-                                    Any
-                                {:else}
-                                    {rating}<Star size={12} fill="currentColor" />
-                                {/if}
-                            </button>
-                        {/each}
-                    </div>
-
+                    <!-- rating -->
                     <button
-                        class={segmentClass(hideRejects)}
-                        onclick={toggleHideRejects}
-                        title="Hide rejected photos"
+                        class="rounded-md border border-border px-[10px] py-[6px] font-sans text-[11px] font-medium whitespace-nowrap transition-colors hover:text-foreground {minRating > 0 ? 'text-foreground' : 'text-muted-foreground'}"
+                        onclick={cycleMinRating}
+                        title="Minimum rating filter"
                     >
-                        <XCircle size={14} />
-                        Hide Rejects
+                        <span class="text-rating">★</span> {minRating === 0 ? "any" : `${minRating}+`}
                     </button>
+
+                    <!-- hide rejects switch -->
+                    <button class="flex items-center gap-1.5 whitespace-nowrap font-sans text-[11px] font-medium text-muted-foreground" onclick={toggleHideRejects} aria-pressed={hideRejects}>
+                        <span class="relative h-[15px] w-[26px] shrink-0 rounded-full transition-colors {hideRejects ? 'bg-primary' : 'bg-secondary'}">
+                            <span class="absolute top-[2px] h-[11px] w-[11px] rounded-full transition-all {hideRejects ? 'right-[2px] bg-background' : 'left-[2px] bg-muted-foreground'}"></span>
+                        </span>
+                        Hide rejects
+                    </button>
+
+                    <div class="flex-1"></div>
+
+                    <!-- indexing status -->
+                    {#if isVisualIndexing}
+                        <div class="flex items-center gap-1.5 whitespace-nowrap font-mono text-[10px] text-info">
+                            <span class="h-1.5 w-1.5 rounded-full bg-info"></span>
+                            indexing {visualIndexProgress.current}/{visualIndexProgress.total}
+                        </div>
+                    {/if}
+
+                    <!-- view toggle -->
+                    <div class="flex gap-2 font-mono text-[11px] font-medium">
+                        <button class={libraryView === "grid" ? "text-foreground" : "text-subtle hover:text-muted-foreground"} onclick={() => (libraryView = "grid")}>GRID</button>
+                        <button class={libraryView === "timeline" ? "text-foreground" : "text-subtle hover:text-muted-foreground"} onclick={() => (libraryView = "timeline")}>TIMELINE</button>
+                    </div>
+
+                    <!-- save search -->
+                    <button class="grid h-7 w-7 place-items-center rounded-md text-subtle transition-colors hover:bg-secondary hover:text-foreground" onclick={saveCurrentSearch} title="Save current search">
+                        <Save size={13} />
+                    </button>
+
+                    {#if libraryView === "grid"}
+                        <div class="h-4 w-px bg-border"></div>
+                        <div class="flex items-center gap-1.5 text-subtle" aria-label="Thumbnail zoom">
+                            <button class="grid h-6 w-6 place-items-center rounded transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-30" onclick={() => adjustGridZoom(-1)} disabled={gridZoomLevel === 0} aria-label="Zoom out"><Minus size={13} /></button>
+                            <input class="grid-zoom-slider h-6 w-16" type="range" min="0" max={maxGridZoomLevel} step="1" value={gridZoomLevel} oninput={(event) => setGridZoomLevel(Number(event.currentTarget.value))} title={`Thumbnail size ${gridTileSize}px`} aria-label="Grid thumbnail size" />
+                            <button class="grid h-6 w-6 place-items-center rounded transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-30" onclick={() => adjustGridZoom(1)} disabled={gridZoomLevel === maxGridZoomLevel} aria-label="Zoom in"><Plus size={13} /></button>
+                        </div>
+                        <div class="inline-flex h-7 overflow-hidden rounded-md border border-border" aria-label="Grid details">
+                            <button class={displaySegmentClass(gridDetailMode === "image")} onclick={() => setGridDetailMode("image")} title="Images only" aria-pressed={gridDetailMode === "image"}><ImageIcon size={13} /></button>
+                            <button class={displaySegmentClass(gridDetailMode === "essentials")} onclick={() => setGridDetailMode("essentials")} title="Title and stars" aria-pressed={gridDetailMode === "essentials"}><Star size={13} fill={gridDetailMode === "essentials" ? "currentColor" : "none"} /></button>
+                            <button class={displaySegmentClass(gridDetailMode === "metadata")} onclick={() => setGridDetailMode("metadata")} title="Full metadata" aria-pressed={gridDetailMode === "metadata"}><Rows3 size={13} /></button>
+                        </div>
+                    {/if}
                 </div>
 
                 {#if $displayPhotos.length === 0}
                     <div class="grid flex-1 place-items-center px-8 text-center">
                         <div class="max-w-sm rounded-lg border border-border bg-card p-6">
-                            <h2 class="text-sm font-semibold uppercase text-foreground">No frames match</h2>
-                            <p class="mt-2 text-sm text-muted-foreground">Relax the search, rating, flag, or EXIF filters.</p>
+                            <div class="font-mono text-[11px] font-semibold uppercase tracking-[0.1em] text-subtle">No results</div>
+                            <h2 class="mt-1.5 text-sm font-semibold text-foreground">No frames match</h2>
+                            <p class="mt-2 text-[13px] text-muted-foreground">Relax the search, rating, flag, or EXIF filters.</p>
                         </div>
                     </div>
                 {:else}
                     <div class="min-h-0 flex-1 overflow-y-auto bg-background">
                         {#if libraryView === "timeline"}
                             <TimelineView photos={$displayPhotos} tileMinWidth={gridTileSize} />
-                        {:else if libraryView === "autocull"}
-                            <AutoCullView photos={$displayPhotos} allPhotos={$photos} />
                         {:else}
                             <PhotoGrid photos={$displayPhotos} tileMinWidth={gridTileSize} detailMode={gridDetailMode} />
                         {/if}
                     </div>
 
-                    <div class="flex h-12 shrink-0 items-center justify-between gap-4 border-t border-border bg-card/80 px-5">
-                        <div class="flex min-w-0 flex-1 items-center gap-3">
-                            {#if cursorPhoto}
-                                <span class="truncate text-sm font-semibold text-foreground">{cursorPhoto.file_name}</span>
-                                <span class="hidden truncate text-xs text-muted-foreground md:inline">
-                                    {cursorPhoto.exif.camera_model ?? "Unknown camera"}
-                                </span>
-                                <span class="hidden truncate text-xs text-muted-foreground lg:inline">
-                                    {exposureSummary(cursorPhoto)}
-                                </span>
-                            {/if}
-                        </div>
-
-                        {#if libraryView === "grid"}
-                            <div class="hidden shrink-0 items-center gap-4 lg:flex" aria-label="Grid display controls">
-                                <div class="flex items-center gap-2 text-muted-foreground" aria-label="Thumbnail zoom">
-                                    <button
-                                        class="grid h-7 w-7 place-items-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
-                                        onclick={() => adjustGridZoom(-1)}
-                                        disabled={gridZoomLevel === 0}
-                                        title="Zoom out"
-                                        aria-label="Zoom out"
-                                    >
-                                        <Minus size={14} />
-                                    </button>
-                                    <input
-                                        class="grid-zoom-slider h-7 w-32"
-                                        type="range"
-                                        min="0"
-                                        max={maxGridZoomLevel}
-                                        step="1"
-                                        value={gridZoomLevel}
-                                        oninput={(event) => setGridZoomLevel(Number(event.currentTarget.value))}
-                                        title={`Grid thumbnail size ${gridTileSize}px`}
-                                        aria-label="Grid thumbnail size"
-                                    />
-                                    <button
-                                        class="grid h-7 w-7 place-items-center rounded-md transition-colors hover:bg-accent hover:text-foreground disabled:pointer-events-none disabled:opacity-35"
-                                        onclick={() => adjustGridZoom(1)}
-                                        disabled={gridZoomLevel === maxGridZoomLevel}
-                                        title="Zoom in"
-                                        aria-label="Zoom in"
-                                    >
-                                        <Plus size={14} />
-                                    </button>
+                    <!-- HUD -->
+                    <div class="flex h-[58px] shrink-0 items-center gap-5 border-t border-border bg-card px-4">
+                        {#if cursorPhoto}
+                            <div class="flex min-w-0 items-center gap-3">
+                                <div class="h-[38px] w-[38px] shrink-0 overflow-hidden rounded bg-secondary outline outline-[1.5px] outline-primary">
+                                    {#if cursorPhoto.thumbnail}
+                                        <img src={cursorPhoto.thumbnail} alt="" class="h-full w-full object-cover" />
+                                    {/if}
                                 </div>
-
-                                <div class="h-5 w-px bg-border"></div>
-
-                                <div class="inline-flex h-8 overflow-hidden rounded-md border border-border bg-background" aria-label="Grid details">
-                                    <button
-                                        class={displaySegmentClass(gridDetailMode === "image")}
-                                        onclick={() => setGridDetailMode("image")}
-                                        title="Images only"
-                                        aria-label="Images only"
-                                        aria-pressed={gridDetailMode === "image"}
-                                    >
-                                        <ImageIcon size={14} />
-                                    </button>
-                                    <button
-                                        class={displaySegmentClass(gridDetailMode === "essentials")}
-                                        onclick={() => setGridDetailMode("essentials")}
-                                        title="Title and stars"
-                                        aria-label="Title and stars"
-                                        aria-pressed={gridDetailMode === "essentials"}
-                                    >
-                                        <Star size={14} fill={gridDetailMode === "essentials" ? "currentColor" : "none"} />
-                                    </button>
-                                    <button
-                                        class={displaySegmentClass(gridDetailMode === "metadata")}
-                                        onclick={() => setGridDetailMode("metadata")}
-                                        title="Full metadata"
-                                        aria-label="Full metadata"
-                                        aria-pressed={gridDetailMode === "metadata"}
-                                    >
-                                        <Rows3 size={14} />
-                                    </button>
+                                <div class="min-w-0 whitespace-nowrap">
+                                    <div class="truncate font-mono text-[12px] font-semibold text-foreground">
+                                        {cursorPhoto.file_name}{#if cursorPhoto.paired_with}<span class="text-subtle"> + pair</span>{/if}
+                                    </div>
+                                    <div class="truncate font-mono text-[11px] text-muted-foreground">
+                                        {cursorPhoto.exif.camera_model ?? "—"} · <span class="text-foreground">{exposureSummary(cursorPhoto) || "—"}</span>
+                                    </div>
                                 </div>
                             </div>
                         {/if}
 
-                        <div class="flex shrink-0 items-center gap-3 text-xs text-muted-foreground">
-                            <span class="tabular-nums">{pickedCount} picks</span>
-                            <span class="tabular-nums">{rejectedCount} rejects</span>
-                            <span class="tabular-nums">{unmarkedCount} unmarked</span>
+                        <div class="flex-1"></div>
+
+                        <div class="flex items-center gap-3.5 whitespace-nowrap font-mono text-[11px] font-medium">
+                            <span class="text-muted-foreground">reviewed <span class="text-foreground">{reviewedCount}/{$photos.length}</span></span>
+                            <span class="relative h-1 w-[120px] shrink-0 overflow-hidden rounded-full bg-secondary">
+                                <span class="absolute left-0 top-0 h-full rounded-full bg-primary" style:width={`${reviewPct}%`}></span>
+                            </span>
+                            <span class="text-pick">✓ {sessionPicks}</span>
+                            <span class="text-reject">✕ {sessionRejects}</span>
+                        </div>
+
+                        <div class="flex gap-1.5 whitespace-nowrap font-mono text-[10px] text-subtle">
+                            <span class="rounded border border-border px-1.5 py-[3px]">P pick</span>
+                            <span class="rounded border border-border px-1.5 py-[3px]">X reject</span>
+                            <span class="rounded border border-border px-1.5 py-[3px]">␣ open</span>
                         </div>
                     </div>
                 {/if}
             {/if}
         </main>
+    {/if}
     {/if}
 
     {#if showSmartCollectionsModal}

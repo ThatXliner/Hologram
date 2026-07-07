@@ -2,20 +2,13 @@
     import { photoStore, stats } from "../stores/photoStore.ts";
     import { HologramAPI } from "../api.ts";
     import type { ExifData, Photo, PhotoFilter, SavedSearch, SmartCollection, ThumbnailReady, VisualIndexProgress } from "../types.ts";
-    import ExportPanel from "./ExportPanel.svelte";
     import {
-        BarChart3,
-        Bookmark,
-        Camera,
         Check,
-        Filter,
         FolderOpen,
+        Lock,
         Plus,
-        Sparkles,
-        Star,
         Trash2,
         X,
-        XCircle,
     } from "@lucide/svelte";
 
     interface Props {
@@ -282,229 +275,120 @@
     function progressWidth(percent: number): string {
         return `${Math.max(0, Math.min(100, percent))}%`;
     }
+
+    // Active advanced filters, summarized as removable chips for the deck header.
+    const activeFilterChips = $derived(
+        Object.entries(activeFilter).flatMap(([key, value]) => {
+            if (["search", "rating_gte", "flag"].includes(key)) return [];
+            if (value == null || value === "") return [];
+            if (Array.isArray(value)) {
+                if (key === "tags") {
+                    return (value as string[]).map((tag) => ({ key: `tags:${tag}`, label: `#${tag}` }));
+                }
+                const [min, max] = value as (number | string | undefined)[];
+                if ((min == null || min === "") && (max == null || max === "")) return [];
+                const name = key.replace(/_range$/, "").replace(/_/g, " ");
+                const range = `${min ?? "…"}–${max ?? "…"}`;
+                return [{ key, label: `${name} ${range}` }];
+            }
+            return [{ key, label: String(value) }];
+        }),
+    );
+
+    function removeFilterChip(chipKey: string) {
+        if (chipKey.startsWith("tags:")) {
+            removeTagFilter(chipKey.slice(5));
+        } else {
+            removeFilter(chipKey);
+        }
+    }
+
+    const redundantRawCount = $derived($stats?.raw_count ?? 0);
 </script>
 
-<aside class="flex h-screen w-80 shrink-0 flex-col border-r border-sidebar-border bg-sidebar text-sidebar-foreground">
-    <div class="border-b border-sidebar-border p-4">
-        <button
-            class="flex h-10 w-full items-center justify-center gap-2 rounded-lg bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:cursor-not-allowed disabled:opacity-50"
-            onclick={importFolder}
-        >
-            <FolderOpen size={18} />
-            Import Photos
-        </button>
-    </div>
+{#snippet deckLabel(text: string)}
+    <div class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">{text}</div>
+{/snippet}
 
-    <div class="min-h-0 flex-1 overflow-y-auto">
-        {#if $stats}
-            <section class="border-b border-sidebar-border p-4">
-                <div class="mb-3 flex items-center gap-2">
-                    <BarChart3 size={14} class="text-primary" />
-                    <h2 class="text-xs font-bold uppercase text-foreground">Session</h2>
-                    <span class="ml-auto text-xs tabular-nums text-muted-foreground">{formatNumber(photos.length)} visible</span>
+<aside class="flex h-full w-[248px] shrink-0 flex-col border-r border-sidebar-border bg-card text-foreground">
+    <div class="flex min-h-0 flex-1 flex-col gap-[18px] overflow-y-auto p-[14px_14px_16px]">
+        <!-- LIBRARY -->
+        <section>
+            {@render deckLabel("Library")}
+            <div class="text-[13px] font-semibold text-foreground">
+                {allPhotos.length > 0 ? "Current library" : "No library"}
+            </div>
+            {#if $stats}
+                <div class="mt-1 font-mono text-[11px] text-muted-foreground">
+                    {formatNumber($stats.total_photos)} photos · {formatNumber($stats.paired_count)} RAW+JPEG pairs
                 </div>
+                {#if redundantRawCount > 0}
+                    <div class="mt-[6px] rounded-md border border-border bg-background p-[7px_8px] font-mono text-[10px] leading-[1.5] text-subtle">
+                        ◈ {formatNumber(redundantRawCount)} RAW files carry embedded JPEG previews — Hologram reads them for instant thumbnails.
+                    </div>
+                {/if}
+            {/if}
+            <button
+                class="mt-[8px] flex h-8 w-full items-center justify-center gap-2 rounded-md border border-primary/40 text-[11px] font-semibold text-primary transition-colors hover:bg-primary/10"
+                onclick={importFolder}
+            >
+                <FolderOpen size={14} />
+                {allPhotos.length > 0 ? "Import another folder" : "Import photos"}
+            </button>
+        </section>
 
-                <div class="grid grid-cols-2 gap-2">
-                    <div class="rounded-lg border border-border bg-card p-3">
-                        <span class="block text-lg font-semibold tabular-nums text-foreground">{formatNumber($stats.total_photos)}</span>
-                        <span class="text-xs text-muted-foreground">Total</span>
-                    </div>
-                    <div class="rounded-lg border border-border bg-card p-3">
-                        <span class="block text-lg font-semibold tabular-nums text-foreground">{formatNumber($stats.paired_count)}</span>
-                        <span class="text-xs text-muted-foreground">Pairs</span>
-                    </div>
-                    <div class="rounded-lg border border-border bg-card p-3">
-                        <span class="block text-lg font-semibold tabular-nums text-foreground">{formatNumber($stats.raw_count)}</span>
-                        <span class="text-xs text-muted-foreground">RAW</span>
-                    </div>
-                    <div class="rounded-lg border border-border bg-card p-3">
-                        <span class="block text-lg font-semibold tabular-nums text-foreground">{formatNumber($stats.jpeg_count)}</span>
-                        <span class="text-xs text-muted-foreground">JPEG</span>
-                    </div>
-                </div>
-
-            </section>
-        {/if}
-
+        <!-- SESSION -->
         {#if allPhotos.length > 0}
-            <section class="border-b border-sidebar-border p-4">
-                <div class="mb-3 flex items-center gap-2">
-                    <Star size={14} class="text-rating" fill="currentColor" />
-                    <h2 class="text-xs font-bold uppercase text-foreground">Cull Progress</h2>
-                    <span class="ml-auto text-xs font-semibold tabular-nums text-muted-foreground">{reviewPct}%</span>
+            <section>
+                <div class="mb-2 flex items-baseline justify-between">
+                    {@render deckLabel("Session")}
+                    <span class="font-mono text-[10px] font-semibold text-muted-foreground">{reviewPct}% reviewed</span>
                 </div>
-                <div class="h-1.5 overflow-hidden rounded-full bg-secondary">
+                <div class="h-1 overflow-hidden rounded-full bg-secondary">
                     <div class="h-full rounded-full bg-primary" style:width={progressWidth(reviewPct)}></div>
                 </div>
-                <div class="mt-3 grid grid-cols-3 gap-2">
-                    <div class="rounded-lg border border-border bg-card p-2">
-                        <div class="flex items-center gap-1.5 text-xs text-pick">
-                            <Check size={13} />
-                            Picks
-                        </div>
-                        <div class="mt-1 text-base font-semibold tabular-nums text-foreground">{pickedCount}</div>
+                <div class="mt-[10px] grid grid-cols-3 gap-[6px] font-mono text-[11px]">
+                    <div class="rounded-md bg-secondary p-2">
+                        <div class="flex items-center gap-1 text-pick"><Check size={12} />pick</div>
+                        <div class="mt-[2px] text-[15px] font-semibold tabular-nums text-foreground">{pickedCount}</div>
                     </div>
-                    <div class="rounded-lg border border-border bg-card p-2">
-                        <div class="flex items-center gap-1.5 text-xs text-reject">
-                            <XCircle size={13} />
-                            Reject
-                        </div>
-                        <div class="mt-1 text-base font-semibold tabular-nums text-foreground">{rejectedCount}</div>
+                    <div class="rounded-md bg-secondary p-2">
+                        <div class="flex items-center gap-1 text-reject"><X size={12} />rej</div>
+                        <div class="mt-[2px] text-[15px] font-semibold tabular-nums text-foreground">{rejectedCount}</div>
                     </div>
-                    <div class="rounded-lg border border-border bg-card p-2">
-                        <div class="flex items-center gap-1.5 text-xs text-rating">
-                            <Star size={13} fill="currentColor" />
-                            Rated
-                        </div>
-                        <div class="mt-1 text-base font-semibold tabular-nums text-foreground">{ratedCount}</div>
+                    <div class="rounded-md bg-secondary p-2">
+                        <div class="text-rating">★ rated</div>
+                        <div class="mt-[2px] text-[15px] font-semibold tabular-nums text-foreground">{ratedCount}</div>
                     </div>
                 </div>
             </section>
         {/if}
 
-        {#if allPhotos.length > 0}
-            <section class="border-b border-sidebar-border p-4">
-                <div class="mb-3 flex items-center gap-2">
-                    <Sparkles size={14} class="text-primary" />
-                    <button
-                        class="text-left text-xs font-bold uppercase text-foreground transition-colors hover:text-primary"
-                        onclick={smartCollectionsEnabled ? undefined : onSmartCollectionsTitleClick}
-                    >
-                        Smart Collections
-                    </button>
-                    {#if !smartCollectionsEnabled}
-                        <span class="ml-auto rounded-full bg-secondary px-1.5 py-0.5 text-[10px] font-bold uppercase text-muted-foreground">Off</span>
-                    {:else if smartCollectionsIndexing}
-                        <span class="ml-auto text-xs tabular-nums text-muted-foreground">
-                            {visualIndexProgress.total ? Math.round((visualIndexProgress.current / visualIndexProgress.total) * 100) : 0}%
-                        </span>
-                    {/if}
-                </div>
-
-                {#if !smartCollectionsEnabled}
-                    <button
-                        class="flex w-full items-center justify-between gap-2 rounded-md border border-dashed border-border bg-card px-3 py-2 text-left text-xs text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
-                        onclick={onSmartCollectionsTitleClick}
-                    >
-                        <span class="font-semibold">Enable visual index</span>
-                        <Sparkles size={14} />
-                    </button>
-                {:else}
-                    {#if smartCollectionsIndexing}
-                        <div class="mb-2 h-1.5 overflow-hidden rounded-full bg-secondary">
-                            <div
-                                class="h-full rounded-full bg-primary"
-                                style:width={progressWidth(visualIndexProgress.total ? (visualIndexProgress.current / visualIndexProgress.total) * 100 : 0)}
-                            ></div>
-                        </div>
-                    {/if}
-
-                    <div class="space-y-1">
-                        <button
-                            class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {activeSmartCollectionId == null ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
-                            onclick={() => onSmartCollectionSelect(null)}
-                        >
-                            <span class="truncate font-semibold">All Photos</span>
-                            <span class="tabular-nums">{allPhotos.length}</span>
-                        </button>
-                        {#each smartCollections.slice(0, 12) as collection (collection.id)}
-                            <button
-                                class="flex w-full items-center justify-between gap-2 rounded-md px-2 py-1.5 text-left text-xs transition-colors {activeSmartCollectionId === collection.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
-                                onclick={() => onSmartCollectionSelect(collection.id)}
-                                title={collection.detail}
-                            >
-                                <span class="min-w-0">
-                                    <span class="block truncate font-semibold">{collection.name}</span>
-                                    <span class="block truncate text-[10px] opacity-75">{collection.detail}</span>
-                                </span>
-                                <span class="shrink-0 tabular-nums">{collection.photo_ids.length}</span>
-                            </button>
-                        {/each}
-                        {#if !smartCollectionsIndexing && smartCollections.length === 0}
-                            <div class="rounded-md bg-card px-3 py-2 text-xs text-muted-foreground">
-                                No visual collections yet.
-                            </div>
-                        {/if}
-                    </div>
-                {/if}
-            </section>
-        {/if}
-
-        {#if savedSearches.length > 0}
-            <section class="border-b border-sidebar-border p-4">
-                <div class="mb-3 flex items-center gap-2">
-                    <Bookmark size={14} class="text-primary" />
-                    <h2 class="text-xs font-bold uppercase text-foreground">Saved Searches</h2>
-                </div>
-                <div class="space-y-1">
-                    {#each savedSearches as saved (saved.id)}
-                        <div class="flex items-center gap-1">
-                            <button
-                                class="min-w-0 flex-1 rounded-md px-2 py-1.5 text-left text-xs transition-colors {activeSavedSearchId === saved.id ? 'bg-primary text-primary-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
-                                onclick={() => onSavedSearchSelect(saved.id)}
-                                title={saved.name}
-                            >
-                                <span class="block truncate font-semibold">{saved.name}</span>
-                                <span class="block truncate text-[10px] opacity-75">{saved.search || "Filtered set"}</span>
-                            </button>
-                            <button
-                                class="grid h-7 w-7 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-accent hover:text-reject"
-                                onclick={() => onSavedSearchDelete(saved.id)}
-                                title="Delete saved search"
-                            >
-                                <Trash2 size={13} />
-                            </button>
-                        </div>
-                    {/each}
-                </div>
-            </section>
-        {/if}
-
-        {#if photos.length > 0}
-            <ExportPanel photos={photos} allPhotos={allPhotos} />
-        {/if}
-
-        {#if $stats && Object.keys($stats.cameras).length > 0}
-            <section class="border-b border-sidebar-border p-4">
-                <div class="mb-3 flex items-center gap-2">
-                    <Camera size={14} class="text-primary" />
-                    <h2 class="text-xs font-bold uppercase text-foreground">Top Cameras</h2>
-                </div>
-                <div class="space-y-2">
-                    {#each Object.entries($stats.cameras)
-                        .sort(([, a], [, b]) => b - a)
-                        .slice(0, 4) as [camera, count]}
-                        <div class="flex items-center justify-between gap-3 text-sm">
-                            <span class="truncate text-muted-foreground">{camera}</span>
-                            <span class="font-semibold tabular-nums text-foreground">{count}</span>
-                        </div>
-                    {/each}
-                </div>
-            </section>
-        {/if}
-
-        <section class="p-4">
-            <div class="mb-3 flex items-center gap-2">
-                <Filter size={14} class="text-primary" />
-                <h2 class="text-xs font-bold uppercase text-foreground">Advanced Filters</h2>
+        <!-- FILTERS -->
+        <section>
+            <div class="mb-2 flex items-center justify-between">
+                {@render deckLabel("Filters")}
                 {#if activeFilterCount > 0}
-                    <span class="rounded-full bg-primary px-1.5 py-0.5 text-[10px] font-bold text-primary-foreground">{activeFilterCount}</span>
+                    <button class="font-mono text-[10px] text-subtle hover:text-foreground" onclick={clearFilter}>clear</button>
                 {/if}
+            </div>
+            <div class="flex flex-wrap gap-[5px]">
+                {#each activeFilterChips as chip (chip.key)}
+                    <span class="inline-flex items-center gap-1 rounded-full border border-primary/40 px-2 py-[3px] font-mono text-[10px] text-primary">
+                        {chip.label}
+                        <button onclick={() => removeFilterChip(chip.key)} class="hover:text-foreground" aria-label="Remove filter">✕</button>
+                    </span>
+                {/each}
                 <button
-                    class="ml-auto grid h-7 w-7 place-items-center rounded-md bg-secondary text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
+                    class="inline-flex items-center gap-1 rounded-full border border-dashed border-white/20 px-2 py-[3px] font-mono text-[10px] text-muted-foreground transition-colors hover:border-primary hover:text-foreground"
                     onclick={() => (showFilters = !showFilters)}
-                    title={showFilters ? "Collapse filters" : "Expand filters"}
                 >
-                    {#if showFilters}
-                        <X size={14} />
-                    {:else}
-                        <Plus size={14} />
-                    {/if}
+                    <Plus size={11} />{showFilters ? "done" : "add filter"}
                 </button>
             </div>
 
             {#if showFilters}
-                <div class="space-y-3">
+                <div class="mt-3 space-y-3">
                     {#each availableSelectFilters.filter((field) => addedFilterKeys.has(field.filterKey)) as filter (filter.filterKey)}
                         <div class="space-y-1.5">
                             <div class="flex items-center justify-between gap-2">
@@ -655,16 +539,107 @@
                         </div>
                     {/if}
 
-                    {#if activeFilterCount > 0}
-                        <button
-                            class="h-8 w-full rounded-md bg-secondary px-3 text-xs font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground"
-                            onclick={clearFilter}
-                        >
-                            Clear Advanced Filters
-                        </button>
-                    {/if}
                 </div>
             {/if}
         </section>
+
+        <!-- SAVED SEARCHES -->
+        {#if savedSearches.length > 0}
+            <section>
+                {@render deckLabel("Saved searches")}
+                <div class="flex flex-col gap-[2px]">
+                    {#each savedSearches as saved (saved.id)}
+                        <div class="group flex items-center gap-1">
+                            <button
+                                class="min-w-0 flex-1 rounded-[5px] px-2 py-[6px] text-left text-[12px] font-medium transition-colors {activeSavedSearchId === saved.id ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                onclick={() => onSavedSearchSelect(saved.id)}
+                                title={saved.name}
+                            >
+                                <span class="block truncate">{saved.name}</span>
+                            </button>
+                            <button
+                                class="grid h-6 w-6 shrink-0 place-items-center rounded-md text-subtle opacity-0 transition-opacity hover:text-reject group-hover:opacity-100"
+                                onclick={() => onSavedSearchDelete(saved.id)}
+                                title="Delete saved search"
+                            >
+                                <Trash2 size={12} />
+                            </button>
+                        </div>
+                    {/each}
+                </div>
+            </section>
+        {/if}
+
+        <!-- SMART COLLECTIONS -->
+        {#if allPhotos.length > 0}
+            <section>
+                <div class="mb-2 flex items-baseline justify-between">
+                    {@render deckLabel("Smart collections")}
+                    {#if smartCollectionsEnabled && smartCollectionsIndexing}
+                        <span class="font-mono text-[10px] text-info">
+                            {visualIndexProgress.total ? Math.round((visualIndexProgress.current / visualIndexProgress.total) * 100) : 0}%
+                        </span>
+                    {/if}
+                </div>
+
+                {#if !smartCollectionsEnabled}
+                    <button
+                        class="w-full rounded-md border border-dashed border-white/15 p-[9px_10px] text-left font-sans text-[11px] leading-[1.5] text-subtle transition-colors hover:border-primary/50"
+                        onclick={onSmartCollectionsTitleClick}
+                    >
+                        <Lock size={11} class="mb-[3px] inline text-subtle" /> Locked — enable local visual indexing to group by scene &amp; similarity.
+                        <span class="text-primary">Set up…</span>
+                    </button>
+                {:else}
+                    {#if smartCollectionsIndexing}
+                        <div class="mb-2 h-1 overflow-hidden rounded-full bg-secondary">
+                            <div
+                                class="h-full rounded-full bg-info"
+                                style:width={progressWidth(visualIndexProgress.total ? (visualIndexProgress.current / visualIndexProgress.total) * 100 : 0)}
+                            ></div>
+                        </div>
+                    {/if}
+                    <div class="flex flex-col gap-[2px]">
+                        <button
+                            class="flex w-full items-center justify-between gap-2 rounded-[5px] px-2 py-[6px] text-[12px] font-medium transition-colors {activeSmartCollectionId == null ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                            onclick={() => onSmartCollectionSelect(null)}
+                        >
+                            <span class="truncate">All photos</span>
+                            <span class="font-mono text-[10px] tabular-nums text-subtle">{allPhotos.length}</span>
+                        </button>
+                        {#each smartCollections.slice(0, 12) as collection (collection.id)}
+                            <button
+                                class="flex w-full items-center justify-between gap-2 rounded-[5px] px-2 py-[6px] text-[12px] font-medium transition-colors {activeSmartCollectionId === collection.id ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:bg-accent hover:text-foreground'}"
+                                onclick={() => onSmartCollectionSelect(collection.id)}
+                                title={collection.detail}
+                            >
+                                <span class="min-w-0 truncate">{collection.name}</span>
+                                <span class="shrink-0 font-mono text-[10px] tabular-nums text-subtle">{collection.photo_ids.length}</span>
+                            </button>
+                        {/each}
+                        {#if !smartCollectionsIndexing && smartCollections.length === 0}
+                            <div class="px-2 py-[6px] font-mono text-[10px] text-subtle">No visual collections yet.</div>
+                        {/if}
+                    </div>
+                {/if}
+            </section>
+        {/if}
+
+        <!-- TOP CAMERAS -->
+        {#if $stats && Object.keys($stats.cameras).length > 0}
+            <section>
+                {@render deckLabel("Top cameras")}
+                <div class="flex flex-col gap-[6px] font-mono text-[11px]">
+                    {#each Object.entries($stats.cameras)
+                        .sort(([, a], [, b]) => b - a)
+                        .slice(0, 4) as [camera, count]}
+                        <div class="flex items-center justify-between gap-3">
+                            <span class="truncate text-muted-foreground">{camera}</span>
+                            <span class="tabular-nums text-foreground">{count}</span>
+                        </div>
+                    {/each}
+                </div>
+            </section>
+        {/if}
     </div>
 </aside>

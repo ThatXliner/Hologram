@@ -6,7 +6,6 @@
         Droplets,
         Thermometer,
         CircleDot,
-        RotateCcw,
         Save,
         Loader2,
         Trash2,
@@ -21,9 +20,19 @@
         onPreview: (blobUrl: string | null) => void;
         preset?: RawProcessingPreset | null;
         onPresetSaved?: (preset: RawProcessingPreset) => void;
+        resetToken?: number;
     }
 
-    let { imageSrc, filePath, onPreview, preset = null, onPresetSaved = () => {} }: Props = $props();
+    let { imageSrc, filePath, onPreview, preset = null, onPresetSaved = () => {}, resetToken = 0 }: Props = $props();
+
+    // Reset when the parent (develop header) bumps resetToken.
+    let seenResetToken = resetToken;
+    $effect(() => {
+        if (resetToken !== seenResetToken) {
+            seenResetToken = resetToken;
+            resetAll();
+        }
+    });
 
     // --- Adjustment state ---
     let exposure = $state(0);
@@ -630,19 +639,6 @@
 </script>
 
 <div class="space-y-4">
-    <!-- Editing banner -->
-    <div class="flex items-center gap-2">
-        <span class="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-primary">EDITING · PREVIEW ONLY</span>
-        <button
-            class="ml-auto flex items-center gap-1 text-xs text-muted-foreground transition-colors hover:text-foreground"
-            onclick={resetAll}
-        >
-            <RotateCcw size={12} />
-            Reset to neutral
-        </button>
-    </div>
-    <p class="font-mono text-[9.5px] leading-[1.5] text-subtle">Original untouched — edits live in Hologram's catalog + optional XMP. Proxy preview only.</p>
-
     <!-- Header -->
     <div class="flex items-center justify-between">
         <h3 class="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">

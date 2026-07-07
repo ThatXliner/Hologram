@@ -26,11 +26,14 @@ const GRADIENT_BINS = 8;
 const TRANSFORMER_MODEL_TIMEOUT_MS = 12_000;
 const TRANSFORMER_INFERENCE_TIMEOUT_MS = 8_000;
 const EMBEDDING_RANKER_FEATURES = 256;
-const BURST_WINDOW_MS = 2_000;
-const LOOSE_BURST_WINDOW_MS = 5_000;
-const BURST_VISUAL_SIMILARITY = 0.82;
-const SEQUENCE_VISUAL_SIMILARITY = 0.88;
+const BURST_WINDOW_MS = 3_000;
+const LOOSE_BURST_WINDOW_MS = 8_000;
+const BURST_VISUAL_SIMILARITY = 0.78;
+const SEQUENCE_VISUAL_SIMILARITY = 0.84;
 const MAX_BURST_SIZE = 18;
+// Visual near-duplicate pass: groups look-alike frames that aren't temporally adjacent.
+const SIMILAR_CLUSTER_SIMILARITY = 0.9;
+const SIMILAR_PASS_MAX_PHOTOS = 2_500;
 const GBDT_TREES = 48;
 const GBDT_MAX_DEPTH = 3;
 const GBDT_LEARNING_RATE = 0.08;
@@ -1490,27 +1493,70 @@ function buildClusters(scored: ScoredPhoto[]): AutoCullCluster[] {
     }
   }
 
-  return clusters.filter((items) => items.length > 1).map((items, index) => {
-    const sortedByScore = [...items].sort((a, b) => b.final_score - a.final_score);
-    const startTime = minCaptureTimestamp(items);
-    const endTime = maxCaptureTimestamp(items);
-    const similarities = items
-      .slice(1)
-      .map((item) => item.embedding && items[0].embedding ? cosineSimilarity(item.embedding, items[0].embedding) : 0)
-      .filter((value) => value > 0);
-    const averageSimilarity = similarities.length
-      ? similarities.reduce((sum, value) => sum + value, 0) / similarities.length
-      : 0.72;
-    return {
-      id: `burst-${index + 1}`,
-      kind: "burst",
-      confidence: clamp(averageSimilarity, 0.5, 0.99),
-      photo_ids: items.map((item) => item.photo_id),
-      top_pick_id: sortedByScore[0].photo_id,
-      start_time: startTime == null ? undefined : new Date(startTime).toISOString(),
-      end_time: endTime == null ? undefined : new Date(endTime).toISOString(),
-    };
-  });
+  const bursts = clusters.filter((items) => items.length > 1);
+  const burstClusters = bursts.map((items, index) => makeCluster(items, `burst-${index + 1}`, "burst"));
+
+  // Second pass: group visual near-duplicates that the temporal pass missed
+  // (e.g. re-shot the same frame minutes apart, or bursts with missing timestamps).
+  const usedIds = new Set(bursts.flat().map((item) => item.photo_id));
+  const remaining = sorted.filter((item) => !usedIds.has(item.photo_id) && item.embedding);
+  const similarClusters = buildSimilarClusters(remaining).map((items, index) =>
+    makeCluster(items, `similar-${index + 1}`, "similar"),
+  );
+
+  return [...burstClusters, ...similarClusters];
+}
+
+function makeCluster(items: ScoredPhoto[], id: string, kind: AutoCullCluster["kind"]): AutoCullCluster {
+  const sortedByScore = [...items].sort((a, b) => b.final_score - a.final_score);
+  const startTime = minCaptureTimestamp(items);
+  const endTime = maxCaptureTimestamp(items);
+  const anchor = items[0];
+  const similarities = items
+    .slice(1)
+    .map((item) => (item.embedding && anchor.embedding ? cosineSimilarity(item.embedding, anchor.embedding) : 0))
+    .filter((value) => value > 0);
+  const averageSimilarity = similarities.length
+    ? similarities.reduce((sum, value) => sum + value, 0) / similarities.length
+    : 0.72;
+  return {
+    id,
+    kind,
+    confidence: clamp(averageSimilarity, 0.5, 0.99),
+    photo_ids: items.map((item) => item.photo_id),
+    top_pick_id: sortedByScore[0].photo_id,
+    start_time: startTime == null ? undefined : new Date(startTime).toISOString(),
+    end_time: endTime == null ? undefined : new Date(endTime).toISOString(),
+  };
+}
+
+// Greedy visual near-duplicate grouping over photos not already in a temporal burst.
+function buildSimilarClusters(items: ScoredPhoto[]): ScoredPhoto[][] {
+  if (items.length < 2 || items.length > SIMILAR_PASS_MAX_PHOTOS) return [];
+  const used = new Set<string>();
+  const groups: ScoredPhoto[][] = [];
+
+  for (let i = 0; i < items.length; i++) {
+    const anchor = items[i];
+    if (used.has(anchor.photo_id)) continue;
+    const group = [anchor];
+    for (let j = i + 1; j < items.length; j++) {
+      const candidate = items[j];
+      if (used.has(candidate.photo_id) || group.length >= MAX_BURST_SIZE) continue;
+      if (!sameCamera(anchor, candidate)) continue;
+      const similarity = visualSimilarity(anchor, candidate);
+      if (similarity != null && similarity >= SIMILAR_CLUSTER_SIMILARITY) {
+        group.push(candidate);
+        used.add(candidate.photo_id);
+      }
+    }
+    if (group.length > 1) {
+      used.add(anchor.photo_id);
+      groups.push(group);
+    }
+  }
+
+  return groups;
 }
 
 function shouldJoinBurst(current: ScoredPhoto[], photo: ScoredPhoto): boolean {

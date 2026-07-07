@@ -105,6 +105,8 @@
 
     let tagInput = $state("");
     let notesValue = $state("");
+    let actionMessage = $state<string | null>(null);
+    let editorResetToken = $state(0);
     const filmstripStart = $derived(Math.max(0, currentIndex - 5));
     const filmstripPhotos = $derived(photos.slice(filmstripStart, Math.min(photos.length, currentIndex + 6)));
 
@@ -358,7 +360,8 @@
 
         switch (event.key) {
             case "Escape":
-                if (zoomLevel > 1) resetZoom();
+                if (showEditor) showEditor = false;
+                else if (zoomLevel > 1) resetZoom();
                 else closeViewer();
                 break;
             case "ArrowLeft":
@@ -439,7 +442,9 @@
         try {
             await HologramAPI.openInEditor(activePhoto.file_path);
         } catch (error) {
-            console.error("Error opening in editor:", error);
+            console.error("Error opening in system viewer:", error);
+            actionMessage = `Couldn't open in system viewer: ${error}`;
+            setTimeout(() => (actionMessage = null), 4000);
         }
     }
 
@@ -924,6 +929,17 @@
 {#if activePhoto}
     <!-- svelte-ignore a11y_click_events_have_key_events -->
     <div class="fixed inset-0 z-[100] flex flex-col bg-canvas text-foreground" role="dialog" tabindex="-1" onclick={handleBackdropClick}>
+        {#if actionMessage}
+            <div class="pointer-events-none absolute left-1/2 top-3 z-50 -translate-x-1/2 rounded-md border border-reject/40 bg-reject/15 px-3 py-1.5 font-mono text-[11px] text-reject">{actionMessage}</div>
+        {/if}
+        <input
+            bind:this={presetInput}
+            type="file"
+            accept=".xmp,.cube,.json"
+            class="hidden"
+            onchange={(event) => void importPreset(event)}
+        />
+        {#if !showEditor}
         <header class="flex h-10 shrink-0 items-center gap-3.5 border-b border-border bg-canvas px-3.5">
             <button
                 class="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-subtle transition-colors hover:text-foreground"
@@ -1166,13 +1182,6 @@
                         >
                             <Upload size={13} />
                         </button>
-                        <input
-                            bind:this={presetInput}
-                            type="file"
-                            accept=".xmp,.cube,.json"
-                            class="hidden"
-                            onchange={(event) => void importPreset(event)}
-                        />
                     </div>
                     <div class="space-y-2">
                         <div class="flex gap-2">
@@ -1210,20 +1219,6 @@
                         {/if}
                     </div>
                 </section>
-
-                {#if showEditor}
-                    <ImageEditor
-                        imageSrc={getOriginalSrc()}
-                        filePath={activePhoto.file_path}
-                        preset={activePreset}
-                        onPresetSaved={handlePresetSaved}
-                        onPreview={(url) => {
-                            revokeBlobUrl(editedPreviewUrl);
-                            editedPreviewUrl = url;
-                        }}
-                    />
-                    <div class="my-5 border-t border-border"></div>
-                {/if}
 
                 <section class="space-y-4">
                     <div>
@@ -1419,5 +1414,80 @@
                 </button>
             {/each}
         </footer>
+        {:else}
+        <!-- DEVELOP (3d) -->
+        <header class="flex h-10 shrink-0 items-center gap-3.5 border-b border-border bg-canvas px-3.5">
+            <button
+                class="rounded border border-border px-1.5 py-0.5 font-mono text-[10px] text-subtle transition-colors hover:text-foreground"
+                onclick={(event) => { event.stopPropagation(); showEditor = false; }}
+                title="Exit edit"
+            >ESC</button>
+            <span class="truncate font-mono text-[12px] font-semibold text-foreground">{activePhoto.file_name}</span>
+            <span class="rounded border border-primary/40 px-1.5 py-0.5 font-mono text-[9px] font-semibold text-primary">EDITING · PREVIEW ONLY</span>
+            <span class="truncate font-mono text-[10px] text-subtle">original untouched — edits live in Hologram's catalog + optional XMP</span>
+            <div class="flex-1"></div>
+            <button
+                class="rounded-md border border-border px-3 py-1 text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                onclick={(event) => { event.stopPropagation(); editorResetToken++; }}
+            >Reset to neutral</button>
+        </header>
+
+        <!-- svelte-ignore a11y_no_static_element_interactions a11y_click_events_have_key_events -->
+        <div class="flex min-h-0 flex-1" onclick={(event) => event.stopPropagation()}>
+            <div class="flex min-w-0 flex-1 items-center justify-center p-6">
+                <div class="relative flex max-h-full max-w-full items-center justify-center">
+                    <img
+                        src={getImageSrc()}
+                        alt={activePhoto.file_name}
+                        class="photo-preview-image max-h-full max-w-full rounded-[3px] object-contain"
+                        draggable="false"
+                    />
+                    <span class="absolute left-2.5 top-2.5 rounded bg-black/50 px-1.5 py-0.5 font-mono text-[9px] text-subtle">proxy preview · 2048px</span>
+                </div>
+            </div>
+
+            <aside class="flex w-[320px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-border bg-card p-4">
+                <ImageEditor
+                    imageSrc={getOriginalSrc()}
+                    filePath={activePhoto.file_path}
+                    preset={activePreset}
+                    resetToken={editorResetToken}
+                    onPresetSaved={handlePresetSaved}
+                    onPreview={(url) => {
+                        revokeBlobUrl(editedPreviewUrl);
+                        editedPreviewUrl = url;
+                    }}
+                />
+                <div class="border-t border-border pt-4">
+                    <div class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Presets</div>
+                    <div class="flex flex-wrap gap-1.5">
+                        {#each allPresets as preset (preset.id)}
+                            <button
+                                class="rounded-md px-2.5 py-1 font-mono text-[11px] transition-colors {selectedPresetId === preset.id ? 'bg-primary text-primary-foreground' : 'bg-secondary text-muted-foreground hover:text-foreground'}"
+                                onclick={() => { selectedPresetId = preset.id; applySelectedPreset(); }}
+                            >{preset.name}</button>
+                        {/each}
+                    </div>
+                    <div class="mt-2 grid grid-cols-2 gap-2">
+                        <button class="flex h-8 items-center justify-center gap-1.5 rounded-md border border-border font-sans text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" onclick={() => presetInput?.click()}>
+                            <Upload size={12} /> Import XMP
+                        </button>
+                        <button class="flex h-8 items-center justify-center gap-1.5 rounded-md border border-border font-sans text-[11px] font-medium text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground" onclick={() => presetInput?.click()}>
+                            <Upload size={12} /> Import .cube LUT
+                        </button>
+                    </div>
+                </div>
+            </aside>
+        </div>
+
+        <footer class="flex h-10 shrink-0 items-center justify-between border-t border-border bg-canvas px-3.5 font-mono text-[10px] text-subtle">
+            <span>edits auto-saved to catalog · <span class="text-muted-foreground">write XMP sidecar on export</span></span>
+            <div class="flex items-center gap-2">
+                <button class="rounded border border-border px-1.5 py-0.5 transition-colors hover:text-foreground disabled:opacity-30" onclick={(event) => { event.stopPropagation(); navigatePrevious(); }} disabled={!hasPrevious} aria-label="Previous">◀</button>
+                <button class="rounded border border-border px-1.5 py-0.5 transition-colors hover:text-foreground disabled:opacity-30" onclick={(event) => { event.stopPropagation(); navigateNext(); }} disabled={!hasNext} aria-label="Next">▶</button>
+                <span>neighbor keeps edit panel open</span>
+            </div>
+        </footer>
+        {/if}
     </div>
 {/if}

@@ -3,6 +3,7 @@
         Check,
         Circle,
         Loader2,
+        Maximize2,
         Plus,
         RefreshCw,
         Sparkles,
@@ -484,6 +485,23 @@
     function scorePct10(score: number | undefined): string {
         return score == null ? "--" : (Math.max(0, Math.min(1, score)) * 10).toFixed(1);
     }
+
+    const activeProfileName = $derived(
+        preferenceProfiles.find((profile) => profile.id === activePreferenceProfileId)?.name ?? "Personal",
+    );
+
+    function formatClusterTime(iso: string | undefined): string {
+        if (!iso) return "";
+        const date = new Date(iso);
+        return Number.isNaN(date.getTime())
+            ? ""
+            : date.toLocaleTimeString([], { hour: "2-digit", minute: "2-digit", second: "2-digit" });
+    }
+
+    function openInLoupe(photoId: string) {
+        setSelectedPhoto(photoId);
+        photoStore.setViewMode("viewer");
+    }
 </script>
 
 <svelte:window onkeydown={handleKeydown} />
@@ -560,9 +578,9 @@
                     <Plus size={12} /> New profile
                 </button>
             </div>
-            <div class="mt-2 rounded-md border border-primary/40 px-2.5 py-[6px] text-center font-sans text-[11px] font-medium text-primary">
-                Picks &amp; ratings train this profile
-            </div>
+            <p class="mt-2 px-1 font-sans text-[11px] italic leading-[1.5] text-subtle">
+                Picks &amp; ratings train this profile.
+            </p>
         </section>
     </aside>
     <!-- MAIN -->
@@ -586,7 +604,7 @@
                 </div>
                 {#if reviewMode === "bursts" && activeCluster}
                     <div class="font-mono text-[11px] text-muted-foreground">
-                        cluster <span class="text-foreground">{clusterList.findIndex((cluster) => cluster.id === activeCluster.id) + 1}</span> / {burstCount} · {clusterTitle(activeCluster).toLowerCase()}
+                        cluster <span class="text-foreground">{clusterList.findIndex((cluster) => cluster.id === activeCluster.id) + 1}</span> / {burstCount} · {clusterTitle(activeCluster).toLowerCase()}{#if formatClusterTime(activeCluster.start_time)} · {formatClusterTime(activeCluster.start_time)}{/if}
                     </div>
                 {:else}
                     <div class="font-mono text-[11px] text-muted-foreground">{mainFrames.length} photos · worst first</div>
@@ -594,7 +612,7 @@
                 <div class="flex-1"></div>
                 <div class="flex gap-1.5 font-mono text-[10px] text-subtle">
                     <span class="rounded border border-border px-1.5 py-[3px]">↵ accept</span>
-                    <span class="rounded border border-border px-1.5 py-[3px]">←→ frames</span>
+                    <span class="rounded border border-border px-1.5 py-[3px]">⏎⏎ preview</span>
                     <span class="rounded border border-border px-1.5 py-[3px]">⇥ next</span>
                 </div>
             </div>
@@ -607,14 +625,18 @@
                         {@const badge = frameBadge(rec?.recommendation)}
                         {@const flag = normalizedFlag(frame.photo)}
                         <button
-                            class="relative h-[194px] w-[290px] shrink-0 overflow-hidden rounded-[5px] border transition-all {selectedPhotoId === frame.photo.id ? 'border-primary shadow-[0_0_0_4px_rgba(92,232,164,.15)]' : 'border-border hover:border-ring'} {flag === 'reject' ? 'opacity-50' : ''}"
+                            class="group relative h-[194px] w-[290px] shrink-0 overflow-hidden rounded-[5px] border transition-all {selectedPhotoId === frame.photo.id ? 'border-primary shadow-[0_0_0_4px_rgba(92,232,164,.15)]' : 'border-border hover:border-ring'} {flag === 'reject' ? 'opacity-50' : ''}"
                             data-autocull-photo-id={frame.photo.id}
                             onclick={() => selectPhoto(frame.photo.id)}
-                            title={frame.photo.file_name}
+                            ondblclick={() => openInLoupe(frame.photo.id)}
+                            title="{frame.photo.file_name} — double-click to preview"
                         >
                             <PhotoPreviewCard photo={frame.photo} detailMode="image" fit="cover" iconSize={22} showControls={false} containerClass="h-full w-full aspect-auto" />
                             <span class="absolute left-2 top-2 rounded px-[7px] py-[2px] font-mono text-[9px] font-bold {badge.cls}">{badge.text}{#if rec && badge.text === "TOP PICK"} · {percent(rec.final_score)}{/if}</span>
                             {#if flag === "pick"}<span class="absolute right-2 top-2 grid h-4 w-4 place-items-center rounded-full bg-pick text-[10px] font-bold text-black" title="manual pick overrides">✓</span>{/if}
+                            <span class="absolute inset-0 grid place-items-center bg-black/25 opacity-0 transition-opacity group-hover:opacity-100">
+                                <span class="flex items-center gap-1 rounded-md bg-black/65 px-2 py-1 font-mono text-[10px] text-white"><Maximize2 size={12} /> preview</span>
+                            </span>
                             <span class="absolute inset-x-0 bottom-0 flex items-center justify-between gap-2 bg-gradient-to-t from-black/75 to-transparent px-2 pb-[5px] pt-3.5 font-mono text-[10px] text-white">
                                 <span class="truncate">{frame.photo.file_name}</span>
                                 <span class="{flag === 'none' && rec?.recommendation === 'SELECT' ? 'text-pick' : 'text-white/85'}">{scorePct10(rec?.final_score)}</span>
@@ -652,7 +674,10 @@
                 {@render deckLabel(`Score — ${selectedPhoto.file_name}`)}
                 {#if rec}
                     {@const badge = frameBadge(rec.recommendation)}
-                    <span class="inline-block rounded px-[9px] py-1 font-mono text-[11px] font-bold {badge.cls}">{rec.recommendation?.replace("_", " ") ?? "—"}</span>
+                    <div class="flex items-center gap-2.5">
+                        <span class="rounded px-[9px] py-1 font-mono text-[11px] font-bold {badge.cls}">{rec.recommendation?.replace("_", " ") ?? "—"}</span>
+                        <span class="font-mono text-[11px] text-muted-foreground">confidence {percent(rec.confidence)}</span>
+                    </div>
                 {/if}
             </div>
             {#if rec}
@@ -666,7 +691,7 @@
                         <div class="h-1 rounded-full bg-secondary"><div class="h-1 rounded-full bg-info" style:width={scoreWidth(rec.technical_score)}></div></div>
                     </div>
                     <div>
-                        <div class="mb-1 flex justify-between font-mono text-[10.5px] text-muted-foreground"><span>PERSONAL</span><span class="text-foreground">{scorePct10(rec.personal_score)}</span></div>
+                        <div class="mb-1 flex justify-between font-mono text-[10.5px] text-muted-foreground"><span>PERSONAL — {activeProfileName}</span><span class="text-foreground">{scorePct10(rec.personal_score)}</span></div>
                         <div class="h-1 rounded-full bg-secondary"><div class="h-1 rounded-full bg-pick" style:width={scoreWidth(rec.personal_score)}></div></div>
                     </div>
                 </div>
@@ -674,8 +699,13 @@
                     <div class="flex justify-between"><span>final</span><span class="text-foreground">{formatScore(rec.final_score)}</span></div>
                     <div class="flex justify-between"><span>technical</span><span class="text-foreground">{formatScore(rec.technical_score)}</span></div>
                     <div class="flex justify-between"><span>personal</span><span class="text-foreground">{formatScore(rec.personal_score)}</span></div>
-                    <div class="flex justify-between"><span>signal</span><span class="text-foreground">{rec.embedding ? (session.embedding_backend ?? "embedding") : "metadata"}</span></div>
-                    {#if activeCluster}<div class="flex justify-between"><span>cluster size</span><span class="text-foreground">{activeCluster.photo_ids.length}</span></div>{/if}
+                    <div class="flex justify-between"><span>confidence</span><span class="text-foreground">{percent(rec.confidence)}</span></div>
+                    <div class="flex justify-between"><span>taste signal</span><span class="text-foreground">{rec.behavior_signal >= 0 ? "+" : ""}{formatScore(rec.behavior_signal)}</span></div>
+                    <div class="flex justify-between"><span>source</span><span class="text-foreground">{rec.embedding ? (session.embedding_backend ?? "embedding") : "metadata"}</span></div>
+                    {#if activeCluster}
+                        <div class="flex justify-between"><span>cluster size</span><span class="text-foreground">{activeCluster.photo_ids.length}</span></div>
+                        <div class="flex justify-between"><span>similar to picks</span><span class="{activeCluster.confidence >= 0.85 ? 'text-pick' : 'text-foreground'}">{activeCluster.confidence >= 0.85 ? "high" : activeCluster.confidence >= 0.7 ? "medium" : "low"}</span></div>
+                    {/if}
                 </div>
             {/if}
 

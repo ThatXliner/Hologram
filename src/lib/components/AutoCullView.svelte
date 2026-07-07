@@ -474,14 +474,6 @@
                   .filter((frame): frame is { photo: Photo; rec: AutoCullPhoto } => Boolean(frame.photo)),
     );
 
-    // Clusters queued after the active one, for the UP NEXT strip.
-    const upNextClusters = $derived(
-        (() => {
-            const idx = clusterList.findIndex((cluster) => cluster.id === activeCluster?.id);
-            return clusterList.slice(idx + 1, idx + 6);
-        })(),
-    );
-
     function scorePct10(score: number | undefined): string {
         return score == null ? "--" : (Math.max(0, Math.min(1, score)) * 10).toFixed(1);
     }
@@ -501,6 +493,16 @@
     function openInLoupe(photoId: string) {
         setSelectedPhoto(photoId);
         photoStore.setViewMode("viewer");
+    }
+
+    const activeClusterIndex = $derived(
+        Math.max(0, clusterList.findIndex((cluster) => cluster.id === activeCluster?.id)),
+    );
+
+    function stepCluster(delta: number) {
+        if (clusterList.length === 0) return;
+        const next = clusterList[Math.max(0, Math.min(clusterList.length - 1, activeClusterIndex + delta))];
+        if (next) selectCluster(next);
     }
 </script>
 
@@ -603,8 +605,22 @@
                     <button class="px-3 py-[6px] transition-colors {reviewMode === 'all' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}" onclick={() => setReviewMode("all")}>Ranked · worst first</button>
                 </div>
                 {#if reviewMode === "bursts" && activeCluster}
-                    <div class="font-mono text-[11px] text-muted-foreground">
-                        cluster <span class="text-foreground">{clusterList.findIndex((cluster) => cluster.id === activeCluster.id) + 1}</span> / {burstCount} · {clusterTitle(activeCluster).toLowerCase()}{#if formatClusterTime(activeCluster.start_time)} · {formatClusterTime(activeCluster.start_time)}{/if}
+                    <div class="flex items-center gap-1.5">
+                        <button
+                            class="grid h-6 w-6 place-items-center rounded border border-border text-subtle transition-colors hover:text-foreground disabled:opacity-30"
+                            onclick={() => stepCluster(-1)}
+                            disabled={activeClusterIndex === 0}
+                            aria-label="Previous cluster"
+                        >‹</button>
+                        <div class="font-mono text-[11px] text-muted-foreground">
+                            cluster <span class="text-foreground">{activeClusterIndex + 1}</span> / {burstCount} · {clusterTitle(activeCluster).toLowerCase()}{#if formatClusterTime(activeCluster.start_time)} · {formatClusterTime(activeCluster.start_time)}{/if}
+                        </div>
+                        <button
+                            class="grid h-6 w-6 place-items-center rounded border border-border text-subtle transition-colors hover:text-foreground disabled:opacity-30"
+                            onclick={() => stepCluster(1)}
+                            disabled={activeClusterIndex >= clusterList.length - 1}
+                            aria-label="Next cluster"
+                        >›</button>
                     </div>
                 {:else}
                     <div class="font-mono text-[11px] text-muted-foreground">{mainFrames.length} photos · worst first</div>
@@ -612,7 +628,7 @@
                 <div class="flex-1"></div>
                 <div class="flex gap-1.5 font-mono text-[10px] text-subtle">
                     <span class="rounded border border-border px-1.5 py-[3px]">↵ accept</span>
-                    <span class="rounded border border-border px-1.5 py-[3px]">⏎⏎ preview</span>
+                    <span class="rounded border border-border px-1.5 py-[3px]">dbl-click preview</span>
                     <span class="rounded border border-border px-1.5 py-[3px]">⇥ next</span>
                 </div>
             </div>
@@ -648,15 +664,21 @@
                     {/if}
                 </div>
 
-                {#if reviewMode === "bursts" && upNextClusters.length > 0}
+                {#if reviewMode === "bursts" && clusterList.length > 1}
                     <div class="mt-auto">
-                        {@render deckLabel("Up next")}
-                        <div class="flex gap-1.5">
-                            {#each upNextClusters as cluster (cluster.id)}
+                        {@render deckLabel(`Clusters · ${clusterList.length}`)}
+                        <div class="flex gap-1.5 overflow-x-auto pb-1">
+                            {#each clusterList as cluster, index (cluster.id)}
                                 {@const top = photosById.get(cluster.top_pick_id)}
-                                <button class="relative h-[62px] w-[92px] shrink-0 overflow-hidden rounded-[3px] border border-border transition-colors hover:border-ring" onclick={() => selectCluster(cluster)} title={clusterTitle(cluster)}>
+                                {@const isActive = cluster.id === activeCluster?.id}
+                                <button
+                                    class="relative h-[62px] w-[92px] shrink-0 overflow-hidden rounded-[3px] transition-all {isActive ? 'outline outline-2 -outline-offset-2 outline-primary' : 'border border-border opacity-70 hover:opacity-100'}"
+                                    onclick={() => selectCluster(cluster)}
+                                    title={`Cluster ${index + 1} · ${clusterTitle(cluster)} · ${cluster.photo_ids.length} frames`}
+                                >
                                     {#if top}<PhotoPreviewCard photo={top} detailMode="image" fit="cover" iconSize={14} showControls={false} containerClass="h-full w-full aspect-auto" />{/if}
-                                    <span class="absolute bottom-0.5 left-1 font-mono text-[8px] text-white/80">{cluster.photo_ids.length}</span>
+                                    <span class="absolute left-1 top-1 rounded bg-black/60 px-1 font-mono text-[8px] text-white/90">{index + 1}</span>
+                                    <span class="absolute bottom-0.5 right-1 font-mono text-[8px] text-white/80">{cluster.photo_ids.length}</span>
                                 </button>
                             {/each}
                         </div>

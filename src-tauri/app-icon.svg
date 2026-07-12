@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1024 1024" role="img" aria-label="Hologram app icon">
+  <rect width="1024" height="1024" fill="#0a0c0e"/>
+  <path fill="#84e5a9" fill-rule="evenodd" d="M555 215 809 469q43 43 0 86L555 809q-43 43-86 0L215 555q-43-43 0-86l254-254q43-43 86 0Zm-43 63L278 512l234 234 234-234-234-234Z"/>
+</svg>

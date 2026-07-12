@@ -1,0 +1,4 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Hologram">
+  <rect width="64" height="64" rx="12" fill="#0a0c0e"/>
+  <path fill="#84e5a9" fill-rule="evenodd" d="M35 12 52 29q3 3 0 6L35 52q-3 3-6 0L12 35q-3-3 0-6l17-17q3-3 6 0Zm-2.8 3.8L15.8 32.2 32.2 48.6 48.6 32.2 32.2 15.8Z"/>
+</svg>

@@ -41,9 +41,10 @@
     interface Props {
         photos: Photo[];
         allPhotos: Photo[];
+        onOpenPreview: (photoIds: string[], selectedPhotoId: string) => void;
     }
 
-    let { photos, allPhotos }: Props = $props();
+    let { photos, allPhotos, onOpenPreview }: Props = $props();
 
     let session = $state<AutoCullSession | null>(null);
     let progress = $state<VisualIndexProgress>({ current: 0, total: 0 });
@@ -516,7 +517,10 @@
 
     function openInLoupe(photoId: string) {
         setSelectedPhoto(photoId);
-        photoStore.setViewMode("viewer");
+        const previewIds = activeCluster
+            ? visibleClusterPhotoIds(activeCluster)
+            : [photoId];
+        onOpenPreview(previewIds, photoId);
     }
 
     const activeClusterIndex = $derived(
@@ -714,7 +718,7 @@
                             ondblclick={() => openInLoupe(frame.photo.id)}
                             title="{frame.photo.file_name} — double-click to preview"
                         >
-                            <PhotoPreviewCard photo={frame.photo} detailMode="image" fit="cover" iconSize={22} showControls={false} containerClass="h-full w-full aspect-auto" />
+                            <PhotoPreviewCard photo={frame.photo} detailMode="image" fit="cover" iconSize={22} previewQuality="display" showControls={false} containerClass="h-full w-full aspect-auto" />
                             <span class="absolute left-2 top-2 rounded px-[7px] py-[2px] font-mono text-[9px] font-bold {badge.cls}">{badge.text}{#if rec && badge.text === "TOP PICK"} · {percent(rec.final_score)}{/if}</span>
                             {#if flag === "pick"}<span class="absolute right-2 top-2 grid h-4 w-4 place-items-center rounded-full bg-pick text-[10px] font-bold text-black" title="manual pick overrides">✓</span>{/if}
                             <span class="absolute inset-0 grid place-items-center bg-black/25 opacity-0 transition-opacity group-hover:opacity-100">

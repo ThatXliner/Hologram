@@ -1,6 +1,6 @@
 <script lang="ts">
     import { ImageOff } from "@lucide/svelte";
-    import { onDestroy } from "svelte";
+    import { onDestroy, onMount } from "svelte";
     import { HologramAPI } from "../api.ts";
     import { photoPreviewSrc } from "../photoPreview.ts";
     import type { Photo } from "../types.ts";
@@ -33,6 +33,8 @@
     let failedDisplayPhotoId = $state<string | null>(null);
     let loadingDisplayPhotoId = $state<string | null>(null);
     let displayRequestId = 0;
+    let unlistenRawRender: (() => void) | null = null;
+    let destroyed = false;
 
     const fallbackSrc = $derived(failedPhotoId === photo.id ? "" : photoPreviewSrc(photo));
     const src = $derived(
@@ -62,7 +64,25 @@
         void loadDisplayPreview(photoId, filePath, fileType, cacheKey);
     });
 
+    onMount(() => {
+        void HologramAPI.onRawRenderReady(({ id }) => {
+            if (quality !== "display" || id !== photo.id) return;
+
+            const cacheKey = displayPreviewCacheKey(photo);
+            const staleUrl = displayPreviewUrlCache.get(cacheKey);
+            clearDisplayPreview();
+            if (staleUrl) URL.revokeObjectURL(staleUrl);
+            displayPreviewUrlCache.delete(cacheKey);
+            void loadDisplayPreview(photo.id, photo.file_path, photo.file_type, cacheKey);
+        }).then((unlisten) => {
+            if (destroyed) unlisten();
+            else unlistenRawRender = unlisten;
+        });
+    });
+
     onDestroy(() => {
+        destroyed = true;
+        unlistenRawRender?.();
         displayRequestId += 1;
         clearDisplayPreview();
     });

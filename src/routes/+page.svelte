@@ -100,6 +100,26 @@
         if (hasLibrary) photoStore.setViewMode("viewer");
     }
 
+    let previewScopeIds = $state<string[] | null>(null);
+    let previewStartIndex = $state(0);
+    const previewPhotos = $derived(
+        previewScopeIds
+            ? previewScopeIds
+                  .map((id) => $displayPhotos.find((photo) => photo.id === id))
+                  .filter((photo): photo is Photo => Boolean(photo))
+            : $displayPhotos,
+    );
+
+    function openScopedPreview(photoIds: string[], selectedPhotoId: string) {
+        previewScopeIds = photoIds;
+        previewStartIndex = Math.max(0, photoIds.indexOf(selectedPhotoId));
+        photoStore.setViewMode("viewer");
+    }
+
+    $effect(() => {
+        if ($viewMode !== "viewer") previewScopeIds = null;
+    });
+
     function cycleMinRating() {
         const idx = RATING_STEPS.indexOf(minRating as (typeof RATING_STEPS)[number]);
         setMinRating(RATING_STEPS[(idx + 1) % RATING_STEPS.length]);
@@ -512,7 +532,7 @@
 
     {#if effectiveRail === "autocull"}
         <div class="min-w-0 flex-1 overflow-y-auto bg-background">
-            <AutoCullView photos={$displayPhotos} allPhotos={$photos} />
+            <AutoCullView photos={$displayPhotos} allPhotos={$photos} onOpenPreview={openScopedPreview} />
         </div>
     {:else if effectiveRail === "export"}
         <div class="min-w-0 flex-1 overflow-y-auto bg-background">
@@ -747,6 +767,10 @@
     {/if}
 
     {#if $viewMode === "viewer"}
-        <PhotoViewer photos={$displayPhotos} allPhotos={$filteredPhotos} startIndex={$selectedIndex} />
+        <PhotoViewer
+            photos={previewPhotos}
+            allPhotos={$filteredPhotos}
+            startIndex={previewScopeIds ? previewStartIndex : $selectedIndex}
+        />
     {/if}
 </div>

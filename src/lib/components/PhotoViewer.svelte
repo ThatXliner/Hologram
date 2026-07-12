@@ -84,8 +84,10 @@
     let failedThumbnailIds = $state<Set<string>>(new Set());
     const failedImageRetryKeys = new Set<string>();
     const preloadCache = new Map<string, LoadedImage>();
+    const FULL_RES_CACHE_LIMIT = 8;
     const preloadingSet = new Set<string>();
     let unlistenRawRender: (() => void) | null = null;
+    let cancelDeferredJpegLoad: (() => void) | null = null;
 
     let showEditor = $state(false);
     let editedPreviewUrl = $state<string | null>(null);
@@ -171,7 +173,8 @@
 
     onDestroy(() => {
         unlistenRawRender?.();
-        revokeBlobUrl(currentBlobUrl);
+        cancelDeferredJpegLoad?.();
+        revokeCurrentBlobUrl();
         revokeBlobUrl(editedPreviewUrl);
         for (const image of preloadCache.values()) {
             revokeBlobUrl(image.url);
@@ -185,7 +188,7 @@
             revokeBlobUrl(result.url);
             return;
         }
-        revokeBlobUrl(currentBlobUrl);
+        revokeCurrentBlobUrl();
         currentBlobUrl = result.url;
         currentBlobPhotoId = item.id;
         fullResCandidatePhotoId = item.id;
@@ -245,8 +248,30 @@
         if (url?.startsWith("blob:")) URL.revokeObjectURL(url);
     }
 
+    function isCachedBlobUrl(url: string | null): boolean {
+        return !!url && Array.from(preloadCache.values()).some((image) => image.url === url);
+    }
+
+    function revokeCurrentBlobUrl() {
+        if (!isCachedBlobUrl(currentBlobUrl)) revokeBlobUrl(currentBlobUrl);
+    }
+
+    function cacheLoadedImage(photoId: string, image: LoadedImage) {
+        const previous = preloadCache.get(photoId);
+        if (previous?.url !== image.url) revokeBlobUrl(previous?.url ?? null);
+        preloadCache.delete(photoId);
+        preloadCache.set(photoId, image);
+
+        while (preloadCache.size > FULL_RES_CACHE_LIMIT) {
+            const oldest = preloadCache.entries().next().value as [string, LoadedImage] | undefined;
+            if (!oldest) break;
+            preloadCache.delete(oldest[0]);
+            if (oldest[1].url !== currentBlobUrl) revokeBlobUrl(oldest[1].url);
+        }
+    }
+
     function clearCurrentImageState() {
-        revokeBlobUrl(currentBlobUrl);
+        revokeCurrentBlobUrl();
         currentBlobUrl = null;
         currentBlobPhotoId = null;
         fullResCandidatePhotoId = null;
@@ -319,10 +344,12 @@
 
     function navigateTo(index: number) {
         if (index < 0 || index >= photos.length) return;
+        cancelDeferredJpegLoad?.();
+        cancelDeferredJpegLoad = null;
         viewingRaw = false;
         clearEditedPreview();
         clearCurrentImageState();
-        isLoadingFullRes = true;
+        isLoadingFullRes = false;
         loadError = null;
         resetZoom();
         currentIndex = index;
@@ -379,13 +406,15 @@
 
     async function toggleRawJpeg() {
         if (!isPaired) return;
+        cancelDeferredJpegLoad?.();
+        cancelDeferredJpegLoad = null;
         viewingRaw = !viewingRaw;
         clearEditedPreview();
         clearCurrentImageState();
-        isLoadingFullRes = true;
+        isLoadingFullRes = false;
         loadError = null;
         await tick();
-        void loadPhotoByRef(activePhoto);
+        void loadCurrentPhoto();
     }
 
     function isTypingTarget(target: EventTarget | null): boolean {
@@ -718,11 +747,12 @@
         HologramAPI.prioritizeRawRenders([item]);
         const cached = preloadCache.get(item.id);
         if (cached) {
-            revokeBlobUrl(currentBlobUrl);
+            revokeCurrentBlobUrl();
             currentBlobUrl = cached.url;
             currentBlobPhotoId = item.id;
             fullResCandidatePhotoId = cached.fullRes ? item.id : null;
             preloadCache.delete(item.id);
+            preloadCache.set(item.id, cached);
             hasFullRes = false;
             isLoadingFullRes = cached.fullRes;
             loadError = null;
@@ -737,12 +767,14 @@
 
         const result = await loadImageForPhoto(item);
         if (item.id !== activePhoto?.id) {
-            revokeBlobUrl(result.url);
+            if (result.url && result.fullRes) cacheLoadedImage(item.id, result as LoadedImage);
+            else revokeBlobUrl(result.url);
             return;
         }
 
         if (result.url) {
-            revokeBlobUrl(currentBlobUrl);
+            revokeCurrentBlobUrl();
+            if (result.fullRes) cacheLoadedImage(item.id, result as LoadedImage);
             currentBlobUrl = result.url;
             currentBlobPhotoId = item.id;
             fullResCandidatePhotoId = result.fullRes ? item.id : null;
@@ -758,20 +790,49 @@
     }
 
     async function loadCurrentPhoto() {
-        await loadPhotoByRef(activePhoto);
-        preloadAdjacent();
+        const item = activePhoto;
+        if (!item) return;
+
+        cancelDeferredJpegLoad?.();
+        cancelDeferredJpegLoad = null;
+
+        if (preloadCache.has(item.id)) {
+            await loadPhotoByRef(item);
+            preloadAdjacent();
+            return;
+        }
+
+        if (isJpegFile(item)) {
+            deferFullResolutionJpegLoad(item);
+            return;
+        }
+
+        await loadPhotoByRef(item);
+        if (item.id === activePhoto?.id) preloadAdjacent();
+    }
+
+    function deferFullResolutionJpegLoad(item: Photo) {
+        isLoadingFullRes = false;
+        loadError = null;
+
+        const run = async () => {
+            cancelDeferredJpegLoad = null;
+            if (item.id !== activePhoto?.id) return;
+            await loadPhotoByRef(item);
+            if (item.id === activePhoto?.id) preloadAdjacent();
+        };
+
+        if (typeof window.requestIdleCallback === "function") {
+            const handle = window.requestIdleCallback(() => void run(), { timeout: 750 });
+            cancelDeferredJpegLoad = () => window.cancelIdleCallback(handle);
+        } else {
+            const handle = window.setTimeout(() => void run(), 150);
+            cancelDeferredJpegLoad = () => window.clearTimeout(handle);
+        }
     }
 
     function preloadAdjacent() {
         HologramAPI.prioritizeRawRenders(filmstripPhotos);
-        for (const [key, image] of preloadCache) {
-            const idx = photos.findIndex((item) => item.id === key);
-            if (idx === -1 || Math.abs(idx - currentIndex) > 3) {
-                revokeBlobUrl(image.url);
-                preloadCache.delete(key);
-            }
-        }
-
         const adjacentIndices = [currentIndex + 1, currentIndex - 1].filter(
             (idx) => idx >= 0 && idx < photos.length,
         );
@@ -785,7 +846,7 @@
                 if (!result.url) return;
                 const currentIdx = photos.findIndex((candidate) => candidate.id === item.id);
                 if (Math.abs(currentIdx - currentIndex) <= 3) {
-                    preloadCache.set(item.id, { url: result.url, fullRes: result.fullRes });
+                    cacheLoadedImage(item.id, { url: result.url, fullRes: result.fullRes });
                 } else {
                     revokeBlobUrl(result.url);
                 }

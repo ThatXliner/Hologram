@@ -45,6 +45,13 @@
         distance: number;
         index: number;
     };
+    const RAW_FILE_TYPES = new Set([
+        "3FR", "ARI", "ARW", "BAY", "CAP", "CRW", "CR2", "CR3", "DATA", "DCS", "DCR",
+        "DNG", "DRF", "ERF", "FFF", "GPR", "IIQ", "K25", "KDC", "MDC", "MEF", "MOS",
+        "MRW", "NEF", "NRW", "OBM", "ORF", "PEF", "PTX", "PXN", "RAF", "RAW", "RW2",
+        "RWL", "RWZ", "SR2", "SRF", "SRW", "X3F",
+    ]);
+    const JPEG_FILE_TYPES = new Set(["JPEG", "JPG"]);
 
     let { photos, allPhotos, startIndex = 0 }: Props = $props();
 
@@ -58,11 +65,13 @@
         photo && isRawFile(photo) ? photo : pairedPhoto && isRawFile(pairedPhoto) ? pairedPhoto : null,
     );
     const jpegPhoto = $derived(
-        photo && !isRawFile(photo) ? photo : pairedPhoto && !isRawFile(pairedPhoto) ? pairedPhoto : null,
+        photo && isJpegFile(photo) ? photo : pairedPhoto && isJpegFile(pairedPhoto) ? pairedPhoto : null,
     );
     let viewingRaw = $state(false);
     const activePhoto = $derived((viewingRaw ? rawPhoto : jpegPhoto) ?? photo);
-    const activeEmbeddedPreview = $derived(embeddedPreviewInfo(activePhoto));
+    const activeEmbeddedPreview = $derived(
+        activePhoto && isRawFile(activePhoto) ? activePhoto.embedded_jpeg_preview ?? null : null,
+    );
 
     let currentBlobUrl = $state<string | null>(null);
     let currentBlobPhotoId = $state<string | null>(null);
@@ -945,7 +954,16 @@
     }
 
     function isRawFile(item: Photo): boolean {
-        return !["JPEG", "JPG", "PNG", "WEBP", "GIF"].includes(item.file_type.toUpperCase());
+        return RAW_FILE_TYPES.has(fileExtension(item));
+    }
+
+    function isJpegFile(item: Photo): boolean {
+        return JPEG_FILE_TYPES.has(fileExtension(item));
+    }
+
+    function fileExtension(item: Photo): string {
+        const pathExtension = item.file_path.split(/[\\/]/).pop()?.split(".").pop();
+        return (pathExtension || item.file_type).toUpperCase();
     }
 
     function panelRatingClass(active: boolean): string {
@@ -983,20 +1001,20 @@
             {#if isPaired}
                 <div class="flex overflow-hidden rounded-[5px] border border-border font-mono text-[10px] font-semibold">
                     <button
-                        class="px-[9px] py-[3px] transition-colors {viewingRaw ? 'bg-secondary text-primary' : 'text-subtle hover:text-foreground'}"
-                        onclick={(event) => { event.stopPropagation(); if (!viewingRaw) void toggleRawJpeg(); }}
-                    >RAW</button>
-                    <button
                         class="px-[9px] py-[3px] transition-colors {!viewingRaw ? 'bg-secondary text-primary' : 'text-subtle hover:text-foreground'}"
                         onclick={(event) => { event.stopPropagation(); if (viewingRaw) void toggleRawJpeg(); }}
                     >JPEG</button>
+                    <button
+                        class="px-[9px] py-[3px] transition-colors {viewingRaw ? 'bg-secondary text-primary' : 'text-subtle hover:text-foreground'}"
+                        onclick={(event) => { event.stopPropagation(); if (!viewingRaw) void toggleRawJpeg(); }}
+                    >RAW</button>
                 </div>
             {/if}
 
             <!-- progressive-quality status -->
             <span class="flex items-center gap-1.5 whitespace-nowrap font-mono text-[10px] {activeFullResLoaded ? 'text-pick' : 'text-info'}">
                 <span class="h-1.5 w-1.5 rounded-full {activeFullResLoaded ? 'bg-pick' : 'bg-info'}"></span>
-                {#if activeFullResLoaded}full resolution{:else if isLoadingFullRes}embedded preview → loading full res…{:else if activeEmbeddedPreview}embedded preview{:else}thumbnail{/if}
+                {#if activeFullResLoaded}full resolution{:else if isLoadingFullRes}{activeEmbeddedPreview ? "embedded preview → loading full res…" : "loading full resolution…"}{:else if activeEmbeddedPreview}embedded preview{:else}thumbnail{/if}
             </span>
 
             <div class="flex-1"></div>

@@ -1,4 +1,5 @@
 import { convertFileSrc } from "@tauri-apps/api/core";
+import { mediaIndexConcurrency } from "./concurrency.ts";
 import type { Photo, VisualIndexEntry, VisualIndexLabel, VisualIndexProgress } from "./types.ts";
 
 type LabelSeed = {
@@ -201,10 +202,7 @@ export async function indexPhotoVisuals(
   const total = photos.length;
   let completed = 0;
   let nextIndex = 0;
-  const concurrency = Math.max(
-    1,
-    Math.min(4, typeof navigator === "undefined" ? 2 : navigator.hardwareConcurrency || 2),
-  );
+  const concurrency = mediaIndexConcurrency();
 
   const worker = async () => {
     while (nextIndex < photos.length) {

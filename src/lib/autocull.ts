@@ -9,6 +9,7 @@ import type {
   VisualIndexProgress,
 } from "./types.ts";
 import { photoPreviewSrc } from "./photoPreview.ts";
+import { heavyMediaConcurrency } from "./concurrency.ts";
 
 const DINO_MODEL_ID = "onnx-community/dinov2-small";
 const TRANSFORMER_EMBEDDING_BACKEND = "dinov2-small-transformersjs";
@@ -59,7 +60,6 @@ const FEATURE_CACHE_VERSION = [
 ].join(":");
 const MEMORY_FEATURE_CACHE_LIMIT = 800;
 const PERSISTENT_FEATURE_CACHE_LIMIT = 4_000;
-const MAX_FEATURE_EXTRACTION_CONCURRENCY = 4;
 export const DEFAULT_PREFERENCE_PROFILE_ID = "default";
 
 type PixelFeatures = {
@@ -419,7 +419,7 @@ export async function buildAutoCullSession(
   const featuresById = new Map<string, PixelFeatures | null>();
   const total = photos.length;
   let completed = 0;
-  await parallelForEach(photos, featureExtractionConcurrency(), async (photo) => {
+  await parallelForEach(photos, heavyMediaConcurrency(), async (photo) => {
     await idleTick();
     const features = await extractCachedPixelFeatures(photo);
     featuresById.set(photo.id, features);
@@ -498,11 +498,6 @@ export async function buildAutoCullSession(
       needs_review: outputPhotos.filter((photo) => photo.recommendation === "NEEDS_REVIEW").length,
     },
   };
-}
-
-function featureExtractionConcurrency(): number {
-  const hardwareConcurrency = typeof navigator === "undefined" ? 2 : navigator.hardwareConcurrency;
-  return Math.max(1, Math.min(MAX_FEATURE_EXTRACTION_CONCURRENCY, hardwareConcurrency || 2));
 }
 
 async function parallelForEach<T>(

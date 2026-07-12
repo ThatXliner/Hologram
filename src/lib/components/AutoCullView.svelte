@@ -41,7 +41,12 @@
     interface Props {
         photos: Photo[];
         allPhotos: Photo[];
-        onOpenPreview: (photoIds: string[], selectedPhotoId: string) => void;
+        onOpenPreview: (
+            photoIds: string[],
+            selectedPhotoId: string,
+            onConfirmCluster?: () => void,
+            preloadPhotoIds?: string[],
+        ) => void;
     }
 
     let { photos, allPhotos, onOpenPreview }: Props = $props();
@@ -544,10 +549,18 @@
 
     function openInLoupe(photoId: string) {
         setSelectedPhoto(photoId);
-        const previewIds = activeCluster
-            ? visibleClusterPhotoIds(activeCluster)
+        const cluster = activeCluster;
+        const previewIds = cluster
+            ? visibleClusterPhotoIds(cluster)
             : [photoId];
-        onOpenPreview(previewIds, photoId);
+        const followingIds = cluster
+            ? clusterList
+                  .slice(activeClusterIndex + 1)
+                  .flatMap(visibleClusterPhotoIds)
+                  .filter((id) => !previewIds.includes(id))
+                  .slice(0, Math.max(0, 8 - previewIds.length))
+            : [];
+        onOpenPreview(previewIds, photoId, cluster ? () => confirmCluster(cluster) : undefined, followingIds);
     }
 
     const activeClusterIndex = $derived(

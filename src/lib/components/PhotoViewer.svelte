@@ -33,6 +33,8 @@
         photos: Photo[];
         allPhotos: Photo[];
         startIndex?: number;
+        onConfirmCluster?: (() => void) | null;
+        backgroundPreloadPhotos?: Photo[];
     }
 
     type LoadedImage = {
@@ -53,7 +55,13 @@
     ]);
     const JPEG_FILE_TYPES = new Set(["JPEG", "JPG"]);
 
-    let { photos, allPhotos, startIndex = 0 }: Props = $props();
+    let {
+        photos,
+        allPhotos,
+        startIndex = 0,
+        onConfirmCluster = null,
+        backgroundPreloadPhotos = [],
+    }: Props = $props();
 
     let currentIndex = $state<number>(startIndex);
     const photo = $derived(photos[currentIndex]);
@@ -285,6 +293,11 @@
     function closeViewer() {
         photoStore.setSelectedIndex(currentIndex);
         photoStore.setViewMode("grid");
+    }
+
+    function confirmClusterAndReturn() {
+        onConfirmCluster?.();
+        closeViewer();
     }
 
     function handleBackdropClick(event: MouseEvent) {
@@ -837,15 +850,20 @@
             (idx) => idx >= 0 && idx < photos.length,
         );
 
-        for (const idx of adjacentIndices) {
-            const item = photos[idx];
+        const candidates = [
+            ...adjacentIndices.map((idx) => photos[idx]),
+            ...backgroundPreloadPhotos,
+        ].filter((item, index, items): item is Photo =>
+            !!item && item.id !== activePhoto?.id && items.findIndex((candidate) => candidate?.id === item.id) === index,
+        ).slice(0, Math.max(0, FULL_RES_CACHE_LIMIT - preloadCache.size));
+
+        for (const item of candidates) {
             if (!item || preloadCache.has(item.id) || preloadingSet.has(item.id)) continue;
             preloadingSet.add(item.id);
             loadImageForPhoto(item).then((result) => {
                 preloadingSet.delete(item.id);
                 if (!result.url) return;
-                const currentIdx = photos.findIndex((candidate) => candidate.id === item.id);
-                if (Math.abs(currentIdx - currentIndex) <= 3) {
+                if (photos.some((candidate) => candidate.id === item.id) || backgroundPreloadPhotos.some((candidate) => candidate.id === item.id)) {
                     cacheLoadedImage(item.id, { url: result.url, fullRes: result.fullRes });
                 } else {
                     revokeBlobUrl(result.url);
@@ -1489,7 +1507,8 @@
             </aside>
         </div>
 
-        <footer class="flex h-[76px] shrink-0 items-center gap-1.5 overflow-x-auto border-t border-border bg-rail px-3">
+        <footer class="flex h-[76px] shrink-0 items-center gap-3 border-t border-border bg-rail px-3">
+            <div class="flex min-w-0 flex-1 items-center gap-1.5 overflow-x-auto py-1">
             {#each filmstripPhotos as item, i (item.id)}
                 {@const actualIndex = filmstripStart + i}
                 {@const previewSrc = getFilmstripSrc(item)}
@@ -1519,6 +1538,14 @@
                     {/if}
                 </button>
             {/each}
+            </div>
+            {#if onConfirmCluster}
+                <button
+                    class="inline-flex h-10 shrink-0 items-center justify-center rounded-md bg-primary px-4 text-xs font-bold text-primary-foreground transition-opacity hover:opacity-90"
+                    onclick={confirmClusterAndReturn}
+                    title="Confirm your keepers, train your taste profile, and return to the next cluster"
+                >Confirm &amp; next cluster →</button>
+            {/if}
         </footer>
         {:else}
         <!-- DEVELOP (3d) -->

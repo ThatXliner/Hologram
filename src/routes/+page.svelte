@@ -94,6 +94,8 @@
 
     let previewScopeIds = $state<string[] | null>(null);
     let previewStartIndex = $state(0);
+    let previewConfirmCluster = $state<(() => void) | null>(null);
+    let previewPreloadIds = $state<string[]>([]);
     const previewPhotos = $derived(
         previewScopeIds
             ? previewScopeIds
@@ -101,15 +103,31 @@
                   .filter((photo): photo is Photo => Boolean(photo))
             : $displayPhotos,
     );
+    const previewPreloadPhotos = $derived(
+        previewPreloadIds
+            .map((id) => $displayPhotos.find((photo) => photo.id === id))
+            .filter((photo): photo is Photo => Boolean(photo)),
+    );
 
-    function openScopedPreview(photoIds: string[], selectedPhotoId: string) {
+    function openScopedPreview(
+        photoIds: string[],
+        selectedPhotoId: string,
+        onConfirmCluster?: () => void,
+        preloadPhotoIds: string[] = [],
+    ) {
         previewScopeIds = photoIds;
         previewStartIndex = Math.max(0, photoIds.indexOf(selectedPhotoId));
+        previewConfirmCluster = onConfirmCluster ?? null;
+        previewPreloadIds = preloadPhotoIds;
         photoStore.setViewMode("viewer");
     }
 
     $effect(() => {
-        if ($viewMode !== "viewer") previewScopeIds = null;
+        if ($viewMode !== "viewer") {
+            previewScopeIds = null;
+            previewConfirmCluster = null;
+            previewPreloadIds = [];
+        }
     });
 
     function cycleMinRating() {
@@ -789,6 +807,8 @@
             photos={previewPhotos}
             allPhotos={$filteredPhotos}
             startIndex={previewScopeIds ? previewStartIndex : $selectedIndex}
+            onConfirmCluster={previewConfirmCluster}
+            backgroundPreloadPhotos={previewPreloadPhotos}
         />
     {/if}
 </div>

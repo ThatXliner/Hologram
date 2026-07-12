@@ -1,0 +1,320 @@
+<!doctype html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <meta name="theme-color" content="#080a0c" />
+    <meta name="color-scheme" content="dark" />
+    <meta
+      name="description"
+      content="Hologram is a fast, local-first photo culling and management app for photographers who want complete control over their files."
+    />
+    <meta property="og:type" content="website" />
+    <meta property="og:title" content="Hologram — Cull the shoot. Keep your files." />
+    <meta
+      property="og:description"
+      content="Pro-grade RAW+JPEG culling, local AutoCull, deep EXIF filters, and a keyboard-first workflow. Your originals never leave your machine."
+    />
+    <meta property="og:image" content="https://thatxliner.github.io/Hologram/og.png" />
+    <meta name="twitter:card" content="summary_large_image" />
+    <meta name="twitter:title" content="Hologram — Cull the shoot. Keep your files." />
+    <meta
+      name="twitter:description"
+      content="A local-first photo workflow for photographers who care how the shot was made."
+    />
+    <meta name="twitter:image" content="https://thatxliner.github.io/Hologram/og.png" />
+    <link rel="canonical" href="https://thatxliner.github.io/Hologram/" />
+    <link rel="icon" href="./favicon.png" />
+    <link rel="stylesheet" href="./styles.css" />
+    <title>Hologram — Local-first photo culling</title>
+  </head>
+  <body>
+    <a class="skip-link" href="#main">Skip to content</a>
+
+    <header class="site-header" data-header>
+      <a class="brand" href="#top" aria-label="Hologram home">
+        <span class="brand-mark" aria-hidden="true"></span>
+        <span>HOLOGRAM</span>
+      </a>
+
+      <nav class="nav-links" id="site-nav" aria-label="Primary navigation">
+        <a href="#workflow">Workflow</a>
+        <a href="#autocull">AutoCull</a>
+        <a href="#principles">Principles</a>
+      </nav>
+
+      <div class="nav-actions">
+        <a
+          class="github-link"
+          href="https://github.com/ThatXliner/Hologram"
+          target="_blank"
+          rel="noreferrer"
+          >GitHub <span aria-hidden="true">↗</span></a
+        >
+        <a
+          class="button button-small"
+          href="https://nightly.link/ThatXliner/Hologram/workflows/build/main"
+          target="_blank"
+          rel="noreferrer"
+          >Get the nightly</a
+        >
+        <button class="menu-toggle" type="button" aria-controls="site-nav" aria-expanded="false">
+          <span></span><span></span><span></span><span class="sr-only">Toggle menu</span>
+        </button>
+      </div>
+    </header>
+
+    <main id="main">
+      <section class="hero" id="top">
+        <div class="hero-glow" aria-hidden="true"></div>
+        <div class="shell hero-copy reveal">
+          <p class="eyebrow"><span class="status-dot"></span> Local-first photo workflow <span>/</span> macOS first</p>
+          <h1>Cull the shoot.<br /><em>Keep your files.</em></h1>
+          <p class="hero-deck">
+            Hologram is the fast, keyboard-first workspace for photographers who want RAW+JPEG control,
+            deep EXIF intelligence, and none of the cloud-shaped baggage.
+          </p>
+          <div class="hero-actions">
+            <a
+              class="button"
+              href="https://nightly.link/ThatXliner/Hologram/workflows/build/main"
+              target="_blank"
+              rel="noreferrer"
+              >Download the nightly <span aria-hidden="true">↘</span></a
+            >
+            <a class="text-link" href="#workflow">See the workflow <span aria-hidden="true">↓</span></a>
+          </div>
+          <p class="build-note">Open source · Active development · Your originals stay untouched</p>
+        </div>
+
+        <div class="shell hero-product reveal" data-delay="1">
+          <div class="product-aura" aria-hidden="true"></div>
+          <div class="product-window">
+            <div class="window-bar">
+              <div class="window-dots" aria-hidden="true"><i></i><i></i><i></i></div>
+              <span>Hologram / Current library</span>
+              <span class="window-status"><i></i> local</span>
+            </div>
+            <img
+              id="stage-image"
+              src="./assets/library.webp"
+              alt="Hologram's dense photo library view with culling controls"
+              width="2200"
+              height="1375"
+            />
+          </div>
+          <div class="stage-switcher" role="group" aria-label="Product view">
+            <button
+              class="stage-button active"
+              type="button"
+              data-src="./assets/library.webp"
+              data-alt="Hologram's dense photo library view with culling controls"
+            >
+              <span>01</span> Library
+            </button>
+            <button
+              class="stage-button"
+              type="button"
+              data-src="./assets/autocull.webp"
+              data-alt="Hologram AutoCull reviewing a burst with local scoring"
+            >
+              <span>02</span> AutoCull
+            </button>
+            <button
+              class="stage-button"
+              type="button"
+              data-src="./assets/loupe.webp"
+              data-alt="Hologram loupe view with EXIF details and culling controls"
+            >
+              <span>03</span> Loupe
+            </button>
+          </div>
+        </div>
+
+        <div class="shell signal-row reveal" data-delay="2" aria-label="Product highlights">
+          <div><strong>P / X / U</strong><span>One-key culling</span></div>
+          <div><strong>1200%</strong><span>Pixel-level loupe</span></div>
+          <div><strong>RAW + JPEG</strong><span>One logical photo</span></div>
+          <div><strong>0 uploads</strong><span>Everything stays local</span></div>
+        </div>
+      </section>
+
+      <section class="manifesto-band" id="principles">
+        <div class="shell manifesto-grid">
+          <p class="eyebrow reveal">The deal</p>
+          <div class="manifesto-copy reveal" data-delay="1">
+            <h2>Your files are not a subscription.</h2>
+            <p>
+              No cloud library. No proprietary vault. No surprise rewrite of your originals. Hologram reads the
+              folders you already own and puts the fastest decisions one keystroke away.
+            </p>
+          </div>
+        </div>
+      </section>
+
+      <section class="section shell" id="workflow">
+        <div class="section-heading reveal">
+          <p class="eyebrow">One shoot. One uninterrupted flow.</p>
+          <h2>From card dump to final selects<br />without losing the plot.</h2>
+        </div>
+
+        <div class="workflow-grid">
+          <article class="workflow-card reveal">
+            <span class="step">01 / Import</span>
+            <div class="card-visual import-visual" aria-hidden="true">
+              <div class="file-stack"><i></i><i></i><i></i></div>
+              <span>842 files</span>
+              <b>→</b>
+              <div class="pair-chip">RAW<span>+</span>JPEG</div>
+            </div>
+            <h3>Point at a folder.</h3>
+            <p>Thumbnails stream in progressively. RAW+JPEG pairs become one photo, never a pile of duplicates.</p>
+          </article>
+
+          <article class="workflow-card reveal" data-delay="1">
+            <span class="step">02 / Cull</span>
+            <div class="card-visual key-visual" aria-hidden="true">
+              <kbd>P</kbd><kbd>X</kbd><kbd>1–5</kbd><span>→</span>
+            </div>
+            <h3>Keep your hands moving.</h3>
+            <p>Pick, reject, rate, and auto-advance from anywhere. The mouse is invited, never required.</p>
+          </article>
+
+          <article class="workflow-card reveal" data-delay="2">
+            <span class="step">03 / Deliver</span>
+            <div class="card-visual export-visual" aria-hidden="true">
+              <span>184 visible</span><b>↗</b><span class="success-chip">184 exported</span>
+            </div>
+            <h3>Export exactly what you see.</h3>
+            <p>Folder, ZIP, Lightroom structure, RAW, JPEG, or both—with XMP sidecars ready for the next tool.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="section shell feature-section" id="autocull">
+        <div class="feature-copy reveal">
+          <p class="eyebrow">AutoCull / intelligence with boundaries</p>
+          <h2>A second opinion.<br /><em>Not the final say.</em></h2>
+          <p>
+            Hologram groups bursts, scores technical quality, and learns from the picks you make—all on your machine.
+            Every recommendation is inspectable. Every final decision is still yours.
+          </p>
+          <ul class="check-list">
+            <li><span>✓</span> Burst and similarity clustering</li>
+            <li><span>✓</span> Adjustable reject threshold</li>
+            <li><span>✓</span> Technical + personal score breakdown</li>
+            <li><span>✓</span> Taste profiles trained by your choices</li>
+          </ul>
+          <p class="micro-note">Manual flags always win.</p>
+        </div>
+
+        <div class="feature-shot reveal" data-delay="1">
+          <div class="shot-label"><span>LOCAL MODEL</span><span>12 / 12 indexed</span></div>
+          <img
+            src="./assets/autocull.webp"
+            alt="AutoCull showing burst recommendations, score confidence, and manual controls"
+            loading="lazy"
+            width="2200"
+            height="1375"
+          />
+          <div class="score-float" aria-hidden="true">
+            <span>SELECT</span><strong>7.6</strong><small>98% confidence</small>
+          </div>
+        </div>
+      </section>
+
+      <section class="section evidence-section">
+        <div class="shell evidence-grid">
+          <div class="evidence-shot reveal">
+            <img
+              src="./assets/adjustments.webp"
+              alt="Hologram's non-destructive adjustments panel"
+              loading="lazy"
+              width="2200"
+              height="1375"
+            />
+          </div>
+          <div class="evidence-copy reveal" data-delay="1">
+            <p class="eyebrow">Clarity over clutter</p>
+            <h2>See the photo.<br />See the data.</h2>
+            <p>
+              Search every useful field. Compare nearby frames. Toggle RAW and JPEG. Inspect full EXIF. Make
+              preview-only adjustments. The interface stays dark, dense, and out of the photograph's way.
+            </p>
+            <div class="feature-index">
+              <div><span>01</span><p><strong>Deep EXIF search</strong>Camera, lens, aperture, ISO, dates, tags, and more.</p></div>
+              <div><span>02</span><p><strong>True compare</strong>Side-by-side frames, 100% detail, fast neighbor navigation.</p></div>
+              <div><span>03</span><p><strong>Non-destructive</strong>Adjust a proxy, import presets, never touch the source.</p></div>
+            </div>
+          </div>
+        </div>
+      </section>
+
+      <section class="section shell values-section">
+        <div class="section-heading reveal">
+          <p class="eyebrow">Built on a few stubborn beliefs</p>
+          <h2>Professional tools should<br />respect professional intent.</h2>
+        </div>
+        <div class="values-grid">
+          <article class="reveal">
+            <span>01</span>
+            <h3>Ownership, not outsourcing.</h3>
+            <p>Your library remains a set of normal files and folders. Hologram adds a faster way to understand it.</p>
+          </article>
+          <article class="reveal" data-delay="1">
+            <span>02</span>
+            <h3>Explainable, not magical.</h3>
+            <p>Recommendations show their work. Scores are signals to inspect, not commands to obey.</p>
+          </article>
+          <article class="reveal" data-delay="2">
+            <span>03</span>
+            <h3>Fast because focus matters.</h3>
+            <p>Keyboard-first interactions preserve the rhythm that gets a thousand-frame shoot down to the story.</p>
+          </article>
+        </div>
+      </section>
+
+      <section class="cta-section">
+        <div class="cta-noise" aria-hidden="true"></div>
+        <div class="shell cta-inner reveal">
+          <p class="eyebrow">For the ones who care how the shot was made</p>
+          <h2>Your next select<br />is one key away.</h2>
+          <div class="hero-actions">
+            <a
+              class="button button-dark"
+              href="https://nightly.link/ThatXliner/Hologram/workflows/build/main"
+              target="_blank"
+              rel="noreferrer"
+              >Get Hologram nightly <span aria-hidden="true">↘</span></a
+            >
+            <a
+              class="text-link text-link-dark"
+              href="https://github.com/ThatXliner/Hologram"
+              target="_blank"
+              rel="noreferrer"
+              >Star on GitHub <span aria-hidden="true">↗</span></a
+            >
+          </div>
+          <p class="build-note build-note-dark">Free and open source · Builds for macOS, Windows, and Linux</p>
+        </div>
+      </section>
+    </main>
+
+    <footer class="site-footer">
+      <div class="shell footer-grid">
+        <div>
+          <a class="brand" href="#top"><span class="brand-mark" aria-hidden="true"></span><span>HOLOGRAM</span></a>
+          <p>Local-first photo culling for people who shoot with intent.</p>
+        </div>
+        <div class="footer-links">
+          <a href="https://github.com/ThatXliner/Hologram" target="_blank" rel="noreferrer">GitHub ↗</a>
+          <a href="https://github.com/ThatXliner/Hologram/issues/6" target="_blank" rel="noreferrer">Roadmap ↗</a>
+          <a href="https://github.com/ThatXliner/Hologram/blob/main/LICENSE" target="_blank" rel="noreferrer">License ↗</a>
+        </div>
+        <p class="copyright">© <span data-year></span> Hologram<br />Built in the open.</p>
+      </div>
+    </footer>
+
+    <script src="./script.js" defer></script>
+  </body>
+</html>

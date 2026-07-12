@@ -15,6 +15,7 @@
     import Sidebar from "../lib/components/Sidebar.svelte";
     import PhotoViewer from "../lib/components/PhotoViewer.svelte";
     import ExportPanel from "../lib/components/ExportPanel.svelte";
+    import SettingsPanel from "../lib/components/SettingsPanel.svelte";
     import { HologramAPI } from "../lib/api.ts";
     import { buildSmartCollections } from "../lib/collections.ts";
     import { indexPhotoVisuals } from "../lib/visualIndex.ts";
@@ -25,7 +26,6 @@
         Circle,
         Download,
         FolderOpen,
-        GitCompareArrows,
         Image as ImageIcon,
         LayoutGrid,
         Loader2,
@@ -44,7 +44,7 @@
     type LegacyDensity = "compact" | "balanced" | "large" | "lightbox";
     type GridDetails = "image" | "essentials" | "metadata";
     type LibraryView = "grid" | "timeline";
-    type RailView = "library" | "autocull" | "export";
+    type RailView = "library" | "autocull" | "export" | "settings";
     const GRID_PREFERENCES_KEY = "hologram.gridPreferences";
     const GRID_ZOOM_STEPS = [120, 150, 180, 220, 270, 340, 430, 520] as const;
     const DEFAULT_GRID_ZOOM_LEVEL = 3;
@@ -89,17 +89,8 @@
         $photos.filter((photo) => photo.flag === "pick" || photo.flag === "reject" || (photo.rating ?? 0) > 0).length,
     );
     const reviewPct = $derived($photos.length ? Math.round((reviewedCount / $photos.length) * 100) : 0);
-    const effectiveRail = $derived<RailView>(hasLibrary ? railView : "library");
+    const effectiveRail = $derived<RailView>(hasLibrary || railView === "settings" ? railView : "library");
     const RATING_STEPS = [0, 1, 3, 5] as const;
-
-    function focusSearch() {
-        railView = "library";
-        queueMicrotask(() => searchInput?.focus());
-    }
-
-    function openCompare() {
-        if (hasLibrary) photoStore.setViewMode("viewer");
-    }
 
     let previewScopeIds = $state<string[] | null>(null);
     let previewStartIndex = $state(0);
@@ -207,6 +198,11 @@
 
     function setGridDetailMode(next: GridDetails) {
         gridDetailMode = next;
+    }
+
+    function resetGridPreferences() {
+        gridZoomLevel = DEFAULT_GRID_ZOOM_LEVEL;
+        gridDetailMode = "metadata";
     }
 
     function isLegacyDensity(value: unknown): value is LegacyDensity {
@@ -336,6 +332,17 @@
             visualIndexLibraryKey = $photos.map((photo) => photo.id).join("|");
             void startVisualIndexing($photos);
         }
+    }
+
+    function setSmartCollectionsEnabled(enabled: boolean) {
+        if (enabled) {
+            enableSmartCollections();
+            return;
+        }
+        smartCollectionsEnabled = false;
+        activeSmartCollectionId = null;
+        localStorage.setItem("hologram.smartCollections.enabled", "false");
+        applyAllFilters();
     }
 
     async function startVisualIndexing(items: Photo[]) {
@@ -522,16 +529,26 @@
     <!-- ICON RAIL -->
     <nav class="flex w-[52px] shrink-0 flex-col items-center gap-1.5 border-r border-border bg-rail py-3">
         <div class="mb-3.5 h-5 w-5 rotate-45 rounded border-2 border-primary" title="Hologram"></div>
-        {@render railBtn(LayoutGrid, effectiveRail === "library", "Library", () => (railView = "library"))}
-        {@render railBtn(Search, false, "Search", focusSearch)}
+        {@render railBtn(LayoutGrid, effectiveRail === "library", "Grid", () => (railView = "library"))}
         {@render railBtn(Sparkles, effectiveRail === "autocull", "AutoCull", () => { if (hasLibrary) railView = "autocull"; }, isVisualIndexing)}
-        {@render railBtn(GitCompareArrows, false, "Compare", openCompare)}
         {@render railBtn(Download, effectiveRail === "export", "Export", () => { if (hasLibrary) railView = "export"; })}
         <div class="flex-1"></div>
-        {@render railBtn(Settings, false, "Settings", () => {})}
+        {@render railBtn(Settings, effectiveRail === "settings", "Settings", () => (railView = "settings"))}
     </nav>
 
-    {#if effectiveRail === "autocull"}
+    {#if effectiveRail === "settings"}
+        <SettingsPanel
+            {gridZoomLevel}
+            {maxGridZoomLevel}
+            {gridTileSize}
+            gridDetailMode={gridDetailMode}
+            {smartCollectionsEnabled}
+            onGridZoomChange={setGridZoomLevel}
+            onGridDetailChange={setGridDetailMode}
+            onSmartCollectionsChange={setSmartCollectionsEnabled}
+            onResetGridPreferences={resetGridPreferences}
+        />
+    {:else if effectiveRail === "autocull"}
         <div class="min-w-0 flex-1 overflow-y-auto bg-background">
             <AutoCullView photos={$displayPhotos} allPhotos={$photos} onOpenPreview={openScopedPreview} />
         </div>

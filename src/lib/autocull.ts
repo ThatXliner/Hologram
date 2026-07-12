@@ -59,6 +59,7 @@ const FEATURE_CACHE_VERSION = [
 ].join(":");
 const MEMORY_FEATURE_CACHE_LIMIT = 800;
 const PERSISTENT_FEATURE_CACHE_LIMIT = 4_000;
+const MAX_FEATURE_EXTRACTION_CONCURRENCY = 4;
 export const DEFAULT_PREFERENCE_PROFILE_ID = "default";
 
 type PixelFeatures = {
@@ -417,13 +418,14 @@ export async function buildAutoCullSession(
 ): Promise<AutoCullSession> {
   const featuresById = new Map<string, PixelFeatures | null>();
   const total = photos.length;
-
-  for (let index = 0; index < photos.length; index++) {
-    const photo = photos[index];
-    onProgress({ current: index, total, current_file: photo.file_name });
+  let completed = 0;
+  await parallelForEach(photos, featureExtractionConcurrency(), async (photo) => {
     await idleTick();
-    featuresById.set(photo.id, await extractCachedPixelFeatures(photo));
-  }
+    const features = await extractCachedPixelFeatures(photo);
+    featuresById.set(photo.id, features);
+    completed++;
+    onProgress({ current: completed, total, current_file: photo.file_name });
+  });
 
   const featureRecordsById = buildFeatureRecords(photos, featuresById);
   const examples = buildRankedExamples(photos, featureRecordsById, refinements, learnFromPhotoMetadata);
@@ -496,6 +498,29 @@ export async function buildAutoCullSession(
       needs_review: outputPhotos.filter((photo) => photo.recommendation === "NEEDS_REVIEW").length,
     },
   };
+}
+
+function featureExtractionConcurrency(): number {
+  const hardwareConcurrency = typeof navigator === "undefined" ? 2 : navigator.hardwareConcurrency;
+  return Math.max(1, Math.min(MAX_FEATURE_EXTRACTION_CONCURRENCY, hardwareConcurrency || 2));
+}
+
+async function parallelForEach<T>(
+  items: T[],
+  concurrency: number,
+  work: (item: T, index: number) => Promise<void>,
+): Promise<void> {
+  let nextIndex = 0;
+  const worker = async () => {
+    while (nextIndex < items.length) {
+      const index = nextIndex++;
+      await work(items[index], index);
+    }
+  };
+
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, items.length) }, () => worker()),
+  );
 }
 
 function isPairwisePreference(value: unknown): value is AutoCullPairwisePreference {

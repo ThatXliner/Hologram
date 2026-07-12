@@ -20,7 +20,7 @@
 
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { mkdir, readFile, writeFile } from "node:fs/promises";
-import { existsSync } from "node:fs";
+import { existsSync, readFileSync } from "node:fs";
 import { spawn, type ChildProcess } from "node:child_process";
 import pixelmatch from "pixelmatch";
 import { PNG } from "pngjs";
@@ -41,37 +41,26 @@ const DIFF_THRESHOLD = force ? 0 : 0.01;
 
 // ── Mock photo data ──────────────────────────────────────────────────────────
 
-// Generate a 1x1 colored JPEG as base64 for thumbnails
-function colorThumbnail(r: number, g: number, b: number): string {
-    // Minimal JPEG: use a data URI-compatible tiny colored rectangle via canvas
-    // For simplicity in Node, generate a solid-color PNG as base64
-    const png = new PNG({ width: 280, height: 187 });
-    for (let y = 0; y < 187; y++) {
-        for (let x = 0; x < 280; x++) {
-            const idx = (y * 280 + x) << 2;
-            // Add subtle gradient for visual interest
-            png.data[idx] = Math.min(255, r + Math.floor(y * 0.15));
-            png.data[idx + 1] = Math.min(255, g + Math.floor(x * 0.08));
-            png.data[idx + 2] = Math.min(255, b + Math.floor((x + y) * 0.05));
-            png.data[idx + 3] = 255;
-        }
-    }
-    return PNG.sync.write(png).toString("base64");
+function stockThumbnail(fileName: string): string {
+    const fileUrl = new URL(`./fixtures/stock/${fileName}`, import.meta.url);
+    return readFileSync(fileUrl).toString("base64");
 }
 
+// Local, credited stock fixtures keep screenshots photorealistic and deterministic.
+// See scripts/fixtures/stock/README.md for source and license details.
 const THUMBNAILS = [
-    colorThumbnail(45, 85, 120),   // dusky blue landscape
-    colorThumbnail(130, 95, 60),   // warm golden hour
-    colorThumbnail(35, 100, 55),   // forest green
-    colorThumbnail(160, 80, 90),   // rosy portrait
-    colorThumbnail(70, 70, 100),   // twilight purple
-    colorThumbnail(100, 120, 80),  // sage meadow
-    colorThumbnail(50, 50, 70),    // deep evening
-    colorThumbnail(140, 110, 70),  // warm architecture
-    colorThumbnail(80, 130, 150),  // ocean blue
-    colorThumbnail(110, 60, 45),   // rustic red
-    colorThumbnail(90, 110, 130),  // overcast street
-    colorThumbnail(55, 95, 75),    // mossy detail
+    stockThumbnail("photographer.jpg"),
+    stockThumbnail("portrait.jpg"),
+    stockThumbnail("valley.jpg"),
+    stockThumbnail("golden-hour.jpg"),
+    stockThumbnail("street.jpg"),
+    stockThumbnail("highlands.jpg"),
+    stockThumbnail("camera.jpg"),
+    stockThumbnail("architecture.jpg"),
+    stockThumbnail("wildlife.jpg"),
+    stockThumbnail("classic-car.jpg"),
+    stockThumbnail("waterfall.jpg"),
+    stockThumbnail("bear.jpg"),
 ];
 
 interface MockPhoto {
@@ -422,6 +411,17 @@ async function shot(page: Page, name: string): Promise<void> {
     await writeFile(filePath, newBytes);
 }
 
+async function waitForPhotoPreviews(page: Page): Promise<void> {
+    await page.waitForFunction(
+        () => {
+            const previews = Array.from(document.querySelectorAll<HTMLImageElement>("img.photo-preview-image"));
+            return previews.length > 0 && previews.every((image) => image.complete && image.naturalWidth > 0);
+        },
+        null,
+        { timeout: 15_000 },
+    );
+}
+
 function resolveChromiumExecutable(): string | undefined {
     if (existsSync(chromium.executablePath())) return chromium.executablePath();
 
@@ -503,6 +503,7 @@ async function scenarioGrid(ctx: BrowserContext): Promise<void> {
     }
 
     await page.waitForTimeout(500);
+    await waitForPhotoPreviews(page);
     await shot(page, "02-grid");
     await page.close();
 }
@@ -556,6 +557,7 @@ async function scenarioGridFiltered(ctx: BrowserContext): Promise<void> {
     }
 
     await page.waitForTimeout(500);
+    await waitForPhotoPreviews(page);
     await shot(page, "03-grid-filtered");
     await page.close();
 }
@@ -607,6 +609,7 @@ async function scenarioViewer(ctx: BrowserContext): Promise<void> {
     }
 
     await page.waitForTimeout(800);
+    await waitForPhotoPreviews(page);
     await shot(page, "04-viewer");
     await page.close();
 }
@@ -650,6 +653,7 @@ async function scenarioViewerPaired(ctx: BrowserContext): Promise<void> {
     }
 
     await page.waitForTimeout(800);
+    await waitForPhotoPreviews(page);
     await shot(page, "05-viewer-paired");
     await page.close();
 }
@@ -700,6 +704,7 @@ async function scenarioEditor(ctx: BrowserContext): Promise<void> {
         await page.waitForTimeout(600);
     }
 
+    await waitForPhotoPreviews(page);
     await shot(page, "06-editor");
     await page.close();
 }
@@ -737,6 +742,7 @@ async function scenarioAutoCull(ctx: BrowserContext): Promise<void> {
         return view?.textContent?.includes("indexed") || view?.textContent?.includes("fallback");
     }, null, { timeout: 15_000 }).catch(() => {});
     await page.waitForTimeout(700);
+    await waitForPhotoPreviews(page);
     await shot(page, "07-autocull");
     await page.close();
 }

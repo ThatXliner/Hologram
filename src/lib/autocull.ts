@@ -99,6 +99,8 @@ export type AutoCullPreferenceRefinement = {
   confidence: number;
   source: "manual_decision";
   updated_at: string;
+  ranker_features?: number[];
+  embedding?: number[];
 };
 
 type RankedExample = {
@@ -286,6 +288,8 @@ export function recordPreferenceRefinement(
   photoId: string,
   flag: CullFlag,
   rating: number,
+  photo?: Photo,
+  analysis?: AutoCullPhoto,
 ) {
   const now = new Date().toISOString();
   savePreferenceRefinements(folderPath, profileId, [
@@ -297,6 +301,18 @@ export function recordPreferenceRefinement(
       confidence: normalizeFlag(flag) === "none" ? 0.62 : 1,
       source: "manual_decision",
       updated_at: now,
+      ...(photo ? {
+        ranker_features: rankerFeatureVector(
+          photo,
+          analysis?.embedding ? {
+            embedding: analysis.embedding,
+            technicalScore: analysis.technical_score,
+            backend: analysis.embedding_backend ?? PERCEPTUAL_EMBEDDING_BACKEND,
+          } : null,
+          analysis?.technical_score ?? fallbackTechnicalScore(photo),
+        ),
+        embedding: analysis?.embedding ? [...analysis.embedding] : [],
+      } : {}),
     },
   ]);
 }
@@ -1355,6 +1371,16 @@ function buildRankedExamples(
       features: record.rankerFeatures,
       signal: pointwiseSignal(flag, rating),
       confidence: refinement?.confidence ?? (flag === "none" ? 0.62 : 1),
+    });
+  }
+  const activePhotoIds = new Set(photos.map((photo) => photo.id));
+  for (const refinement of refinements) {
+    if (activePhotoIds.has(refinement.photo_id) || !refinement.ranker_features?.length) continue;
+    examples.push({
+      vector: refinement.embedding ?? [],
+      features: refinement.ranker_features,
+      signal: pointwiseSignal(normalizeFlag(refinement.flag), refinement.rating),
+      confidence: refinement.confidence,
     });
   }
   return examples;

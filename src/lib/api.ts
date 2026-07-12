@@ -130,6 +130,11 @@ export class HologramAPI {
     }
   }
 
+  static async findMissingPhotoIds(photos: Photo[]): Promise<string[]> {
+    if (photos.length === 0) return [];
+    return await invoke<string[]>("find_missing_photo_ids", { photos });
+  }
+
   static async getPhotoStats(photos: Photo[]): Promise<PhotoStats> {
     try {
       const stats = await invoke<PhotoStats>("get_photo_stats", {

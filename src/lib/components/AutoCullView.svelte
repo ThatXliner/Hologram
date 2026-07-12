@@ -167,10 +167,35 @@
         progress = { current: 0, total: photos.length };
         try {
             const folderPath = HologramAPI.getActiveFolderPath();
+            const missingIds = await HologramAPI.findMissingPhotoIds(allPhotos);
+            const missing = new Set(missingIds);
+            if (missing.size > 0) {
+                for (const photo of allPhotos) {
+                    if (!missing.has(photo.id)) continue;
+                    recordPreferenceRefinement(
+                        folderPath,
+                        activePreferenceProfileId,
+                        photo.id,
+                        "reject",
+                        0,
+                        photo,
+                        recommendationsById.get(photo.id),
+                    );
+                }
+                photoStore.removePhotos(missingIds);
+                const remainingPhotos = allPhotos.filter((photo) => !missing.has(photo.id));
+                photoStore.setStats(await HologramAPI.getPhotoStats(remainingPhotos));
+            }
             const preferences = loadPairwisePreferences(folderPath, activePreferenceProfileId);
             const refinements = loadPreferenceRefinements(folderPath, activePreferenceProfileId);
+            const analysisPhotos = photos.filter((photo) => !missing.has(photo.id));
+            if (analysisPhotos.length === 0) {
+                session = null;
+                status = missing.size > 0 ? `Learned from ${missing.size} deleted photo${missing.size === 1 ? "" : "s"}` : "No photos to analyze";
+                return;
+            }
             const next = await buildAutoCullSession(
-                photos,
+                analysisPhotos,
                 preferences,
                 (nextProgress) => {
                     if (runId === analysisRun) progress = nextProgress;
@@ -186,11 +211,13 @@
                 ?? next.clusters[0]?.id
                 ?? null;
             setSelectedPhoto(
-                selectedPhotoId && photosById.has(selectedPhotoId)
+                selectedPhotoId && photosById.has(selectedPhotoId) && !missing.has(selectedPhotoId)
                     ? selectedPhotoId
-                    : next.clusters[0]?.top_pick_id ?? photos[0]?.id ?? null,
+                    : next.clusters[0]?.top_pick_id ?? analysisPhotos[0]?.id ?? null,
             );
-            status = `${next.stats.indexed}/${next.stats.total} indexed`;
+            status = missing.size > 0
+                ? `Learned from ${missing.size} deleted photo${missing.size === 1 ? "" : "s"} · ${next.stats.indexed}/${next.stats.total} indexed`
+                : `${next.stats.indexed}/${next.stats.total} indexed`;
         } catch (error) {
             status = error instanceof Error ? error.message : String(error);
         } finally {

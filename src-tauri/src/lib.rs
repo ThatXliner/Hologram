@@ -687,6 +687,18 @@ async fn scan_folder_fast(folder_path: String, app: AppHandle) -> Result<ScanRes
     Ok(ScanResult { photos, stats })
 }
 
+/// Return the IDs of library entries whose original files no longer exist.
+/// AutoCull uses this before analysis so deletions made in Finder can become
+/// explicit taste signals instead of silently leaving stale library entries.
+#[tauri::command]
+fn find_missing_photo_ids(photos: Vec<Photo>) -> Vec<String> {
+    photos
+        .into_iter()
+        .filter(|photo| !Path::new(&photo.file_path).is_file())
+        .map(|photo| photo.id)
+        .collect()
+}
+
 /// Phase 2: Generate thumbnails in background, streaming each one to the
 /// frontend as it completes via "thumbnail-ready" events.
 #[tauri::command]
@@ -2318,6 +2330,7 @@ pub fn run() {
         })
         .invoke_handler(tauri::generate_handler![
             scan_folder_fast,
+            find_missing_photo_ids,
             generate_thumbnails,
             prerender_raws,
             prioritize_raw_renders,

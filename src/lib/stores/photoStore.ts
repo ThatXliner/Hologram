@@ -179,6 +179,21 @@ function createPhotoStore() {
         rebuildIndex(newState);
         return newState;
       }),
+    removePhotos: (photoIds: string[]) =>
+      update((state) => {
+        if (photoIds.length === 0) return state;
+        const removed = new Set(photoIds);
+        const photos = state.photos.filter((photo) => !removed.has(photo.id));
+        const filteredPhotos = state.filteredPhotos.filter((photo) => !removed.has(photo.id));
+        const newState = {
+          ...state,
+          photos,
+          filteredPhotos,
+          selectedIndex: Math.min(state.selectedIndex, Math.max(0, filteredPhotos.length - 1)),
+        };
+        rebuildIndex(newState);
+        return newState;
+      }),
     setThumbnail: (
       id: string,
       thumbnail: string,

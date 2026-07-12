@@ -199,30 +199,42 @@ export async function indexPhotoVisuals(
 ): Promise<Record<string, VisualIndexEntry>> {
   const next: Record<string, VisualIndexEntry> = { ...existing };
   const total = photos.length;
+  let completed = 0;
+  let nextIndex = 0;
+  const concurrency = Math.max(
+    1,
+    Math.min(4, typeof navigator === "undefined" ? 2 : navigator.hardwareConcurrency || 2),
+  );
 
-  for (let index = 0; index < photos.length; index++) {
-    const photo = photos[index];
-    onProgress({ current: index, total, current_file: photo.file_name });
-    await idleTick();
+  const worker = async () => {
+    while (nextIndex < photos.length) {
+      const photo = photos[nextIndex++];
+      await idleTick();
 
-    if (next[photo.id]) {
-      continue;
+      if (!next[photo.id]) {
+        const labels = new Map<string, VisualIndexLabel>();
+        for (const label of metadataLabels(photo)) addLabel(labels, label);
+        try {
+          for (const label of await imageLabels(photo)) addLabel(labels, label);
+        } catch {
+          // Unsupported formats or partially generated thumbnails can be retried in a later indexing pass.
+        }
+
+        next[photo.id] = {
+          photo_id: photo.id,
+          labels: Array.from(labels.values()).sort((a, b) => b.confidence - a.confidence),
+          indexed_at: new Date().toISOString(),
+        };
+      }
+
+      completed++;
+      onProgress({ current: completed, total, current_file: photo.file_name });
     }
+  };
 
-    const labels = new Map<string, VisualIndexLabel>();
-    for (const label of metadataLabels(photo)) addLabel(labels, label);
-    try {
-      for (const label of await imageLabels(photo)) addLabel(labels, label);
-    } catch {
-      // Unsupported formats or partially generated thumbnails can be retried in a later indexing pass.
-    }
-
-    next[photo.id] = {
-      photo_id: photo.id,
-      labels: Array.from(labels.values()).sort((a, b) => b.confidence - a.confidence),
-      indexed_at: new Date().toISOString(),
-    };
-  }
+  await Promise.all(
+    Array.from({ length: Math.min(concurrency, photos.length) }, () => worker()),
+  );
 
   onProgress({ current: total, total });
   return next;

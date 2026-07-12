@@ -1344,19 +1344,21 @@ fn get_photo_metadata(
 #[tauri::command]
 async fn export_xmp_sidecars(photos: Vec<Photo>) -> Result<XmpSidecarResult, String> {
     tokio::task::spawn_blocking(move || -> Result<XmpSidecarResult, String> {
-        let mut processed_count = 0usize;
-        let mut skipped_count = 0usize;
-
-        for photo in photos {
-            let photo_path = Path::new(&photo.file_path);
-            if !photo_path.is_file() {
-                skipped_count += 1;
-                continue;
-            }
-            let sidecar_path = xmp_sidecar_path(photo_path);
-            fs::write(&sidecar_path, lightroom_xmp(&photo)).map_err(|e| e.to_string())?;
-            processed_count += 1;
-        }
+        let results: Result<Vec<bool>, String> = photos
+            .par_iter()
+            .map(|photo| {
+                let photo_path = Path::new(&photo.file_path);
+                if !photo_path.is_file() {
+                    return Ok(false);
+                }
+                let sidecar_path = xmp_sidecar_path(photo_path);
+                fs::write(&sidecar_path, lightroom_xmp(&photo)).map_err(|e| e.to_string())?;
+                Ok(true)
+            })
+            .collect();
+        let results = results?;
+        let processed_count = results.iter().filter(|processed| **processed).count();
+        let skipped_count = results.len() - processed_count;
 
         Ok(XmpSidecarResult {
             processed_count,

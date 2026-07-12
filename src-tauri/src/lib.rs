@@ -8,11 +8,11 @@ use ort::session::Session;
 use rayon::prelude::*;
 use rusqlite;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::{HashMap, HashSet, VecDeque};
 use std::fs;
 use std::io::{self, Write};
 use std::path::{Path, PathBuf};
-use std::sync::{Arc, Mutex};
+use std::sync::{Arc, Mutex, OnceLock};
 use tauri::ipc::Response;
 use tauri::{AppHandle, Emitter, Manager};
 use uuid::Uuid;
@@ -30,6 +30,11 @@ const THUMBNAIL_CACHE_VERSION: &str = "thumbnail-v1-400px-jpeg90";
 // Higher than current still-camera dimensions, so cached RAW renders retain
 // their decoded resolution while still using the shared bounded API.
 const RAW_FULL_RENDER_MAX_DIMENSION: u32 = 32_768;
+static RAW_RENDER_PRIORITY_QUEUE: OnceLock<Mutex<VecDeque<Photo>>> = OnceLock::new();
+
+fn raw_render_priority_queue() -> &'static Mutex<VecDeque<Photo>> {
+    RAW_RENDER_PRIORITY_QUEUE.get_or_init(|| Mutex::new(VecDeque::new()))
+}
 #[cfg(not(target_env = "msvc"))]
 use rsraw::RawImage;
 
@@ -816,13 +821,29 @@ async fn generate_thumbnails(
 /// without letting a large import monopolize all CPU cores and memory.
 #[tauri::command]
 async fn prerender_raws(photos: Vec<Photo>, app: AppHandle) -> Result<(), String> {
-    let raws: Vec<Photo> = photos
+    let raws: VecDeque<Photo> = photos
         .into_iter()
         .filter(|photo| is_raw_file(Path::new(&photo.file_path)))
         .collect();
 
+    if let Ok(mut priority) = raw_render_priority_queue().lock() {
+        priority.clear();
+    }
+
     tokio::task::spawn_blocking(move || {
-        for photo in raws {
+        let mut remaining = raws;
+        let mut processed = HashSet::new();
+        loop {
+            let prioritized = raw_render_priority_queue()
+                .lock()
+                .ok()
+                .and_then(|mut queue| queue.pop_front());
+            let Some(photo) = prioritized.or_else(|| remaining.pop_front()) else {
+                break;
+            };
+            if !processed.insert(photo.id.clone()) {
+                continue;
+            }
             if render_raw_to_jpeg(Path::new(&photo.file_path), RAW_FULL_RENDER_MAX_DIMENSION)
                 .is_ok()
             {
@@ -834,6 +855,24 @@ async fn prerender_raws(photos: Vec<Photo>, app: AppHandle) -> Result<(), String
     .map_err(|e| format!("RAW pre-rendering failed: {e}"))?;
 
     Ok(())
+}
+
+/// Move RAWs represented by currently visible UI previews to the front of the
+/// sequential background render queue.
+#[tauri::command]
+fn prioritize_raw_renders(photos: Vec<Photo>) {
+    let Ok(mut queue) = raw_render_priority_queue().lock() else {
+        return;
+    };
+    for photo in photos.into_iter().rev() {
+        if !is_raw_file(Path::new(&photo.file_path)) {
+            continue;
+        }
+        if let Some(index) = queue.iter().position(|queued| queued.id == photo.id) {
+            queue.remove(index);
+        }
+        queue.push_front(photo);
+    }
 }
 
 #[tauri::command]
@@ -2281,6 +2320,7 @@ pub fn run() {
             scan_folder_fast,
             generate_thumbnails,
             prerender_raws,
+            prioritize_raw_renders,
             filter_photos,
             get_photo_stats,
             load_full_resolution_image_command,

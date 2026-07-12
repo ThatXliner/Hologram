@@ -35,6 +35,8 @@
     let displayRequestId = 0;
     let unlistenRawRender: (() => void) | null = null;
     let destroyed = false;
+    let previewElement = $state<HTMLDivElement | null>(null);
+    let lastPrioritizedPhotoId: string | null = null;
 
     const fallbackSrc = $derived(failedPhotoId === photo.id ? "" : photoPreviewSrc(photo));
     const src = $derived(
@@ -65,6 +67,14 @@
     });
 
     onMount(() => {
+        const observer = new IntersectionObserver((entries) => {
+            if (!entries.some((entry) => entry.isIntersecting)) return;
+            if (lastPrioritizedPhotoId === photo.id) return;
+            lastPrioritizedPhotoId = photo.id;
+            HologramAPI.prioritizeRawRenders([photo]);
+        }, { rootMargin: "160px" });
+        if (previewElement) observer.observe(previewElement);
+
         void HologramAPI.onRawRenderReady(({ id }) => {
             if (quality !== "display" || id !== photo.id) return;
 
@@ -78,6 +88,7 @@
             if (destroyed) unlisten();
             else unlistenRawRender = unlisten;
         });
+        return () => observer.disconnect();
     });
 
     onDestroy(() => {
@@ -175,7 +186,7 @@
 </script>
 
 {#if src}
-    <div class="relative h-full w-full bg-black">
+    <div bind:this={previewElement} class="relative h-full w-full bg-black">
         <img
             src={src}
             alt={photo.file_name}
@@ -191,7 +202,7 @@
         {/if}
     </div>
 {:else}
-    <div class="grid h-full w-full place-items-center bg-secondary">
+    <div bind:this={previewElement} class="grid h-full w-full place-items-center bg-secondary">
         <div class="flex flex-col items-center gap-2 text-muted-foreground">
             <ImageOff size={iconSize} />
             {#if fallbackLabel}

@@ -18,6 +18,7 @@
     import { HologramAPI } from "../lib/api.ts";
     import { buildSmartCollections } from "../lib/collections.ts";
     import { indexPhotoVisuals } from "../lib/visualIndex.ts";
+    import { photoPreviewSrc } from "../lib/photoPreview.ts";
     import type { CullFlag, Photo, PhotoFilter, SavedSearch, ThumbnailReady, VisualIndexEntry, VisualIndexProgress } from "../lib/types.ts";
     import {
         Check,
@@ -692,8 +693,8 @@
                         {#if cursorPhoto}
                             <div class="flex min-w-0 items-center gap-3">
                                 <div class="h-[38px] w-[38px] shrink-0 overflow-hidden rounded bg-secondary outline outline-[1.5px] outline-primary">
-                                    {#if cursorPhoto.thumbnail}
-                                        <img src={cursorPhoto.thumbnail} alt="" class="h-full w-full object-cover" />
+                                    {#if photoPreviewSrc(cursorPhoto)}
+                                        <img src={photoPreviewSrc(cursorPhoto)} alt="" class="h-full w-full object-cover" />
                                     {/if}
                                 </div>
                                 <div class="min-w-0 whitespace-nowrap">

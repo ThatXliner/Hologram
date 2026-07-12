@@ -105,6 +105,13 @@ export class HologramAPI {
     });
   }
 
+  static prioritizeRawRenders(photos: Photo[]): void {
+    if (photos.length === 0) return;
+    invoke("prioritize_raw_renders", { photos }).catch((err) => {
+      console.error("Failed to prioritize visible RAW previews:", err);
+    });
+  }
+
   static stopThumbnailListener: (() => void) | null = null;
 
   static async filterPhotos(

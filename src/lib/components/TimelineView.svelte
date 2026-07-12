@@ -1,8 +1,8 @@
 <script lang="ts">
-    import { convertFileSrc } from "@tauri-apps/api/core";
-    import { CalendarDays, Check, FileImage, ImageOff, Info, XCircle } from "@lucide/svelte";
+    import { CalendarDays, Check, FileImage, Info, XCircle } from "@lucide/svelte";
     import { photoStore, selectedIndex } from "../stores/photoStore.ts";
     import type { Photo } from "../types.ts";
+    import PhotoPreview from "./PhotoPreview.svelte";
 
     interface Props {
         photos: Photo[];
@@ -40,21 +40,6 @@
             day: "numeric",
             year: "numeric",
         }).format(new Date(`${key}T12:00:00`));
-    }
-
-    function getPreviewSrc(photo: Photo): string {
-        if (photo.thumbnail) {
-            const mime = photo.thumbnail.startsWith("iVBOR") ? "image/png" : "image/jpeg";
-            return `data:${mime};base64,${photo.thumbnail}`;
-        }
-        if (["JPEG", "JPG", "PNG", "WEBP", "GIF"].includes(photo.file_type.toUpperCase())) {
-            try {
-                return convertFileSrc(photo.file_path);
-            } catch {
-                return "";
-            }
-        }
-        return "";
     }
 
     function embeddedPreviewInfo(photo: Photo): EmbeddedPreview | null {
@@ -98,7 +83,6 @@
                     style={`--timeline-tile-min: ${timelineTileMinWidth}px`}
                 >
                     {#each group.items as photo (photo.id)}
-                        {@const previewSrc = getPreviewSrc(photo)}
                         {@const embeddedPreview = embeddedPreviewInfo(photo)}
                         {@const index = globalIndex(photo)}
                         <button
@@ -108,19 +92,7 @@
                             title={photo.file_name}
                         >
                             <div class="relative aspect-[3/2] bg-black">
-                                {#if previewSrc}
-                                    <img
-                                        src={previewSrc}
-                                        alt={photo.file_name}
-                                        class="photo-preview-image h-full w-full object-contain"
-                                        loading="lazy"
-                                        decoding="async"
-                                    />
-                                {:else}
-                                    <div class="grid h-full w-full place-items-center text-muted-foreground">
-                                        <ImageOff size={28} />
-                                    </div>
-                                {/if}
+                                <PhotoPreview {photo} fit="contain" iconSize={28} />
 
                                 <div class="absolute right-2 top-2 flex gap-1">
                                     {#if photo.paired_with}

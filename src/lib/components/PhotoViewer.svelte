@@ -25,6 +25,7 @@
         XCircle,
     } from "@lucide/svelte";
     import ImageEditor from "./ImageEditor.svelte";
+    import PhotoPreview from "./PhotoPreview.svelte";
     import { builtInRawPresets, parseRawPresetFile, presetSummary } from "../presets.ts";
     import type { RawProcessingPreset } from "../types.ts";
 
@@ -699,6 +700,7 @@
 
     async function loadPhotoByRef(item: Photo | undefined) {
         if (!item) return;
+        HologramAPI.prioritizeRawRenders([item]);
         const cached = preloadCache.get(item.id);
         if (cached) {
             revokeBlobUrl(currentBlobUrl);
@@ -746,6 +748,7 @@
     }
 
     function preloadAdjacent() {
+        HologramAPI.prioritizeRawRenders(filmstripPhotos);
         for (const [key, image] of preloadCache) {
             const idx = photos.findIndex((item) => item.id === key);
             if (idx === -1 || Math.abs(idx - currentIndex) > 3) {
@@ -1087,18 +1090,13 @@
                             <div class="grid w-11 place-items-center font-mono text-[12px] font-semibold text-subtle">VS</div>
                             <div class="relative flex min-w-0 items-center justify-center overflow-hidden rounded-[4px]">
                                 <span class="absolute left-2.5 top-2.5 z-10 rounded bg-secondary px-[7px] py-[3px] font-mono text-[9px] font-bold text-foreground">CANDIDATE</span>
-                                {#if getVisiblePreviewSrc(comparePhoto)}
-                                    <img
-                                        src={getVisiblePreviewSrc(comparePhoto)}
-                                        alt={comparePhoto.file_name}
-                                        class="photo-preview-image max-h-full max-w-full object-contain"
-                                        draggable="false"
-                                    />
-                                {:else}
-                                    <div class="rounded-lg border border-border bg-secondary/40 p-6 text-center text-muted-foreground">
-                                        <p>No preview</p>
-                                    </div>
-                                {/if}
+                                <PhotoPreview
+                                    photo={comparePhoto}
+                                    quality="display"
+                                    fit="contain"
+                                    eager={true}
+                                    fallbackLabel="No preview"
+                                />
                                 <span class="absolute inset-x-2.5 bottom-2.5 truncate rounded bg-black/55 px-[7px] py-[3px] font-mono text-[10px] text-foreground">
                                     {compareLabel(comparePhoto, "Candidate")}
                                 </span>

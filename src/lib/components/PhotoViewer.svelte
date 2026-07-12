@@ -69,6 +69,7 @@
     const failedImageRetryKeys = new Set<string>();
     const preloadCache = new Map<string, LoadedImage>();
     const preloadingSet = new Set<string>();
+    let unlistenRawRender: (() => void) | null = null;
 
     let showEditor = $state(false);
     let editedPreviewUrl = $state<string | null>(null);
@@ -145,9 +146,15 @@
         loadCustomPresets();
         photoStore.setSelectedIndex(currentIndex);
         void loadCurrentPhoto();
+        void HologramAPI.onRawRenderReady(({ id }) => {
+            if (id === activePhoto?.id) void replacePreviewWithRenderedRaw(activePhoto);
+        }).then((unlisten) => {
+            unlistenRawRender = unlisten;
+        });
     });
 
     onDestroy(() => {
+        unlistenRawRender?.();
         revokeBlobUrl(currentBlobUrl);
         revokeBlobUrl(editedPreviewUrl);
         for (const image of preloadCache.values()) {
@@ -155,6 +162,21 @@
         }
         preloadCache.clear();
     });
+
+    async function replacePreviewWithRenderedRaw(item: Photo) {
+        const result = await loadImageForPhoto(item);
+        if (!result.url || item.id !== activePhoto?.id) {
+            revokeBlobUrl(result.url);
+            return;
+        }
+        revokeBlobUrl(currentBlobUrl);
+        currentBlobUrl = result.url;
+        currentBlobPhotoId = item.id;
+        fullResCandidatePhotoId = item.id;
+        hasFullRes = false;
+        isLoadingFullRes = true;
+        loadError = null;
+    }
 
     function resetZoom() {
         zoomLevel = 1;

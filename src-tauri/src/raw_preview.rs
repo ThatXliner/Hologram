@@ -142,6 +142,20 @@ pub fn render_raw_to_jpeg(file_path: &Path, max_dimension: u32) -> Result<Vec<u8
     Ok(data)
 }
 
+/// Return a completed LibRaw render without starting an expensive render on a
+/// viewer request. Background pre-rendering uses the same cache key.
+#[cfg(not(target_env = "msvc"))]
+pub fn read_cached_raw_render(file_path: &Path, max_dimension: u32) -> Option<Vec<u8>> {
+    let cache_path =
+        raw_preview_cache_dir().join(raw_preview_cache_key(file_path, max_dimension, "render"));
+    read_cached_jpeg(&cache_path)
+}
+
+#[cfg(target_env = "msvc")]
+pub fn read_cached_raw_render(_file_path: &Path, _max_dimension: u32) -> Option<Vec<u8>> {
+    None
+}
+
 #[cfg(target_env = "msvc")]
 pub fn render_raw_to_jpeg(_file_path: &Path, _max_dimension: u32) -> Result<Vec<u8>> {
     anyhow::bail!("RAW rendering is not supported on MSVC builds")

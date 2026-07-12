@@ -23,10 +23,13 @@ use zip::{CompressionMethod, ZipWriter};
 mod raw_preview;
 use raw_preview::{
     convert_raw_display_preview_to_jpeg, generate_embedded_thumbnail, generate_thumbnail_with_info,
-    is_raw_file, is_supported_file, orient_image_to_jpeg_if_needed, render_raw_to_jpeg,
-    EmbeddedJpegPreview,
+    is_raw_file, is_supported_file, orient_image_to_jpeg_if_needed, read_cached_raw_render,
+    render_raw_to_jpeg, EmbeddedJpegPreview,
 };
 const THUMBNAIL_CACHE_VERSION: &str = "thumbnail-v1-400px-jpeg90";
+// Higher than current still-camera dimensions, so cached RAW renders retain
+// their decoded resolution while still using the shared bounded API.
+const RAW_FULL_RENDER_MAX_DIMENSION: u32 = 32_768;
 #[cfg(not(target_env = "msvc"))]
 use rsraw::RawImage;
 
@@ -101,6 +104,11 @@ pub struct ThumbnailReady {
     pub id: String,
     pub thumbnail: String,
     pub embedded_jpeg_preview: Option<EmbeddedJpegPreview>,
+}
+
+#[derive(Debug, Clone, Serialize)]
+pub struct RawRenderReady {
+    pub id: String,
 }
 
 #[derive(Debug, Clone)]
@@ -609,11 +617,15 @@ fn is_jpeg_file(path: &Path) -> bool {
 fn load_full_resolution_image(file_path: &Path) -> Response {
     const RAW_VIEWER_PREVIEW_MAX_DIMENSION: u32 = 8192;
 
-    // For RAW files, prefer the camera's embedded JPEG preview. A full LibRaw
-    // render is still available to editing/export paths, but it is too slow for
-    // every viewer navigation and preload.
+    // Use a background-generated full render when it is ready. Until then,
+    // return the embedded preview immediately so viewer navigation never waits
+    // for LibRaw processing.
     if is_raw_file(file_path) {
-        let data = convert_raw_display_preview_to_jpeg(file_path, RAW_VIEWER_PREVIEW_MAX_DIMENSION)
+        let data = read_cached_raw_render(file_path, RAW_FULL_RENDER_MAX_DIMENSION)
+            .or_else(|| {
+                convert_raw_display_preview_to_jpeg(file_path, RAW_VIEWER_PREVIEW_MAX_DIMENSION)
+                    .ok()
+            })
             .unwrap_or_default();
         return tauri::ipc::Response::new(data);
     }
@@ -795,6 +807,31 @@ async fn generate_thumbnails(
     })
     .await
     .map_err(|e| format!("Thumbnail generation failed: {}", e))??;
+
+    Ok(())
+}
+
+/// Phase 3: progressively render every RAW at viewer resolution. This is
+/// intentionally sequential: it fills the disk cache in the background
+/// without letting a large import monopolize all CPU cores and memory.
+#[tauri::command]
+async fn prerender_raws(photos: Vec<Photo>, app: AppHandle) -> Result<(), String> {
+    let raws: Vec<Photo> = photos
+        .into_iter()
+        .filter(|photo| is_raw_file(Path::new(&photo.file_path)))
+        .collect();
+
+    tokio::task::spawn_blocking(move || {
+        for photo in raws {
+            if render_raw_to_jpeg(Path::new(&photo.file_path), RAW_FULL_RENDER_MAX_DIMENSION)
+                .is_ok()
+            {
+                let _ = app.emit("raw-render-ready", RawRenderReady { id: photo.id });
+            }
+        }
+    })
+    .await
+    .map_err(|e| format!("RAW pre-rendering failed: {e}"))?;
 
     Ok(())
 }
@@ -2243,6 +2280,7 @@ pub fn run() {
         .invoke_handler(tauri::generate_handler![
             scan_folder_fast,
             generate_thumbnails,
+            prerender_raws,
             filter_photos,
             get_photo_stats,
             load_full_resolution_image_command,

@@ -9,6 +9,7 @@ import type {
   PhotoFilter,
   PhotoMetadata,
   PhotoStats,
+  RawRenderReady,
   ScanResult,
   ThumbnailReady,
   XmpSidecarResult,
@@ -84,11 +85,24 @@ export class HologramAPI {
         console.error("Thumbnail generation error:", err);
       });
 
+      // Phase 3: progressively fill the full-resolution RAW render cache.
+      invoke("prerender_raws", { photos: result.photos }).catch((err) => {
+        console.error("RAW pre-rendering error:", err);
+      });
+
       return result;
     } catch (error) {
       console.error("Error scanning folder:", error);
       throw new Error(`Failed to scan folder: ${error}`);
     }
+  }
+
+  static async onRawRenderReady(
+    callback: (data: RawRenderReady) => void,
+  ): Promise<() => void> {
+    return await listen<RawRenderReady>("raw-render-ready", (event) => {
+      callback(event.payload);
+    });
   }
 
   static stopThumbnailListener: (() => void) | null = null;

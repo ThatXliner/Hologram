@@ -126,6 +126,10 @@ export interface VisualIndexProgress {
   current_file?: string;
 }
 
+export interface RawRenderReady {
+  id: string;
+}
+
 export interface ExportOptions {
   destination_path: string;
   mode: "folder" | "zip" | "lightroom";

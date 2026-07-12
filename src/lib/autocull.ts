@@ -8,6 +8,7 @@ import type {
   Photo,
   VisualIndexProgress,
 } from "./types.ts";
+import { invoke } from "@tauri-apps/api/core";
 import { photoPreviewSrc } from "./photoPreview.ts";
 import { heavyMediaConcurrency } from "./concurrency.ts";
 
@@ -77,6 +78,8 @@ type CachedPixelFeaturesEntry = {
   modified_at: string;
   features: PixelFeatures | null;
 };
+
+type SqlFeatureCacheEntry = Omit<CachedPixelFeaturesEntry, "cached_at">;
 
 const pixelFeatureMemoryCache = new Map<string, PixelFeatures | null>();
 let featureCacheDbPromise: Promise<IDBDatabase | null> | null = null;
@@ -415,17 +418,21 @@ export async function buildAutoCullSession(
   onProgress: (progress: VisualIndexProgress) => void = () => {},
   refinements: AutoCullPreferenceRefinement[] = [],
   learnFromPhotoMetadata = true,
+  folderPath: string | null = null,
 ): Promise<AutoCullSession> {
   const featuresById = new Map<string, PixelFeatures | null>();
   const total = photos.length;
+  const sqlCache = await readSqlFeatureCache(photos, folderPath);
+  const pendingSqlEntries: SqlFeatureCacheEntry[] = [];
   let completed = 0;
   await parallelForEach(photos, heavyMediaConcurrency(), async (photo) => {
     await idleTick();
-    const features = await extractCachedPixelFeatures(photo);
+    const features = await extractCachedPixelFeatures(photo, sqlCache, pendingSqlEntries);
     featuresById.set(photo.id, features);
     completed++;
     onProgress({ current: completed, total, current_file: photo.file_name });
   });
+  await writeSqlFeatureCache(pendingSqlEntries, folderPath);
 
   const featureRecordsById = buildFeatureRecords(photos, featuresById);
   const examples = buildRankedExamples(photos, featureRecordsById, refinements, learnFromPhotoMetadata);
@@ -541,22 +548,81 @@ function dedupePairwise(preferences: AutoCullPairwisePreference[]): AutoCullPair
   return result.reverse().slice(-2_000);
 }
 
-async function extractCachedPixelFeatures(photo: Photo): Promise<PixelFeatures | null> {
+async function extractCachedPixelFeatures(
+  photo: Photo,
+  sqlCache: Map<string, PixelFeatures | null>,
+  pendingSqlEntries: SqlFeatureCacheEntry[],
+): Promise<PixelFeatures | null> {
   const cacheKey = pixelFeatureCacheKey(photo);
   if (pixelFeatureMemoryCache.has(cacheKey)) {
     return clonePixelFeatures(pixelFeatureMemoryCache.get(cacheKey));
   }
 
+  if (sqlCache.has(cacheKey)) {
+    const features = sqlCache.get(cacheKey) ?? null;
+    rememberPixelFeatures(cacheKey, features);
+    return clonePixelFeatures(features);
+  }
+
   const persisted = await readCachedPixelFeatures(cacheKey);
   if (persisted !== undefined) {
     rememberPixelFeatures(cacheKey, persisted);
+    pendingSqlEntries.push(sqlFeatureCacheEntry(cacheKey, photo, persisted));
     return clonePixelFeatures(persisted);
   }
 
   const features = await extractPixelFeatures(photo);
   rememberPixelFeatures(cacheKey, features);
+  pendingSqlEntries.push(sqlFeatureCacheEntry(cacheKey, photo, features));
   void writeCachedPixelFeatures(cacheKey, photo, features);
   return features;
+}
+
+function sqlFeatureCacheEntry(
+  key: string,
+  photo: Photo,
+  features: PixelFeatures | null,
+): SqlFeatureCacheEntry {
+  return {
+    key,
+    version: FEATURE_CACHE_VERSION,
+    file_path: photo.file_path,
+    file_size: photo.file_size,
+    modified_at: photo.modified_at,
+    features: clonePixelFeatures(features),
+  };
+}
+
+async function readSqlFeatureCache(
+  photos: Photo[],
+  folderPath: string | null,
+): Promise<Map<string, PixelFeatures | null>> {
+  try {
+    const entries = await invoke<SqlFeatureCacheEntry[]>("read_autocull_feature_cache", {
+      folderPath,
+      cacheKeys: photos.map(pixelFeatureCacheKey),
+    });
+    return new Map(
+      entries
+        .filter((entry) => entry.version === FEATURE_CACHE_VERSION)
+        .map((entry) => [entry.key, clonePixelFeatures(entry.features)]),
+    );
+  } catch {
+    // Browser-only development has no Tauri SQL backend; IndexedDB remains its fallback.
+    return new Map();
+  }
+}
+
+async function writeSqlFeatureCache(
+  entries: SqlFeatureCacheEntry[],
+  folderPath: string | null,
+): Promise<void> {
+  if (entries.length === 0) return;
+  try {
+    await invoke("write_autocull_feature_cache", { folderPath, entries });
+  } catch {
+    // IndexedDB has already received newly computed entries as a browser fallback.
+  }
 }
 
 function pixelFeatureCacheKey(photo: Photo): string {

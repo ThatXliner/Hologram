@@ -26,6 +26,7 @@ use raw_preview::{
     is_raw_file, is_supported_file, orient_image_to_jpeg_if_needed, render_raw_to_jpeg,
     EmbeddedJpegPreview,
 };
+const THUMBNAIL_CACHE_VERSION: &str = "thumbnail-v1-400px-jpeg90";
 #[cfg(not(target_env = "msvc"))]
 use rsraw::RawImage;
 
@@ -100,6 +101,16 @@ pub struct ThumbnailReady {
     pub id: String,
     pub thumbnail: String,
     pub embedded_jpeg_preview: Option<EmbeddedJpegPreview>,
+}
+
+#[derive(Debug, Clone)]
+struct ThumbnailCacheEntry {
+    id: String,
+    file_path: String,
+    file_size: u64,
+    modified_at: String,
+    thumbnail: String,
+    embedded_jpeg_preview: Option<EmbeddedJpegPreview>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -662,30 +673,128 @@ async fn scan_folder_fast(folder_path: String, app: AppHandle) -> Result<ScanRes
 /// Phase 2: Generate thumbnails in background, streaming each one to the
 /// frontend as it completes via "thumbnail-ready" events.
 #[tauri::command]
-async fn generate_thumbnails(photos: Vec<Photo>, app: AppHandle) -> Result<(), String> {
-    let items: Vec<(String, String)> = photos
+async fn generate_thumbnails(
+    photos: Vec<Photo>,
+    folder_path: Option<String>,
+    app: AppHandle,
+) -> Result<(), String> {
+    let items: Vec<Photo> = photos
         .into_iter()
         .filter(|p| p.thumbnail.is_none() || is_browser_preview_file(Path::new(&p.file_path)))
-        .map(|p| (p.id, p.file_path))
         .collect();
 
-    let app = Arc::new(app);
+    tokio::task::spawn_blocking(move || -> Result<(), String> {
+        let mut conn = open_cache_db(&app, folder_path.as_deref())?;
+        let mut cached = HashMap::new();
+        {
+            let mut statement = conn
+                .prepare(
+                    "SELECT file_path, file_size, modified_at, thumbnail, embedded_preview_json
+                     FROM thumbnail_cache WHERE photo_id = ?1 AND version = ?2",
+                )
+                .map_err(|e| e.to_string())?;
+            for photo in &items {
+                if let Ok(entry) = statement.query_row(
+                    rusqlite::params![photo.id, THUMBNAIL_CACHE_VERSION],
+                    |row| {
+                        let preview_json: Option<String> = row.get(4)?;
+                        Ok(ThumbnailCacheEntry {
+                            id: photo.id.clone(),
+                            file_path: row.get(0)?,
+                            file_size: row.get(1)?,
+                            modified_at: row.get(2)?,
+                            thumbnail: row.get(3)?,
+                            embedded_jpeg_preview: preview_json
+                                .and_then(|json| serde_json::from_str(&json).ok()),
+                        })
+                    },
+                ) {
+                    if entry.file_path == photo.file_path
+                        && entry.file_size == photo.file_size
+                        && entry.modified_at == photo.modified_at.to_rfc3339()
+                    {
+                        cached.insert(photo.id.clone(), entry);
+                    }
+                }
+            }
+        }
 
-    tokio::task::spawn_blocking(move || {
-        items.par_iter().for_each(|(id, file_path)| {
-            let path = Path::new(file_path);
-            if let Ok(generated) = generate_thumbnail_with_info(path) {
+        for entry in cached.values() {
+            let _ = app.emit(
+                "thumbnail-ready",
+                &ThumbnailReady {
+                    id: entry.id.clone(),
+                    thumbnail: entry.thumbnail.clone(),
+                    embedded_jpeg_preview: entry.embedded_jpeg_preview.clone(),
+                },
+            );
+        }
+
+        let generated: Vec<ThumbnailCacheEntry> = items
+            .par_iter()
+            .filter(|photo| !cached.contains_key(&photo.id))
+            .filter_map(|photo| {
+                generate_thumbnail_with_info(Path::new(&photo.file_path))
+                    .ok()
+                    .map(|generated| ThumbnailCacheEntry {
+                        id: photo.id.clone(),
+                        file_path: photo.file_path.clone(),
+                        file_size: photo.file_size,
+                        modified_at: photo.modified_at.to_rfc3339(),
+                        thumbnail: generated.thumbnail,
+                        embedded_jpeg_preview: generated.embedded_jpeg_preview,
+                    })
+            })
+            .collect();
+
+        for entry in &generated {
                 let event = ThumbnailReady {
-                    id: id.clone(),
-                    thumbnail: generated.thumbnail,
-                    embedded_jpeg_preview: generated.embedded_jpeg_preview,
+                id: entry.id.clone(),
+                thumbnail: entry.thumbnail.clone(),
+                embedded_jpeg_preview: entry.embedded_jpeg_preview.clone(),
                 };
                 let _ = app.emit("thumbnail-ready", &event);
+        }
+
+        let transaction = conn.transaction().map_err(|e| e.to_string())?;
+        {
+            let mut statement = transaction
+                .prepare(
+                    "INSERT INTO thumbnail_cache
+                     (photo_id, version, cached_at, file_path, file_size, modified_at, thumbnail, embedded_preview_json)
+                     VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)
+                     ON CONFLICT(photo_id) DO UPDATE SET version=excluded.version,
+                       cached_at=excluded.cached_at, file_path=excluded.file_path,
+                       file_size=excluded.file_size, modified_at=excluded.modified_at,
+                       thumbnail=excluded.thumbnail, embedded_preview_json=excluded.embedded_preview_json",
+                )
+                .map_err(|e| e.to_string())?;
+            let cached_at = Utc::now().to_rfc3339();
+            for entry in generated {
+                let preview_json = entry
+                    .embedded_jpeg_preview
+                    .map(|preview| serde_json::to_string(&preview))
+                    .transpose()
+                    .map_err(|e| e.to_string())?;
+                statement
+                    .execute(rusqlite::params![
+                        entry.id,
+                        THUMBNAIL_CACHE_VERSION,
+                        cached_at,
+                        entry.file_path,
+                        entry.file_size,
+                        entry.modified_at,
+                        entry.thumbnail,
+                        preview_json,
+                    ])
+                    .map_err(|e| e.to_string())?;
             }
-        });
+        }
+        transaction.commit().map_err(|e| e.to_string())?;
+        Ok(())
     })
     .await
-    .map_err(|e| format!("Thumbnail generation failed: {}", e))?;
+    .map_err(|e| format!("Thumbnail generation failed: {}", e))??;
 
     Ok(())
 }
@@ -1198,6 +1307,24 @@ pub struct PhotoMetadata {
     pub flag: String,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize)]
+#[serde(rename_all = "camelCase")]
+pub struct AutoCullFeatureValues {
+    pub embedding: Vec<f64>,
+    pub technical_score: f64,
+    pub backend: String,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutoCullFeatureCacheEntry {
+    pub key: String,
+    pub version: String,
+    pub file_path: String,
+    pub file_size: u64,
+    pub modified_at: String,
+    pub features: Option<AutoCullFeatureValues>,
+}
+
 #[derive(Debug, Clone, Default)]
 struct XmpMetadataPatch {
     tags: Option<Vec<String>>,
@@ -1242,6 +1369,140 @@ fn open_db(app: &AppHandle, folder_path: Option<&str>) -> Result<rusqlite::Conne
         [],
     );
     Ok(conn)
+}
+
+fn open_cache_db(
+    app: &AppHandle,
+    folder_path: Option<&str>,
+) -> Result<rusqlite::Connection, String> {
+    let db_path = if let Some(folder_path) = folder_path.filter(|path| !path.trim().is_empty()) {
+        let folder = Path::new(folder_path);
+        if !folder.is_dir() {
+            return Err(format!("Catalog folder does not exist: {folder_path}"));
+        }
+        folder.join("hologram-cache.sql")
+    } else {
+        app.path()
+            .app_cache_dir()
+            .map_err(|e| e.to_string())?
+            .join("hologram-cache.sql")
+    };
+    if let Some(parent) = db_path.parent() {
+        fs::create_dir_all(parent).map_err(|e| e.to_string())?;
+    }
+    let conn = rusqlite::Connection::open(db_path).map_err(|e| e.to_string())?;
+    conn.execute_batch(
+        "CREATE TABLE IF NOT EXISTS autocull_feature_cache (
+            cache_key TEXT PRIMARY KEY,
+            version TEXT NOT NULL,
+            cached_at TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            modified_at TEXT NOT NULL,
+            features_json TEXT
+        );
+        CREATE INDEX IF NOT EXISTS autocull_feature_cache_cached_at
+            ON autocull_feature_cache(cached_at);
+        CREATE TABLE IF NOT EXISTS thumbnail_cache (
+            photo_id TEXT PRIMARY KEY,
+            version TEXT NOT NULL,
+            cached_at TEXT NOT NULL,
+            file_path TEXT NOT NULL,
+            file_size INTEGER NOT NULL,
+            modified_at TEXT NOT NULL,
+            thumbnail TEXT NOT NULL,
+            embedded_preview_json TEXT
+        );
+        CREATE INDEX IF NOT EXISTS thumbnail_cache_cached_at
+            ON thumbnail_cache(cached_at);",
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(conn)
+}
+
+#[tauri::command]
+fn read_autocull_feature_cache(
+    app: AppHandle,
+    folder_path: Option<String>,
+    cache_keys: Vec<String>,
+) -> Result<Vec<AutoCullFeatureCacheEntry>, String> {
+    let conn = open_cache_db(&app, folder_path.as_deref())?;
+    let mut statement = conn
+        .prepare(
+            "SELECT version, file_path, file_size, modified_at, features_json
+             FROM autocull_feature_cache WHERE cache_key = ?1",
+        )
+        .map_err(|e| e.to_string())?;
+    let mut entries = Vec::new();
+    for key in cache_keys {
+        let entry = statement.query_row([&key], |row| {
+            let features_json: Option<String> = row.get(4)?;
+            Ok(AutoCullFeatureCacheEntry {
+                key: key.clone(),
+                version: row.get(0)?,
+                file_path: row.get(1)?,
+                file_size: row.get(2)?,
+                modified_at: row.get(3)?,
+                features: features_json.and_then(|json| serde_json::from_str(&json).ok()),
+            })
+        });
+        if let Ok(entry) = entry {
+            entries.push(entry);
+        }
+    }
+    Ok(entries)
+}
+
+#[tauri::command]
+fn write_autocull_feature_cache(
+    app: AppHandle,
+    folder_path: Option<String>,
+    entries: Vec<AutoCullFeatureCacheEntry>,
+) -> Result<(), String> {
+    let mut conn = open_cache_db(&app, folder_path.as_deref())?;
+    let transaction = conn.transaction().map_err(|e| e.to_string())?;
+    {
+        let mut statement = transaction
+            .prepare(
+                "INSERT INTO autocull_feature_cache
+                 (cache_key, version, cached_at, file_path, file_size, modified_at, features_json)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)
+                 ON CONFLICT(cache_key) DO UPDATE SET
+                   version=excluded.version, cached_at=excluded.cached_at,
+                   file_path=excluded.file_path, file_size=excluded.file_size,
+                   modified_at=excluded.modified_at, features_json=excluded.features_json",
+            )
+            .map_err(|e| e.to_string())?;
+        let cached_at = Utc::now().to_rfc3339();
+        for entry in entries {
+            let features_json = entry
+                .features
+                .map(|features| serde_json::to_string(&features))
+                .transpose()
+                .map_err(|e| e.to_string())?;
+            statement
+                .execute(rusqlite::params![
+                    entry.key,
+                    entry.version,
+                    cached_at,
+                    entry.file_path,
+                    entry.file_size,
+                    entry.modified_at,
+                    features_json,
+                ])
+                .map_err(|e| e.to_string())?;
+        }
+    }
+    transaction.commit().map_err(|e| e.to_string())?;
+    conn.execute(
+        "DELETE FROM autocull_feature_cache WHERE cache_key IN (
+            SELECT cache_key FROM autocull_feature_cache
+            ORDER BY cached_at DESC LIMIT -1 OFFSET 4000
+        )",
+        [],
+    )
+    .map_err(|e| e.to_string())?;
+    Ok(())
 }
 
 #[tauri::command]
@@ -1989,6 +2250,8 @@ pub fn run() {
             denoise_image,
             set_photo_metadata,
             get_photo_metadata,
+            read_autocull_feature_cache,
+            write_autocull_feature_cache,
             export_xmp_sidecars,
             import_xmp_sidecars,
             export_photos

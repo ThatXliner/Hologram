@@ -176,6 +176,7 @@
                 },
                 refinements,
                 activePreferenceProfileId === DEFAULT_PREFERENCE_PROFILE_ID,
+                folderPath,
             );
             if (runId !== analysisRun) return;
             session = next;

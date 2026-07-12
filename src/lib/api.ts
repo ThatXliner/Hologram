@@ -80,7 +80,7 @@ export class HologramAPI {
       });
 
       // Phase 2: Kick off thumbnail generation in background (fire-and-forget)
-      invoke("generate_thumbnails", { photos: result.photos }).catch((err) => {
+      invoke("generate_thumbnails", { photos: result.photos, folderPath }).catch((err) => {
         console.error("Thumbnail generation error:", err);
       });
 

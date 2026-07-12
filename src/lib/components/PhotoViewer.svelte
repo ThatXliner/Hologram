@@ -52,10 +52,16 @@
     const photo = $derived(photos[currentIndex]);
     const hasPrevious = $derived(currentIndex > 0);
     const hasNext = $derived(currentIndex < photos.length - 1);
-    const isPaired = $derived(photo?.paired_with != null);
-    const pairedPhoto = $derived(isPaired ? allPhotos.find((item) => item.id === photo.paired_with) : null);
+    const pairedPhoto = $derived(photo?.paired_with ? allPhotos.find((item) => item.id === photo.paired_with) : null);
+    const isPaired = $derived(!!pairedPhoto);
+    const rawPhoto = $derived(
+        photo && isRawFile(photo) ? photo : pairedPhoto && isRawFile(pairedPhoto) ? pairedPhoto : null,
+    );
+    const jpegPhoto = $derived(
+        photo && !isRawFile(photo) ? photo : pairedPhoto && !isRawFile(pairedPhoto) ? pairedPhoto : null,
+    );
     let viewingRaw = $state(false);
-    const activePhoto = $derived(viewingRaw && pairedPhoto ? pairedPhoto : photo);
+    const activePhoto = $derived((viewingRaw ? rawPhoto : jpegPhoto) ?? photo);
     const activeEmbeddedPreview = $derived(embeddedPreviewInfo(activePhoto));
 
     let currentBlobUrl = $state<string | null>(null);
@@ -507,8 +513,8 @@
 
     function getVisiblePreviewSrc(item: Photo | undefined): string {
         if (!item) return "";
-        if (item.id === activePhoto?.id && viewingRaw && photo && photo.id !== item.id) {
-            return getPreviewSrc(photo) || getPreviewSrc(item);
+        if (item.id === activePhoto?.id && viewingRaw && jpegPhoto) {
+            return getPreviewSrc(jpegPhoto) || getPreviewSrc(item);
         }
         return getPreviewSrc(item);
     }
@@ -933,11 +939,12 @@
 
     function compareLabel(item: Photo | null, fallback: string): string {
         if (!item) return fallback;
-        if (pairedPhoto?.id === item.id) return is_raw_file_label(item) ? "RAW" : "JPEG";
+        if (item.id === rawPhoto?.id) return "RAW";
+        if (item.id === jpegPhoto?.id) return "JPEG";
         return fallback;
     }
 
-    function is_raw_file_label(item: Photo): boolean {
+    function isRawFile(item: Photo): boolean {
         return !["JPEG", "JPG", "PNG", "WEBP", "GIF"].includes(item.file_type.toUpperCase());
     }
 

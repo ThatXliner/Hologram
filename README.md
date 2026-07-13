@@ -1,72 +1,181 @@
-# :camera: Hologram
+<p align="center">
+  <img src="site/og.png" alt="Hologram — Cull the shoot. Keep your files." width="100%" />
+</p>
 
-[![Binaries: Nightly](https://img.shields.io/badge/binaries-nightly-blueviolet)](https://nightly.link/ThatXliner/Hologram/workflows/build/main)
+<h1 align="center">Hologram</h1>
 
-> [!NOTE]
-> Hologram is currently in active development. Expect rough edges.
+<p align="center">
+  <strong>A local-first photo culling and management workspace for photographers who want control of their files.</strong>
+</p>
 
-**Hologram** is a pro-grade photo management and culling application built for photographers who want total control over their files without a bloated editing environment. It handles RAW+JPEG workflows, advanced EXIF-based filtering, and intelligent organization — and it never modifies your originals.
+<p align="center">
+  RAW+JPEG pairing · keyboard-first culling · deep EXIF search · explainable local AutoCull
+</p>
 
-No cloud lock-in. No black-box automations. Just clean, local photo organization.
+<p align="center">
+  <a href="https://github.com/ThatXliner/Hologram/actions/workflows/build.yml"><img src="https://github.com/ThatXliner/Hologram/actions/workflows/build.yml/badge.svg?branch=main" alt="Build status" /></a>
+  <a href="https://nightly.link/ThatXliner/Hologram/workflows/build/main"><img src="https://img.shields.io/badge/download-nightly-5ce8a4?labelColor=0d0f12" alt="Download nightly build" /></a>
+  <img src="https://img.shields.io/badge/processing-local--only-5ce8a4?labelColor=0d0f12" alt="Local-only processing" />
+</p>
 
-**AutoCull** learns from your picks, rejects, ratings, and burst winner choices using DINOv2 visual embeddings and an on-device boosted-tree ranker — so first-pass culling gets faster over time without touching a single original.
+<p align="center">
+  <a href="https://bryanhu.com/Hologram/">Website</a>
+  ·
+  <a href="https://nightly.link/ThatXliner/Hologram/workflows/build/main">Download nightly</a>
+  ·
+  <a href="https://github.com/ThatXliner/Hologram/issues/6">Roadmap</a>
+</p>
 
-## Design
+---
 
-Hologram follows the **Studio×Deck** visual direction: a near-black shell with a 52 px icon rail, a 248 px contextual Deck panel, and a bottom HUD. The accent palette uses spring-green (`#5ce8a4`) for picks/selects, amber for ratings, red for rejects, and IBM Plex Sans + Mono throughout. Photos are the hero; chrome recedes.
+Hologram reads the folders you already own and gives you a fast, dense workspace for turning a shoot into a set of keepers. It does not require a cloud library, proprietary photo vault, or heavyweight editing catalog.
 
-## Screenshots
+Point it at a folder. Hologram streams previews, pairs RAWs with their camera JPEGs, exposes the metadata behind every frame, and keeps the next decision one key away.
 
-| Welcome | Grid View |
-|---------|-----------|
-| ![Welcome screen](screenshots/01-welcome.png) | ![Photo grid](screenshots/02-grid.png) |
+> [!IMPORTANT]
+> Hologram is under active development. Nightly builds are usable, but expect rough edges and evolving workflows.
 
-| Filtered Grid | Photo Viewer |
-|---------------|--------------|
-| ![Filtered grid](screenshots/03-grid-filtered.png) | ![Photo viewer with EXIF](screenshots/04-viewer.png) |
+## See the whole shoot
 
-| RAW+JPEG Paired View | Adjustments Panel |
-|----------------------|-------------------|
-| ![RAW+JPEG paired viewer](screenshots/05-viewer-paired.png) | ![Adjustments/edit panel](screenshots/06-editor.png) |
+<p align="center">
+  <img src="site/assets/library.webp" alt="Hologram library showing a dense photo grid, culling state, filters, and session progress" width="100%" />
+</p>
 
-| AutoCull View |
-|---------------|
-| ![AutoCull ranking and cluster view](screenshots/07-autocull.png) |
+The interface follows a **Studio×Deck** direction: a near-black shell, a compact tool rail, contextual controls, and a persistent session HUD. Spring green marks picks, amber marks ratings, and red is reserved for rejects and destructive actions. Photos stay louder than the chrome.
 
-## Features
+## One uninterrupted workflow
 
-- **File-first library** — scan any folder; RAW+JPEG pairs are detected and treated as one logical photo
-- **Dense grid browser** — adjustable thumbnail size (120–520 px), per-tile detail levels, chronological timeline grouping
-- **EXIF-powered filtering** — camera, lens, shutter, aperture, ISO, focal length, date, flash, white balance; composable and saveable as named searches
-- **Rapid culling** — pick/reject/unmark (P/X/U) and 0–5 star ratings from anywhere; optional auto-advance; session progress tracking
-- **AutoCull** — burst/similarity cluster analysis with ML-backed recommendations (SELECT / MAYBE / REJECT / NEEDS_REVIEW), adjustable reject threshold, bulk-apply, and taste-learning via pairwise preference training
-- **Loupe viewer** — 50–1200% zoom, fit/100% shortcuts, progressive quality loading, RAW↔JPEG toggle, side-by-side compare
-- **Non-destructive adjustments** — exposure, contrast, saturation, tone curve, presets, LUT/XMP import; preview-only, originals untouched
-- **Smart Collections** — local background visual indexing (opt-in) for automatic similarity groupings
-- **Export** — filtered set to folder/zip/Lightroom structure; configurable pair handling, rename patterns, XMP sidecars
+| Stage | What Hologram does |
+| --- | --- |
+| **Import** | Scans a normal folder and streams thumbnails progressively. Embedded RAW previews are used when available. |
+| **Browse** | Shows a dense adjustable grid or chronological timeline with filename, camera, exposure, pairing, rating, and flag state. |
+| **Cull** | Pick, reject, unmark, and rate without leaving the keyboard. Optional auto-advance turns review into one decision per frame. |
+| **Inspect** | Zoom from fit to 1200%, switch between RAW and JPEG, compare neighboring frames, and inspect full EXIF. |
+| **Organize** | Search filenames and metadata, compose filters, save searches, tag frames, and build opt-in local Smart Collections. |
+| **Deliver** | Export the visible set to a folder, ZIP, or Lightroom-ready structure with pair handling, renaming, and XMP sidecars. |
 
-## Roadmap
+### Built for real camera files
 
-See [GitHub Issues #6](https://github.com/ThatXliner/Hologram/issues/6)
+- Broad RAW support, including CR2, CR3, NEF, ARW, DNG, RAF, ORF, RW2, and more
+- RAW+JPEG pairs represented as one logical photograph
+- Embedded JPEG extraction for fast first previews
+- Progressive loading from thumbnail → embedded preview → full resolution
+- Local metadata and preview caches for repeat visits
+- Non-destructive preview adjustments and explicit export
 
-## Long Description
+## AutoCull, without the oracle act
 
-Hologram is for photographers who want clarity and control — who shoot in full manual, wrestle with dynamic range, and compare in-camera JPEGs to flat RAWs with clinical curiosity. Built for those who want easy access to their RAWs "just on the filesystem," Hologram provides a professional, file-first view of your work.
+<p align="center">
+  <img src="site/assets/autocull.webp" alt="Hologram AutoCull showing similar-image clusters, recommendations, confidence, and score details" width="100%" />
+</p>
 
-Organize by folder, EXIF, camera, or custom rules. Compare technique over time. Track when you nailed a shot manually versus let the camera decide. Pair JPEG previews with RAW originals and see how your vision evolved. Use AutoCull to rank the current set with DINOv2-backed visual embeddings, perceptual focus/color/texture features, technical scoring, and behavior-aware boosted recommendations.
+AutoCull is a second opinion, not an automatic delete button.
 
-And most importantly: it never touches your files. Never.
+It groups bursts and visually similar frames, produces **SELECT / MAYBE / REJECT / NEEDS_REVIEW** recommendations, and exposes the signals behind each result. Local DINOv2 embeddings are combined with perceptual and technical features, then adjusted by an on-device preference model trained from your picks, ratings, and burst winners.
 
-## Manifesto
+- Review one cluster at a time or rank the entire shoot worst-first
+- Inspect technical, personal, final, and confidence scores independently
+- Adjust the reject threshold before applying any bulk action
+- Train and switch between named taste profiles
+- Keep manual flags authoritative over every recommendation
+- Run indexing and inference locally
 
-We believe photos are data — rich, nuanced, untampered data.
+## Loupe, compare, adjust
 
-We believe in ownership, not outsourcing.
-We believe in understanding exposure, not just applying filters.
-We believe EXIF is not just metadata — it's the story of how you saw the light.
+| Loupe and EXIF | Preview-only adjustments |
+| --- | --- |
+| <img src="site/assets/loupe.webp" alt="Hologram loupe view with full EXIF and culling controls" /> | <img src="site/assets/adjustments.webp" alt="Hologram non-destructive adjustment workspace" /> |
 
-We reject software that buries photos behind AI guesswork.
-We reject platforms that hide your RAWs, blur your edits, or downsample your history.
+More views: [RAW+JPEG pairing](screenshots/05-viewer-paired.png) · [filtered library](screenshots/03-grid-filtered.png) · [first run](screenshots/01-welcome.png)
 
-Hologram is for the ones who care how the shot was made.
-Not just how it looks.
+## The mouse is optional
+
+The culling vocabulary stays available wherever a photograph is active.
+
+| Key | Action |
+| --- | --- |
+| <kbd>←</kbd> <kbd>↑</kbd> <kbd>→</kbd> <kbd>↓</kbd> | Previous / next photograph |
+| <kbd>P</kbd> | Pick |
+| <kbd>X</kbd> | Reject |
+| <kbd>U</kbd> | Clear flag |
+| <kbd>0</kbd>–<kbd>5</kbd> | Set star rating |
+| <kbd>R</kbd> | Toggle RAW / JPEG |
+| <kbd>D</kbd> | Toggle comparison |
+| <kbd>E</kbd> | Toggle adjustments |
+| <kbd>F</kbd> | Fit photograph |
+| <kbd>+</kbd> / <kbd>−</kbd> | Zoom in / out |
+| <kbd>O</kbd> | Open in the system viewer |
+| <kbd>Esc</kbd> | Close the current surface or reset zoom |
+
+## Architecture
+
+```mermaid
+flowchart LR
+    A["Folders on disk"] --> B["Rust + Tauri core"]
+    B --> C["RAW preview pipeline"]
+    B --> D[("Local metadata and preview cache")]
+    C --> E["SvelteKit workspace"]
+    D --> E
+    E --> F["Local visual index + AutoCull"]
+    F --> D
+    E --> G["Folder / ZIP / Lightroom export"]
+    E --> H["XMP sidecar round-trip"]
+```
+
+| Layer | Technology |
+| --- | --- |
+| Desktop shell and system integration | Tauri 2 |
+| File scanning, RAW previews, metadata, caching, export | Rust |
+| Product interface | SvelteKit 5 + TypeScript |
+| Styling | Tailwind CSS 4 + IBM Plex Sans / Mono |
+| Local visual features | Transformers.js + DINOv2 embeddings |
+| Packaging and builds | Bun + Vite + GitHub Actions |
+
+The boundary is intentional: filesystem-heavy and performance-sensitive work lives behind typed Tauri commands; the Svelte layer owns the dense interactive workflow.
+
+## Try it
+
+The fastest path is the latest artifact from the main branch:
+
+**[Download a nightly build](https://nightly.link/ThatXliner/Hologram/workflows/build/main)**
+
+Nightly artifacts are produced for macOS, Windows, and Linux. They are development builds rather than polished releases.
+
+## Build from source
+
+You will need [Bun](https://bun.sh/), a Rust toolchain, and the platform dependencies required by Tauri.
+
+```bash
+git clone https://github.com/ThatXliner/Hologram.git
+cd Hologram
+bun install
+bun run tauri dev
+```
+
+Useful project commands:
+
+```bash
+bun run check        # Svelte and TypeScript diagnostics
+bun run build        # Production frontend build
+bun run screenshots  # Regenerate deterministic product screenshots
+```
+
+## Principles
+
+1. **Your files remain files.** Hologram works with the filesystem instead of hiding a library inside a proprietary vault.
+2. **Local means local.** Photo analysis, visual indexing, and preference learning run on your machine.
+3. **Automation must explain itself.** Recommendations expose their inputs and always yield to manual decisions.
+4. **Keyboard flow is product functionality.** Fast review is not a layer of shortcuts added after the interface is finished.
+5. **Photos are the hero.** Density is useful; chrome should recede.
+
+## Status and roadmap
+
+Hologram is being built in the open. The current roadmap lives in [issue #6](https://github.com/ThatXliner/Hologram/issues/6), and focused bug reports are welcome in [GitHub Issues](https://github.com/ThatXliner/Hologram/issues).
+
+When reporting a photo-specific problem, please include the file format, camera model, expected behavior, and whether the file contains an embedded JPEG preview. Do not upload private photographs unless you are comfortable making them public.
+
+---
+
+<p align="center">
+  <strong>For the ones who care how the shot was made—not just how it looks.</strong>
+</p>

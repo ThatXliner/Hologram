@@ -60,6 +60,13 @@
         effect: string;
         tip: string;
     };
+    type ExposureScale = {
+        position: number;
+        ticks: string[];
+        lowLabel: string;
+        highLabel: string;
+        ariaLabel: string;
+    };
     const RAW_FILE_TYPES = new Set([
         "3FR", "ARI", "ARW", "BAY", "CAP", "CRW", "CR2", "CR3", "DATA", "DCS", "DCR",
         "DNG", "DRF", "ERF", "FFF", "GPR", "IIQ", "K25", "KDC", "MDC", "MEF", "MOS",
@@ -1059,6 +1066,99 @@
         ].filter((metric): metric is ExposureMetric => metric !== null);
     }
 
+    function clamp(value: number, min: number, max: number): number {
+        return Math.min(max, Math.max(min, value));
+    }
+
+    function linearScalePosition(value: number, min: number, max: number): number {
+        return clamp(((value - min) / (max - min)) * 100, 0, 100);
+    }
+
+    function logScalePosition(value: number, min: number, max: number): number {
+        return linearScalePosition(Math.log2(value), Math.log2(min), Math.log2(max));
+    }
+
+    function shutterSeconds(value: string): number | null {
+        const normalized = value.trim().toLowerCase().replace(/sec(?:ond)?s?/, "").replace("s", "");
+        if (normalized.includes("/")) {
+            const [numerator, denominator] = normalized.split("/").map(Number);
+            return numerator > 0 && denominator > 0 ? numerator / denominator : null;
+        }
+        const seconds = Number(normalized);
+        return Number.isFinite(seconds) && seconds > 0 ? seconds : null;
+    }
+
+    function exposureScale(item: Photo, key: ExposureMetricKey): ExposureScale | null {
+        switch (key) {
+            case "aperture": {
+                const value = item.exif.aperture;
+                if (!value) return null;
+                return {
+                    position: logScalePosition(value, 1.4, 22),
+                    ticks: ["f/1.4", "f/2.8", "f/5.6", "f/11", "f/22"],
+                    lowLabel: "More light · shallow focus",
+                    highLabel: "Less light · deep focus",
+                    ariaLabel: `${formatAperture(value)} on a scale from f/1.4 to f/22`,
+                };
+            }
+            case "shutter": {
+                const value = item.exif.shutter_speed ? shutterSeconds(item.exif.shutter_speed) : null;
+                if (!value) return null;
+                return {
+                    position: logScalePosition(value, 1 / 4000, 1),
+                    ticks: ["1/4000", "1/500", "1/60", "1/8", "1s"],
+                    lowLabel: "Freeze motion",
+                    highLabel: "Show motion",
+                    ariaLabel: `${item.exif.shutter_speed} on a scale from 1/4000 of a second to 1 second`,
+                };
+            }
+            case "iso": {
+                const value = item.exif.iso;
+                if (!value) return null;
+                return {
+                    position: logScalePosition(value, 100, 25600),
+                    ticks: ["100", "400", "1600", "6400", "25600"],
+                    lowLabel: "Cleaner image",
+                    highLabel: "More noise",
+                    ariaLabel: `ISO ${value} on a scale from ISO 100 to ISO 25600`,
+                };
+            }
+            case "focal": {
+                const value = item.exif.focal_length;
+                if (!value) return null;
+                return {
+                    position: logScalePosition(value, 14, 400),
+                    ticks: ["14mm", "35mm", "85mm", "200mm", "400mm"],
+                    lowLabel: "Wide view",
+                    highLabel: "Tight view",
+                    ariaLabel: `${formatFocalLength(value)} on a scale from 14mm to 400mm`,
+                };
+            }
+            case "bias": {
+                const value = item.exif.exposure_bias;
+                if (value == null) return null;
+                return {
+                    position: linearScalePosition(value, -3, 3),
+                    ticks: ["−3", "−1.5", "0", "+1.5", "+3"],
+                    lowLabel: "Darker",
+                    highLabel: "Brighter",
+                    ariaLabel: `${formatEv(value)} on a scale from minus 3 EV to plus 3 EV`,
+                };
+            }
+            case "ev100": {
+                const value = item.exif.ev100;
+                if (value == null) return null;
+                return {
+                    position: linearScalePosition(value, 0, 18),
+                    ticks: ["0", "5", "9", "14", "18"],
+                    lowLabel: "Low-light scene",
+                    highLabel: "Bright scene",
+                    ariaLabel: `EV ${value.toFixed(1)} on a scale from EV 0 to EV 18`,
+                };
+            }
+        }
+    }
+
     async function openExposureHelp(key: ExposureMetricKey, trigger: HTMLButtonElement) {
         exposureHelpTrigger = trigger;
         exposureHelpKey = key;
@@ -1710,6 +1810,7 @@
     </div>
 
     {#if exposureHelp && selectedExposureMetric}
+        {@const scale = exposureScale(activePhoto, selectedExposureMetric.key)}
         <div class="fixed inset-0 z-[120] grid place-items-center p-4">
             <button
                 type="button"
@@ -1719,13 +1820,13 @@
             ></button>
             <div
                 bind:this={exposureHelpDialog}
-                class="relative w-full max-w-md rounded-xl border border-border bg-card shadow-2xl outline-none"
+                class="relative flex max-h-[calc(100vh-2rem)] w-full max-w-md flex-col overflow-hidden rounded-xl border border-border bg-card shadow-2xl outline-none"
                 role="dialog"
                 aria-modal="true"
                 aria-labelledby="exposure-help-title"
                 tabindex="-1"
             >
-                <div class="flex items-start gap-3 border-b border-border p-5">
+                <div class="flex shrink-0 items-start gap-3 border-b border-border p-5">
                     <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/15 text-primary">
                         <Info size={20} aria-hidden="true" />
                     </div>
@@ -1744,11 +1845,40 @@
                     </button>
                 </div>
 
-                <div class="space-y-4 p-5">
+                <div class="space-y-4 overflow-y-auto p-5">
                     <div class="rounded-lg border border-primary/25 bg-primary/10 px-4 py-3">
                         <div class="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-primary">This photo</div>
                         <div class="mt-0.5 font-mono text-2xl font-semibold tabular-nums text-foreground">{selectedExposureMetric.value}</div>
                     </div>
+                    {#if scale}
+                        <div
+                            class="rounded-lg border border-border bg-background px-4 py-3"
+                            role="img"
+                            aria-label={scale.ariaLabel}
+                        >
+                            <div class="mb-5 flex items-center justify-between">
+                                <h3 class="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Where it sits</h3>
+                                <span class="font-mono text-[10px] font-semibold text-primary">{selectedExposureMetric.value}</span>
+                            </div>
+                            <div class="relative">
+                                <div class="h-1.5 rounded-full bg-gradient-to-r from-primary/35 via-primary to-primary/35"></div>
+                                <div
+                                    class="absolute top-1/2 h-4 w-1.5 -translate-x-1/2 -translate-y-1/2 rounded-full bg-foreground shadow-[0_0_0_3px_var(--color-background),0_0_0_4px_var(--color-primary)]"
+                                    style={`left: ${scale.position}%`}
+                                    aria-hidden="true"
+                                ></div>
+                                <div class="mt-2 grid grid-cols-5 font-mono text-[9px] tabular-nums text-subtle" aria-hidden="true">
+                                    {#each scale.ticks as tick, index}
+                                        <span class={index === 0 ? "text-left" : index === scale.ticks.length - 1 ? "text-right" : "text-center"}>{tick}</span>
+                                    {/each}
+                                </div>
+                            </div>
+                            <div class="mt-2 flex justify-between gap-4 text-[10px] text-muted-foreground">
+                                <span>{scale.lowLabel}</span>
+                                <span class="text-right">{scale.highLabel}</span>
+                            </div>
+                        </div>
+                    {/if}
                     <p class="text-sm leading-6 text-muted-foreground">{exposureHelp.description}</p>
                     <div>
                         <h3 class="text-xs font-semibold uppercase tracking-wide text-foreground">What it changes</h3>

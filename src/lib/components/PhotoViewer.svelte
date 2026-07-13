@@ -15,6 +15,7 @@
         ExternalLink,
         FileImage,
         Image,
+        Info,
         Loader2,
         MapPin,
         Monitor,
@@ -46,6 +47,18 @@
         photo: Photo;
         distance: number;
         index: number;
+    };
+    type ExposureMetricKey = "aperture" | "shutter" | "iso" | "focal" | "bias" | "ev100";
+    type ExposureMetric = {
+        key: ExposureMetricKey;
+        label: string;
+        value: string;
+    };
+    type ExposureHelp = {
+        title: string;
+        description: string;
+        effect: string;
+        tip: string;
     };
     const RAW_FILE_TYPES = new Set([
         "3FR", "ARI", "ARW", "BAY", "CAP", "CRW", "CR2", "CR3", "DATA", "DCS", "DCR",
@@ -98,6 +111,9 @@
     let cancelDeferredJpegLoad: (() => void) | null = null;
 
     let showEditor = $state(false);
+    let exposureHelpKey = $state<ExposureMetricKey | null>(null);
+    let exposureHelpDialog = $state<HTMLElement | null>(null);
+    let exposureHelpTrigger: HTMLButtonElement | null = null;
     let editedPreviewUrl = $state<string | null>(null);
     let autoAdvance = $state(true);
     let compareMode = $state(false);
@@ -129,6 +145,51 @@
     let panStartY = 0;
     const ZOOM_STEPS = [0.5, 0.75, 1, 1.5, 2, 3, 4, 6, 8, 10, 12];
     const zoomPercent = $derived(Math.round(zoomLevel * 100));
+
+    const EXPOSURE_HELP: Record<ExposureMetricKey, ExposureHelp> = {
+        aperture: {
+            title: "Aperture",
+            description: "Aperture is the opening inside the lens. The f-number describes its size: a smaller number means a wider opening and more light.",
+            effect: "Wider apertures can create a shallower depth of field, while narrower apertures keep more of the scene in focus.",
+            tip: "Use a low f-number to separate a subject from the background, or a higher one when you want detail throughout the frame.",
+        },
+        shutter: {
+            title: "Shutter speed",
+            description: "Shutter speed is how long the camera sensor was exposed to light. A value like 1/250 means one two-hundred-and-fiftieth of a second.",
+            effect: "Faster speeds freeze motion but capture less light. Slower speeds gather more light and can introduce motion blur or camera shake.",
+            tip: "Choose a faster shutter for action and a slower one for intentional blur or low-light scenes with a stable camera.",
+        },
+        iso: {
+            title: "ISO",
+            description: "ISO describes the camera's amplification of the sensor signal. Raising it makes an image brighter without changing aperture or shutter speed.",
+            effect: "Higher ISO helps in low light, but it usually adds visible noise and can reduce color and highlight detail.",
+            tip: "Keep ISO as low as the available light and required shutter speed allow, then raise it when getting the shot matters more than maximum image quality.",
+        },
+        focal: {
+            title: "Focal length",
+            description: "Focal length describes the lens's angle of view in millimeters. Shorter lengths show more of the scene; longer lengths provide a tighter view.",
+            effect: "It affects framing and perspective: wide lenses can emphasize nearby objects, while telephoto lenses compress apparent distance.",
+            tip: "Compare focal length together with camera sensor size when judging how wide or tight a photo will look.",
+        },
+        bias: {
+            title: "Exposure bias",
+            description: "Exposure bias, or exposure compensation, records how much brighter or darker the photographer asked the camera to expose relative to its meter reading.",
+            effect: "Positive values brighten the metered exposure; negative values darken it. A value of 0 EV means no compensation was requested.",
+            tip: "Use positive compensation for scenes that fool the meter into going too dark, such as snow, and negative compensation to protect bright highlights.",
+        },
+        ev100: {
+            title: "EV100",
+            description: "EV100 summarizes the aperture and shutter-speed combination as an exposure value normalized to ISO 100.",
+            effect: "Each increase of 1 EV represents half as much captured light from the aperture and shutter combination. It is useful for comparing scene exposure independent of ISO.",
+            tip: "Treat EV100 as a comparison tool rather than a quality score; different creative choices can produce the same value.",
+        },
+    };
+    const exposureHelp = $derived(exposureHelpKey ? EXPOSURE_HELP[exposureHelpKey] : null);
+    const selectedExposureMetric = $derived(
+        activePhoto && exposureHelpKey
+            ? exposureMetrics(activePhoto).find((metric) => metric.key === exposureHelpKey) ?? null
+            : null,
+    );
 
     let tagInput = $state("");
     let notesValue = $state("");
@@ -437,6 +498,14 @@
 
     function handleKeydown(event: KeyboardEvent) {
         if (isTypingTarget(event.target)) return;
+
+        if (exposureHelpKey) {
+            if (event.key === "Escape") {
+                event.preventDefault();
+                closeExposureHelp();
+            }
+            return;
+        }
 
         switch (event.key) {
             case "Escape":
@@ -967,6 +1036,41 @@
         return `EV ${value.toFixed(1)}`;
     }
 
+    function exposureMetrics(item: Photo): ExposureMetric[] {
+        return [
+            item.exif.aperture
+                ? { key: "aperture", label: "Aperture", value: formatAperture(item.exif.aperture) }
+                : null,
+            item.exif.shutter_speed
+                ? { key: "shutter", label: "Shutter", value: item.exif.shutter_speed }
+                : null,
+            item.exif.iso
+                ? { key: "iso", label: "ISO", value: item.exif.iso.toString() }
+                : null,
+            item.exif.focal_length
+                ? { key: "focal", label: "Focal", value: formatFocalLength(item.exif.focal_length) }
+                : null,
+            item.exif.exposure_bias != null
+                ? { key: "bias", label: "Bias", value: formatEv(item.exif.exposure_bias) }
+                : null,
+            item.exif.ev100 != null
+                ? { key: "ev100", label: "EV100", value: formatEv100(item.exif.ev100) }
+                : null,
+        ].filter((metric): metric is ExposureMetric => metric !== null);
+    }
+
+    async function openExposureHelp(key: ExposureMetricKey, trigger: HTMLButtonElement) {
+        exposureHelpTrigger = trigger;
+        exposureHelpKey = key;
+        await tick();
+        exposureHelpDialog?.focus();
+    }
+
+    function closeExposureHelp() {
+        exposureHelpKey = null;
+        void tick().then(() => exposureHelpTrigger?.focus());
+    }
+
     function formatMegapixels(width?: number, height?: number): string {
         if (!width || !height) return "";
         return `${((width * height) / 1_000_000).toFixed(1)} MP`;
@@ -1380,42 +1484,23 @@
                     <div>
                         <h3 class="mb-2 font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle">Exposure</h3>
                         <div class="grid grid-cols-2 gap-2 text-sm">
-                            {#if activePhoto.exif.aperture}
+                            {#each exposureMetrics(activePhoto) as metric (metric.key)}
                                 <div class="rounded-md bg-secondary p-2">
-                                    <div class="text-xs text-muted-foreground">Aperture</div>
-                                    <div class="font-semibold text-foreground">{formatAperture(activePhoto.exif.aperture)}</div>
+                                    <div class="flex items-center justify-between gap-2 text-xs text-muted-foreground">
+                                        <span>{metric.label}</span>
+                                        <button
+                                            type="button"
+                                            class="-mr-1 -mt-1 grid h-6 w-6 shrink-0 place-items-center rounded text-subtle transition-colors hover:bg-accent hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                                            aria-label={`Learn about ${metric.label}`}
+                                            title={`Learn about ${metric.label}`}
+                                            onclick={(event) => void openExposureHelp(metric.key, event.currentTarget)}
+                                        >
+                                            <Info size={14} aria-hidden="true" />
+                                        </button>
+                                    </div>
+                                    <div class="font-semibold text-foreground">{metric.value}</div>
                                 </div>
-                            {/if}
-                            {#if activePhoto.exif.shutter_speed}
-                                <div class="rounded-md bg-secondary p-2">
-                                    <div class="text-xs text-muted-foreground">Shutter</div>
-                                    <div class="font-semibold text-foreground">{activePhoto.exif.shutter_speed}</div>
-                                </div>
-                            {/if}
-                            {#if activePhoto.exif.iso}
-                                <div class="rounded-md bg-secondary p-2">
-                                    <div class="text-xs text-muted-foreground">ISO</div>
-                                    <div class="font-semibold text-foreground">{activePhoto.exif.iso}</div>
-                                </div>
-                            {/if}
-                            {#if activePhoto.exif.focal_length}
-                                <div class="rounded-md bg-secondary p-2">
-                                    <div class="text-xs text-muted-foreground">Focal</div>
-                                    <div class="font-semibold text-foreground">{formatFocalLength(activePhoto.exif.focal_length)}</div>
-                                </div>
-                            {/if}
-                            {#if activePhoto.exif.exposure_bias != null}
-                                <div class="rounded-md bg-secondary p-2">
-                                    <div class="text-xs text-muted-foreground">Bias</div>
-                                    <div class="font-semibold text-foreground">{formatEv(activePhoto.exif.exposure_bias)}</div>
-                                </div>
-                            {/if}
-                            {#if activePhoto.exif.ev100 != null}
-                                <div class="rounded-md bg-secondary p-2">
-                                    <div class="text-xs text-muted-foreground">EV100</div>
-                                    <div class="font-semibold text-foreground">{formatEv100(activePhoto.exif.ev100)}</div>
-                                </div>
-                            {/if}
+                            {/each}
                         </div>
                     </div>
 
@@ -1623,4 +1708,58 @@
         </footer>
         {/if}
     </div>
+
+    {#if exposureHelp && selectedExposureMetric}
+        <div class="fixed inset-0 z-[120] grid place-items-center p-4">
+            <button
+                type="button"
+                class="absolute inset-0 h-full w-full cursor-default bg-black/65 backdrop-blur-[2px]"
+                aria-label="Close exposure guide"
+                onclick={closeExposureHelp}
+            ></button>
+            <div
+                bind:this={exposureHelpDialog}
+                class="relative w-full max-w-md rounded-xl border border-border bg-card shadow-2xl outline-none"
+                role="dialog"
+                aria-modal="true"
+                aria-labelledby="exposure-help-title"
+                tabindex="-1"
+            >
+                <div class="flex items-start gap-3 border-b border-border p-5">
+                    <div class="grid h-10 w-10 shrink-0 place-items-center rounded-lg bg-primary/15 text-primary">
+                        <Info size={20} aria-hidden="true" />
+                    </div>
+                    <div class="min-w-0 flex-1">
+                        <div class="font-mono text-[10px] font-semibold uppercase tracking-[0.12em] text-subtle">Exposure guide</div>
+                        <h2 id="exposure-help-title" class="mt-0.5 text-lg font-semibold text-foreground">{exposureHelp.title}</h2>
+                    </div>
+                    <button
+                        type="button"
+                        class="grid h-8 w-8 shrink-0 place-items-center rounded-md text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-ring"
+                        aria-label="Close exposure guide"
+                        title="Close"
+                        onclick={closeExposureHelp}
+                    >
+                        <X size={16} aria-hidden="true" />
+                    </button>
+                </div>
+
+                <div class="space-y-4 p-5">
+                    <div class="rounded-lg border border-primary/25 bg-primary/10 px-4 py-3">
+                        <div class="font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-primary">This photo</div>
+                        <div class="mt-0.5 font-mono text-2xl font-semibold tabular-nums text-foreground">{selectedExposureMetric.value}</div>
+                    </div>
+                    <p class="text-sm leading-6 text-muted-foreground">{exposureHelp.description}</p>
+                    <div>
+                        <h3 class="text-xs font-semibold uppercase tracking-wide text-foreground">What it changes</h3>
+                        <p class="mt-1 text-sm leading-6 text-muted-foreground">{exposureHelp.effect}</p>
+                    </div>
+                    <div class="rounded-lg bg-secondary px-4 py-3">
+                        <h3 class="text-xs font-semibold text-foreground">Practical tip</h3>
+                        <p class="mt-1 text-sm leading-5 text-muted-foreground">{exposureHelp.tip}</p>
+                    </div>
+                </div>
+            </div>
+        </div>
+    {/if}
 {/if}

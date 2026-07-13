@@ -41,7 +41,6 @@ Point it at a folder. Hologram streams previews, pairs RAWs with their camera JP
   <img src="site/assets/library.webp" alt="Hologram library showing a dense photo grid, culling state, filters, and session progress" width="100%" />
 </p>
 
-The interface follows a **Studio×Deck** direction: a near-black shell, a compact tool rail, contextual controls, and a persistent session HUD. Spring green marks picks, amber marks ratings, and red is reserved for rejects and destructive actions. Photos stay louder than the chrome.
 
 ## One uninterrupted workflow
 
@@ -69,9 +68,7 @@ The interface follows a **Studio×Deck** direction: a near-black shell, a compac
   <img src="site/assets/autocull.webp" alt="Hologram AutoCull showing similar-image clusters, recommendations, confidence, and score details" width="100%" />
 </p>
 
-AutoCull is a second opinion, not an automatic delete button.
-
-It groups bursts and visually similar frames, produces **SELECT / MAYBE / REJECT / NEEDS_REVIEW** recommendations, and exposes the signals behind each result. Local DINOv2 embeddings are combined with perceptual and technical features, then adjusted by an on-device preference model trained from your picks, ratings, and burst winners.
+AutoCull groups bursts and visually similar frames, produces **SELECT / MAYBE / REJECT / NEEDS_REVIEW** recommendations, and exposes the signals behind each result. Local DINOv2 embeddings are combined with perceptual and technical features, then adjusted by an on-device preference model trained from your picks, ratings, and burst winners.
 
 - Review one cluster at a time or rank the entire shoot worst-first
 - Inspect technical, personal, final, and confidence scores independently
@@ -165,7 +162,7 @@ bun run screenshots  # Regenerate deterministic product screenshots
 1. **Your files remain files.** Hologram works with the filesystem instead of hiding a library inside a proprietary vault.
 2. **Local means local.** Photo analysis, visual indexing, and preference learning run on your machine.
 3. **Automation must explain itself.** Recommendations expose their inputs and always yield to manual decisions.
-4. **Keyboard flow is product functionality.** Fast review is not a layer of shortcuts added after the interface is finished.
+4. **Keyboard flow is product functionality.**
 5. **Photos are the hero.** Density is useful; chrome should recede.
 
 ## Status and roadmap

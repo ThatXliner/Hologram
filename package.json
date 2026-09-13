@@ -4,6 +4,8 @@
   "description": "",
   "type": "module",
   "scripts": {
+    "test": "bun test",
+    "test:autocull": "bun scripts/verify-autocull.ts",
     "dev": "vite dev",
     "build": "vite build",
     "preview": "vite preview",

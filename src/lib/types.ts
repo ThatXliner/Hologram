@@ -160,6 +160,7 @@ export interface AutoCullPhoto {
   personal_score: number;
   final_score: number;
   behavior_signal: number;
+  reasons: string[];
   recommendation: AutoCullLabel;
   confidence: number;
   embedding?: number[];
@@ -172,6 +173,7 @@ export interface AutoCullCluster {
   confidence: number;
   photo_ids: string[];
   top_pick_id: string;
+  pick_margin: number;
   start_time?: string;
   end_time?: string;
 }
@@ -197,6 +199,7 @@ export interface AutoCullSession {
     maybe: number;
     reject: number;
     needs_review: number;
+    training_examples: number;
   };
 }
 

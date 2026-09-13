@@ -159,6 +159,8 @@
                 photo.file_size,
                 photo.modified_at,
                 photo.thumbnail ? "t" : "n",
+                photo.flag ?? "none",
+                photo.rating ?? 0,
             ].join(":"))
             .join("|"),
         ].join("::");
@@ -434,7 +436,7 @@
     function acceptAiPick(cluster: AutoCullCluster | null = activeCluster) {
         if (!cluster) return;
         const winner = allPhotosById.get(cluster.top_pick_id) ?? photosById.get(cluster.top_pick_id);
-        if (!winner) return;
+        if (!winner || normalizedFlag(winner) === "reject" || !recommendationsById.get(winner.id)?.embedding) return;
         setFlag(winner, "pick");
         setRating(winner, Math.max(5, winner.rating ?? 0));
         setSelectedPhoto(winner.id);
@@ -468,6 +470,7 @@
             ? `Trained on ${winners.length} keeper${winners.length > 1 ? "s" : ""}`
             : "No keepers picked yet";
         stepCluster(1);
+        if (winners.length > 0 && losers.length > 0) void runAnalysis();
     }
 
     function applyRejectSuggestions() {
@@ -486,14 +489,6 @@
         return `${Math.round(Math.max(0, Math.min(1, score)) * 100)}%`;
     }
 
-    function percent(score: number): string {
-        return `${Math.round(score * 100)}%`;
-    }
-
-    function formatScore(score: number | undefined): string {
-        return score == null ? "--" : score.toFixed(2);
-    }
-
     function clusterTitle(cluster: AutoCullCluster): string {
         if (cluster.kind === "burst") return "Burst";
         if (cluster.kind === "similar") return "Similar";
@@ -510,7 +505,7 @@
     function frameBadge(label: AutoCullLabel | undefined): { text: string; cls: string } {
         switch (label) {
             case "SELECT":
-                return { text: "TOP PICK", cls: "bg-pick text-black" };
+                return { text: "KEEP", cls: "bg-pick text-black" };
             case "MAYBE":
                 return { text: "MAYBE", cls: "border border-maybe/50 bg-maybe/10 text-maybe" };
             case "NEEDS_REVIEW":
@@ -625,7 +620,7 @@
 
 <section class="flex h-full min-h-0 bg-background" data-autocull-view>
     <!-- DECK: analysis / threshold / taste -->
-    <aside class="flex w-[248px] shrink-0 flex-col gap-[18px] overflow-y-auto border-r border-border bg-card p-[16px_14px]">
+    <aside class="flex w-[200px] shrink-0 flex-col gap-[18px] overflow-y-auto border-r border-border bg-card p-[16px_14px] xl:w-[248px]">
         <!-- ANALYSIS -->
         <section>
             {@render deckLabel("AutoCull")}
@@ -639,9 +634,11 @@
                 <div class="text-[13px] font-semibold text-foreground">Analysis complete</div>
                 <div class="mt-1 font-mono text-[11px] leading-[1.6] text-muted-foreground">
                     {session.stats.total} photos → {burstCount} clusters<br />
-                    {session.stats.indexed}/{session.stats.total} indexed
-                    {#if session.embedding_backend}· {selectedRecommendation?.embedding ? session.embedding_backend : "metadata"}{/if}
+                    {session.stats.indexed}/{session.stats.total} previews analyzed
                 </div>
+                {#if session.stats.indexed < session.stats.total}
+                    <p class="mt-2 text-[11px] leading-relaxed text-info">{session.stats.total - session.stats.indexed} {session.stats.total - session.stats.indexed === 1 ? "preview unavailable" : "previews unavailable"}. Review the originals before deciding.</p>
+                {/if}
             {:else}
                 <div class="text-[13px] font-semibold text-foreground">Not analyzed yet</div>
                 <div class="mt-1 font-mono text-[11px] text-muted-foreground">{photos.length} photos ready</div>
@@ -692,7 +689,7 @@
                 </button>
             </div>
             <p class="mt-2 px-1 font-sans text-[11px] italic leading-[1.5] text-subtle">
-                Picks &amp; ratings train this profile.
+                {session?.stats.training_examples ?? 0} preferences learned. Picks, ratings and confirmed comparisons teach this profile.
             </p>
         </section>
     </aside>
@@ -710,7 +707,7 @@
             </div>
         {:else}
             <!-- mode + meta -->
-            <div class="flex h-11 shrink-0 items-center gap-3 border-b border-border px-3.5">
+            <div class="flex min-h-11 shrink-0 flex-wrap items-center gap-3 border-b border-border px-3.5 py-1">
                 <div class="flex overflow-hidden rounded-md border border-border font-sans text-[11px] font-medium">
                     <button class="px-3 py-[6px] transition-colors {reviewMode === 'bursts' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}" onclick={() => setReviewMode("bursts")} disabled={burstCount === 0}>Clusters</button>
                     <button class="px-3 py-[6px] transition-colors {reviewMode === 'all' ? 'bg-secondary text-foreground' : 'text-muted-foreground hover:text-foreground'}" onclick={() => setReviewMode("all")}>Ranked · worst first</button>
@@ -737,29 +734,35 @@
                     <div class="font-mono text-[11px] text-muted-foreground">{mainFrames.length} photos · worst first</div>
                 {/if}
                 <div class="flex-1"></div>
-                <div class="flex gap-1.5 font-mono text-[10px] text-subtle">
-                    <span class="rounded border border-border px-1.5 py-[3px]">↵ accept</span>
+                <div class="hidden gap-1.5 font-mono text-[10px] text-subtle xl:flex">
+                    <span class="rounded border border-border px-1.5 py-[3px]">P keep · X reject</span>
                     <span class="rounded border border-border px-1.5 py-[3px]">dbl-click preview</span>
-                    <span class="rounded border border-border px-1.5 py-[3px]">⇥ next</span>
+                    <span class="rounded border border-border px-1.5 py-[3px]">← → browse</span>
                 </div>
             </div>
 
             <!-- frame grid -->
             <div class="flex min-h-0 flex-1 flex-col gap-2.5 overflow-y-auto p-3.5">
+                {#if reviewMode === "bursts" && activeCluster && activeCluster.pick_margin < 0.04 && clusterFlag(activeCluster.top_pick_id) === "none"}
+                    <p class="rounded-md border border-info/25 bg-info/5 px-3 py-2 text-[12px] leading-relaxed text-muted-foreground" data-autocull-close-call>
+                        <span class="font-semibold text-info">Close call.</span> The leading frames score similarly. Compare expressions and focus before choosing a keeper.
+                    </p>
+                {/if}
                 <div class="flex flex-wrap gap-2">
                     {#each mainFrames as frame (frame.photo.id)}
                         {@const rec = frame.rec}
-                        {@const badge = frameBadge(rec?.recommendation)}
                         {@const flag = normalizedFlag(frame.photo)}
+                        {@const badge = frameBadge(flag === "reject" ? "REJECT" : flag === "pick" ? "SELECT" : rec?.recommendation)}
+                        {@const suggested = reviewMode === "bursts" && activeCluster?.top_pick_id === frame.photo.id && flag === "none" && rec?.embedding && rec.recommendation !== "REJECT"}
                         <button
-                            class="group relative h-[194px] w-[290px] shrink-0 overflow-hidden rounded-[5px] border transition-all {selectedPhotoId === frame.photo.id ? 'border-primary shadow-[0_0_0_4px_rgba(92,232,164,.15)]' : 'border-border hover:border-ring'} {flag === 'reject' ? 'opacity-50' : ''}"
+                            class="group relative aspect-[3/2] w-[290px] max-w-full shrink-0 overflow-hidden rounded-[5px] border transition-all {selectedPhotoId === frame.photo.id ? 'border-primary shadow-[0_0_0_4px_rgba(92,232,164,.15)]' : 'border-border hover:border-ring'} {flag === 'reject' ? 'opacity-50' : ''}"
                             data-autocull-photo-id={frame.photo.id}
                             onclick={() => selectPhoto(frame.photo.id)}
                             ondblclick={() => openInLoupe(frame.photo.id)}
                             title="{frame.photo.file_name} — double-click to preview"
                         >
                             <PhotoPreviewCard photo={frame.photo} detailMode="image" fit="cover" iconSize={22} previewQuality="display" showControls={false} containerClass="h-full w-full aspect-auto" />
-                            <span class="absolute left-2 top-2 rounded px-[7px] py-[2px] font-mono text-[9px] font-bold {badge.cls}">{badge.text}{#if rec && badge.text === "TOP PICK"} · {percent(rec.final_score)}{/if}</span>
+                            <span class="absolute left-2 top-2 rounded px-[7px] py-[2px] font-mono text-[9px] font-bold {badge.cls}">{suggested ? "SUGGESTED" : badge.text}</span>
                             {#if flag === "pick"}<span class="absolute right-2 top-2 grid h-4 w-4 place-items-center rounded-full bg-pick text-[10px] font-bold text-black" title="manual pick overrides">✓</span>{/if}
                             <span class="absolute inset-0 grid place-items-center bg-black/25 opacity-0 transition-opacity group-hover:opacity-100">
                                 <span class="flex items-center gap-1 rounded-md bg-black/65 px-2 py-1 font-mono text-[10px] text-white"><Maximize2 size={12} /> preview</span>
@@ -810,14 +813,14 @@
     <!-- SCORE CARD -->
     {#if session && selectedPhoto}
         {@const rec = selectedRecommendation}
-        <aside class="flex w-[280px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-border p-4">
+        <aside class="flex w-[230px] shrink-0 flex-col gap-4 overflow-y-auto border-l border-border p-4 xl:w-[280px]">
             <div>
                 {@render deckLabel(`Score — ${selectedPhoto.file_name}`)}
                 {#if rec}
                     {@const badge = frameBadge(rec.recommendation)}
                     <div class="flex items-center gap-2.5">
                         <span class="rounded px-[9px] py-1 font-mono text-[11px] font-bold {badge.cls}">{rec.recommendation?.replace("_", " ") ?? "—"}</span>
-                        <span class="font-mono text-[11px] text-muted-foreground">confidence {percent(rec.confidence)}</span>
+                        <span class="font-mono text-[11px] text-muted-foreground" title="Heuristic strength of the recommendation, not a calibrated probability">{rec.confidence >= 0.8 ? "strong signal" : rec.confidence >= 0.6 ? "moderate signal" : "limited signal"}</span>
                     </div>
                 {/if}
             </div>
@@ -828,25 +831,19 @@
                 </div>
                 <div class="flex flex-col gap-2.5">
                     <div>
-                        <div class="mb-1 flex justify-between font-mono text-[10.5px] text-muted-foreground"><span>TECHNICAL</span><span class="text-foreground">{scorePct10(rec.technical_score)}</span></div>
-                        <div class="h-1 rounded-full bg-secondary"><div class="h-1 rounded-full bg-info" style:width={scoreWidth(rec.technical_score)}></div></div>
+                        <div class="mb-1 flex justify-between font-mono text-[10.5px] text-muted-foreground"><span>TECHNICAL</span><span class="text-foreground">{rec.embedding ? scorePct10(rec.technical_score) : "Unavailable"}</span></div>
+                        <div class="h-1 rounded-full bg-secondary"><div class="h-1 rounded-full bg-info" style:width={rec.embedding ? scoreWidth(rec.technical_score) : "0%"}></div></div>
                     </div>
                     <div>
                         <div class="mb-1 flex justify-between font-mono text-[10.5px] text-muted-foreground"><span>PERSONAL — {activeProfileName}</span><span class="text-foreground">{scorePct10(rec.personal_score)}</span></div>
                         <div class="h-1 rounded-full bg-secondary"><div class="h-1 rounded-full bg-pick" style:width={scoreWidth(rec.personal_score)}></div></div>
                     </div>
                 </div>
-                <div class="flex flex-col gap-[7px] border-t border-border pt-3 font-mono text-[10.5px] text-muted-foreground">
-                    <div class="flex justify-between"><span>final</span><span class="text-foreground">{formatScore(rec.final_score)}</span></div>
-                    <div class="flex justify-between"><span>technical</span><span class="text-foreground">{formatScore(rec.technical_score)}</span></div>
-                    <div class="flex justify-between"><span>personal</span><span class="text-foreground">{formatScore(rec.personal_score)}</span></div>
-                    <div class="flex justify-between"><span>confidence</span><span class="text-foreground">{percent(rec.confidence)}</span></div>
-                    <div class="flex justify-between"><span>taste signal</span><span class="text-foreground">{rec.behavior_signal >= 0 ? "+" : ""}{formatScore(rec.behavior_signal)}</span></div>
-                    <div class="flex justify-between"><span>source</span><span class="text-foreground">{rec.embedding ? (session.embedding_backend ?? "embedding") : "metadata"}</span></div>
-                    {#if activeCluster}
-                        <div class="flex justify-between"><span>cluster size</span><span class="text-foreground">{activeCluster.photo_ids.length}</span></div>
-                        <div class="flex justify-between"><span>similar to picks</span><span class="{activeCluster.confidence >= 0.85 ? 'text-pick' : 'text-foreground'}">{activeCluster.confidence >= 0.85 ? "high" : activeCluster.confidence >= 0.7 ? "medium" : "low"}</span></div>
-                    {/if}
+                <div class="border-t border-border pt-3" data-autocull-reasons>
+                    {@render deckLabel("Why this recommendation")}
+                    <ul class="flex flex-col gap-2 text-[12px] leading-relaxed text-muted-foreground">
+                        {#each rec.reasons as reason}<li>{reason}</li>{/each}
+                    </ul>
                 </div>
             {/if}
 
@@ -866,16 +863,18 @@
                 {@const clusterPickCount = activeCluster.photo_ids.filter((id) => clusterFlag(id) === "pick").length}
                 <div class="rounded-md border border-border p-2.5">
                     <div class="mb-1.5 flex items-center justify-between font-mono text-[10px] uppercase tracking-[0.08em] text-subtle">
-                        <span>This burst</span>
+                        <span>This cluster</span>
                         <span class={clusterPickCount > 0 ? "text-pick" : ""}>{clusterPickCount} keeper{clusterPickCount === 1 ? "" : "s"}</span>
                     </div>
                     <p class="mb-2 text-[11px] leading-[1.45] text-muted-foreground">
                         <span class="text-foreground">Keep</span> marks a frame as a keeper — pick several if the scene has more than one good shot.
                     </p>
+                    <p class="mb-2 text-[11px] leading-relaxed text-subtle">Frame similarity: {activeCluster.confidence >= 0.85 ? "high" : activeCluster.confidence >= 0.7 ? "moderate" : "limited"}. This describes the grouping, not the quality of the suggested frame.</p>
                     <div class="flex flex-col gap-1.5">
                         <button
-                            class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground"
+                            class="inline-flex h-8 items-center justify-center gap-1.5 rounded-md border border-border px-3 text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-secondary hover:text-foreground disabled:opacity-40"
                             onclick={() => acceptAiPick()}
+                            disabled={clusterFlag(activeCluster.top_pick_id) === "reject" || !recommendationsById.get(activeCluster.top_pick_id)?.embedding}
                             title="Keep the AI's recommended frame (the ✦ top pick) without hunting for it"
                         ><Sparkles size={13} />Accept AI pick</button>
                         <button

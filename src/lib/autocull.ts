@@ -14,9 +14,9 @@ import { heavyMediaConcurrency } from "./concurrency.ts";
 
 const DINO_MODEL_ID = "onnx-community/dinov2-small";
 const TRANSFORMER_EMBEDDING_BACKEND = "dinov2-small-transformersjs";
-const PERCEPTUAL_EMBEDDING_BACKEND = "perceptual-dct-focus-v3";
+const PERCEPTUAL_EMBEDDING_BACKEND = "perceptual-dct-focus-v4";
 const EMBEDDING_BACKEND = `${TRANSFORMER_EMBEDDING_BACKEND}+${PERCEPTUAL_EMBEDDING_BACKEND}`;
-const RANKER_VERSION = "gbdt-personal-ranker-v1";
+const RANKER_VERSION = "gbdt-personal-ranker-v2";
 const SPATIAL_GRID = 32;
 const HISTOGRAM_BINS = 16;
 const SAMPLE_SIZE = 160;
@@ -35,7 +35,8 @@ const SEQUENCE_VISUAL_SIMILARITY = 0.84;
 const MAX_BURST_SIZE = 18;
 // Visual near-duplicate pass: groups look-alike frames that aren't temporally adjacent.
 const SIMILAR_CLUSTER_SIMILARITY = 0.9;
-const SIMILAR_PASS_MAX_PHOTOS = 2_500;
+const EXHAUSTIVE_SIMILAR_LIMIT = 2_500;
+const SIMILAR_CANDIDATE_LIMIT = 128;
 const GBDT_TREES = 48;
 const GBDT_MAX_DEPTH = 3;
 const GBDT_LEARNING_RATE = 0.08;
@@ -63,7 +64,7 @@ const MEMORY_FEATURE_CACHE_LIMIT = 800;
 const PERSISTENT_FEATURE_CACHE_LIMIT = 4_000;
 export const DEFAULT_PREFERENCE_PROFILE_ID = "default";
 
-type PixelFeatures = {
+export type PixelFeatures = {
   embedding: number[];
   technicalScore: number;
   backend: string;
@@ -450,10 +451,25 @@ export async function buildAutoCullSession(
   });
   await writeSqlFeatureCache(pendingSqlEntries, folderPath);
 
+  const session = rankAutoCullPhotos(photos, featuresById, preferences, refinements, learnFromPhotoMetadata);
+  onProgress({ current: total, total });
+  return session;
+}
+
+// Keep ranking independent of image loading so cached and fresh analysis use the same policy.
+export function rankAutoCullPhotos(
+  photos: Photo[],
+  featuresById: Map<string, PixelFeatures | null>,
+  preferences: AutoCullPairwisePreference[] = [],
+  refinements: AutoCullPreferenceRefinement[] = [],
+  learnFromPhotoMetadata = true,
+): AutoCullSession {
   const featureRecordsById = buildFeatureRecords(photos, featuresById);
   const examples = buildRankedExamples(photos, featureRecordsById, refinements, learnFromPhotoMetadata);
   const pairwiseExamples = buildPairwiseExamples(preferences, featureRecordsById);
   const model = trainRankingModel(examples, pairwiseExamples);
+  const trainingCount = examples.length + pairwiseExamples.length;
+  const learningStrength = trainingCount / (trainingCount + 6);
 
   let scored = photos.map((photo) => {
     const record = featureRecordsById.get(photo.id);
@@ -465,7 +481,7 @@ export async function buildAutoCullSession(
     const learnedDelta = nearestNeighborDelta(embedding, model.examples);
     const personalScore = clamp01(
       neutral
-        + (boostedScore == null ? 0 : (boostedScore - 0.5) * 0.72)
+        + (boostedScore == null ? 0 : (boostedScore - 0.5) * 0.72 * learningStrength)
         + learnedDelta
         + behaviorSignalValue,
     );
@@ -478,8 +494,9 @@ export async function buildAutoCullSession(
       personal_score: personalScore,
       final_score: finalScore,
       behavior_signal: behaviorSignalValue,
-      recommendation: recommendationFor(photo, finalScore, personalScore),
+      recommendation: recommendationFor(photo, finalScore, personalScore, Boolean(embedding)),
       confidence: recommendationConfidence(photo, finalScore, embedding),
+      reasons: recommendationReasons(photo, technicalScore, personalScore - neutral - behaviorSignalValue, Boolean(embedding), trainingCount),
       embedding,
       embedding_backend: record?.embedding ? (featuresById.get(photo.id)?.backend ?? PERCEPTUAL_EMBEDDING_BACKEND) : undefined,
       captureMs: captureTimestampMs(photo),
@@ -505,7 +522,6 @@ export async function buildAutoCullSession(
     sequence: _sequence,
     ...photo
   }) => photo);
-  onProgress({ current: total, total });
   return {
     embedding_backend: EMBEDDING_BACKEND,
     ranker_version: RANKER_VERSION,
@@ -513,12 +529,13 @@ export async function buildAutoCullSession(
     photos: outputPhotos,
     clusters,
     stats: {
-      total,
+      total: photos.length,
       indexed: outputPhotos.filter((photo) => photo.embedding?.length).length,
       select: outputPhotos.filter((photo) => photo.recommendation === "SELECT").length,
       maybe: outputPhotos.filter((photo) => photo.recommendation === "MAYBE").length,
       reject: outputPhotos.filter((photo) => photo.recommendation === "REJECT").length,
       needs_review: outputPhotos.filter((photo) => photo.recommendation === "NEEDS_REVIEW").length,
+      training_examples: trainingCount,
     },
   };
 }
@@ -556,7 +573,7 @@ function dedupePairwise(preferences: AutoCullPairwisePreference[]): AutoCullPair
   const seen = new Set<string>();
   const result: AutoCullPairwisePreference[] = [];
   for (const preference of preferences.slice().reverse()) {
-    const key = `${preference.winner_photo_id}:${preference.loser_photo_id}:${preference.source}`;
+    const key = JSON.stringify([preference.winner_photo_id, preference.loser_photo_id].sort());
     if (seen.has(key)) continue;
     seen.add(key);
     result.push(preference);
@@ -570,27 +587,31 @@ async function extractCachedPixelFeatures(
   pendingSqlEntries: SqlFeatureCacheEntry[],
 ): Promise<PixelFeatures | null> {
   const cacheKey = pixelFeatureCacheKey(photo);
-  if (pixelFeatureMemoryCache.has(cacheKey)) {
+  if (pixelFeatureMemoryCache.get(cacheKey)) {
     return clonePixelFeatures(pixelFeatureMemoryCache.get(cacheKey));
   }
 
-  if (sqlCache.has(cacheKey)) {
+  if (sqlCache.get(cacheKey)) {
     const features = sqlCache.get(cacheKey) ?? null;
     rememberPixelFeatures(cacheKey, features);
     return clonePixelFeatures(features);
   }
 
   const persisted = await readCachedPixelFeatures(cacheKey);
-  if (persisted !== undefined) {
+  if (persisted) {
     rememberPixelFeatures(cacheKey, persisted);
     pendingSqlEntries.push(sqlFeatureCacheEntry(cacheKey, photo, persisted));
     return clonePixelFeatures(persisted);
   }
 
   const features = await extractPixelFeatures(photo);
-  rememberPixelFeatures(cacheKey, features);
-  pendingSqlEntries.push(sqlFeatureCacheEntry(cacheKey, photo, features));
-  void writeCachedPixelFeatures(cacheKey, photo, features);
+  // Decode failures can be transient. A re-run must be allowed to try again,
+  // including when an older cache contains a failed (null) extraction.
+  if (features) {
+    rememberPixelFeatures(cacheKey, features);
+    pendingSqlEntries.push(sqlFeatureCacheEntry(cacheKey, photo, features));
+    void writeCachedPixelFeatures(cacheKey, photo, features);
+  }
   return features;
 }
 
@@ -1255,7 +1276,21 @@ function estimateTechnicalScore(image: ImageData): number {
     0,
   ) / Math.max(1, laplacians.length);
 
-  const sharpnessScore = clamp(laplacianVariance * 85, 0, 1);
+  // Diagonal high-pass responses have unit noise variance and suppress smooth
+  // gradients. Their median estimates noise without letting a few strong edges
+  // dominate. The Laplacian kernel amplifies independent noise variance by 20.
+  const diagonalResponses: number[] = [];
+  for (let y = 0; y < image.height - 1; y += 2) {
+    for (let x = 0; x < image.width - 1; x += 2) {
+      diagonalResponses.push(Math.abs((
+        lumaAt(luma, image.width, x, y) - lumaAt(luma, image.width, x + 1, y)
+        - lumaAt(luma, image.width, x, y + 1) + lumaAt(luma, image.width, x + 1, y + 1)
+      ) / 2));
+    }
+  }
+  const noiseSigma = median(diagonalResponses) / 0.67449;
+  const detailVariance = Math.max(0, laplacianVariance - 20 * noiseSigma ** 2);
+  const sharpnessScore = clamp(detailVariance * 85, 0, 1);
   const exposureScore = clamp(1 - Math.abs(mean - 0.5) * 1.65, 0, 1);
   const contrastScore = clamp(contrast * 3.2, 0, 1);
   const clippingScore = clamp(1 - (clipped / luma.length) * 3, 0, 1);
@@ -1376,6 +1411,7 @@ function buildRankedExamples(
   const activePhotoIds = new Set(photos.map((photo) => photo.id));
   for (const refinement of refinements) {
     if (activePhotoIds.has(refinement.photo_id) || !refinement.ranker_features?.length) continue;
+    if (normalizeFlag(refinement.flag) === "none" && refinement.rating <= 0) continue;
     examples.push({
       vector: refinement.embedding ?? [],
       features: refinement.ranker_features,
@@ -1391,7 +1427,8 @@ function buildPairwiseExamples(
   recordsById: Map<string, FeatureRecord>,
 ): PairwiseExample[] {
   const examples: PairwiseExample[] = [];
-  for (const preference of preferences) {
+  for (const preference of dedupePairwise(preferences)) {
+    if (preference.winner_photo_id === preference.loser_photo_id || !Number.isFinite(preference.confidence)) continue;
     const winner = recordsById.get(preference.winner_photo_id);
     const loser = recordsById.get(preference.loser_photo_id);
     if (!winner || !loser || winner.rankerFeatures.length !== loser.rankerFeatures.length) continue;
@@ -1415,7 +1452,7 @@ function trainRankingModel(examples: RankedExample[], pairwiseExamples: Pairwise
     return { examples: usableExamples, score: () => null };
   }
 
-  const baseScore = clamp(weightedMean(rows), 0.02, 0.98);
+  const baseScore = clamp(weightedMean(rows.slice(0, usableExamples.length)), 0.02, 0.98);
   const baseRaw = logit(baseScore);
   const rawPredictions = rows.map(() => baseRaw);
   const trees: RegressionTree[] = [];
@@ -1427,8 +1464,23 @@ function trainRankingModel(examples: RankedExample[], pairwiseExamples: Pairwise
     for (let rowIndex = 0; rowIndex < rows.length; rowIndex++) {
       const row = rows[rowIndex];
       const prediction = sigmoid(rawPredictions[rowIndex] ?? baseRaw);
-      gradients.push((row.target - prediction) * row.weight);
-      hessians.push(Math.max(0.0001, prediction * (1 - prediction) * row.weight));
+      const pointwise = rowIndex < usableExamples.length;
+      gradients.push(pointwise ? (row.target - prediction) * row.weight : 0);
+      hessians.push(pointwise ? Math.max(0.0001, prediction * (1 - prediction) * row.weight) : 0);
+    }
+    // A comparison constrains the difference in scores. It does not say that
+    // the winner is an absolute keeper or the runner-up is a bad photograph.
+    for (let pairIndex = 0; pairIndex < usablePairwiseExamples.length; pairIndex++) {
+      const winner = usableExamples.length + pairIndex * 2;
+      const loser = winner + 1;
+      const probability = sigmoid(rawPredictions[winner] - rawPredictions[loser]);
+      const weight = rows[winner].weight;
+      const gradient = (1 - probability) * weight;
+      const hessian = Math.max(0.0001, probability * (1 - probability) * weight);
+      gradients[winner] += gradient;
+      gradients[loser] -= gradient;
+      hessians[winner] += hessian;
+      hessians[loser] += hessian;
     }
 
     const tree = fitBoostedTree(rows, gradients, hessians, allIndices, dimensions, 0);
@@ -1442,7 +1494,9 @@ function trainRankingModel(examples: RankedExample[], pairwiseExamples: Pairwise
     examples: usableExamples,
     score: (features) => {
       if (!features || features.length !== dimensions) return null;
-      let rawScore = baseRaw;
+      // Center on the training prior: one-sided feedback must not change every
+      // photo merely because the user has only supplied picks (or rejects).
+      let rawScore = 0;
       for (const tree of trees) rawScore += GBDT_LEARNING_RATE * predictTree(tree, features);
       return clamp01(sigmoid(rawScore));
     },
@@ -1461,8 +1515,8 @@ function buildBoostingRows(examples: RankedExample[], pairwiseExamples: Pairwise
 
   for (const example of pairwiseExamples) {
     const weight = clamp(example.confidence * 0.9, 0.05, 1.4);
-    rows.push({ features: example.winnerFeatures, target: 0.92, weight });
-    rows.push({ features: example.loserFeatures, target: 0.08, weight });
+    rows.push({ features: example.winnerFeatures, target: 0.5, weight });
+    rows.push({ features: example.loserFeatures, target: 0.5, weight });
   }
   return rows;
 }
@@ -1492,7 +1546,7 @@ function fitBoostedTree(
 ): RegressionTree {
   const parent = sumGradientStats(gradients, hessians, indices);
   const leaf = { value: leafValue(parent.gradient, parent.hessian) };
-  if (depth >= GBDT_MAX_DEPTH || indices.length <= 2 || parent.hessian < GBDT_MIN_LEAF_WEIGHT * 2) return leaf;
+  if (depth >= GBDT_MAX_DEPTH || indices.length <= 1 || parent.hessian < GBDT_MIN_LEAF_WEIGHT * 2) return leaf;
 
   const parentScore = splitScore(parent.gradient, parent.hessian);
   let best:
@@ -1576,7 +1630,8 @@ function nearestNeighborDelta(embedding: number[] | undefined, examples: RankedE
     totalWeight += weight;
   }
   if (totalWeight <= Number.EPSILON) return 0;
-  return clamp((weightedDelta / totalWeight) * 0.45, -0.22, 0.22);
+  const support = Math.min(1, totalWeight / 3);
+  return clamp((weightedDelta / totalWeight) * 0.45 * support, -0.22, 0.22);
 }
 
 function buildClusters(scored: ScoredPhoto[]): AutoCullCluster[] {
@@ -1586,9 +1641,10 @@ function buildClusters(scored: ScoredPhoto[]): AutoCullCluster[] {
     const leftSequence = a.sequence;
     const rightSequence = b.sequence;
     if (leftSequence && rightSequence && leftSequence.prefix === rightSequence.prefix) {
-      return leftSequence.number - rightSequence.number;
+      const sequenceDelta = leftSequence.number - rightSequence.number;
+      if (sequenceDelta !== 0) return sequenceDelta;
     }
-    return a.source.file_name.localeCompare(b.source.file_name);
+    return a.source.file_name.localeCompare(b.source.file_name) || a.photo_id.localeCompare(b.photo_id);
   });
   const clusters: ScoredPhoto[][] = [];
 
@@ -1620,7 +1676,15 @@ function buildClusters(scored: ScoredPhoto[]): AutoCullCluster[] {
 }
 
 function makeCluster(items: ScoredPhoto[], id: string, kind: AutoCullCluster["kind"]): AutoCullCluster {
-  const sortedByScore = [...items].sort((a, b) => b.final_score - a.final_score);
+  const manualPriority = (item: ScoredPhoto) => {
+    const flag = normalizeFlag(item.source.flag);
+    return flag === "pick" ? 2 : flag === "reject" ? 0 : 1;
+  };
+  const sortedByScore = [...items].sort((a, b) => (
+    manualPriority(b) - manualPriority(a)
+    || b.final_score - a.final_score
+    || a.photo_id.localeCompare(b.photo_id)
+  ));
   const startTime = minCaptureTimestamp(items);
   const endTime = maxCaptureTimestamp(items);
   const anchor = items[0];
@@ -1637,6 +1701,7 @@ function makeCluster(items: ScoredPhoto[], id: string, kind: AutoCullCluster["ki
     confidence: clamp(averageSimilarity, 0.5, 0.99),
     photo_ids: items.map((item) => item.photo_id),
     top_pick_id: sortedByScore[0].photo_id,
+    pick_margin: sortedByScore.length > 1 ? Math.max(0, sortedByScore[0].final_score - sortedByScore[1].final_score) : 0,
     start_time: startTime == null ? undefined : new Date(startTime).toISOString(),
     end_time: endTime == null ? undefined : new Date(endTime).toISOString(),
   };
@@ -1644,17 +1709,22 @@ function makeCluster(items: ScoredPhoto[], id: string, kind: AutoCullCluster["ki
 
 // Greedy visual near-duplicate grouping over photos not already in a temporal burst.
 function buildSimilarClusters(items: ScoredPhoto[]): ScoredPhoto[][] {
-  if (items.length < 2 || items.length > SIMILAR_PASS_MAX_PHOTOS) return [];
+  if (items.length < 2) return [];
   const used = new Set<string>();
   const groups: ScoredPhoto[][] = [];
+  const candidateIndex = items.length > EXHAUSTIVE_SIMILAR_LIMIT ? similarCandidateIndex(items) : null;
 
   for (let i = 0; i < items.length; i++) {
     const anchor = items[i];
     if (used.has(anchor.photo_id)) continue;
     const group = [anchor];
-    for (let j = i + 1; j < items.length; j++) {
+    const candidates = candidateIndex?.(i) ?? (function* () {
+      for (let j = i + 1; j < items.length; j++) yield j;
+    })();
+    for (const j of candidates) {
       const candidate = items[j];
-      if (used.has(candidate.photo_id) || group.length >= MAX_BURST_SIZE) continue;
+      if (group.length >= MAX_BURST_SIZE) break;
+      if (used.has(candidate.photo_id)) continue;
       if (!sameCamera(anchor, candidate)) continue;
       const similarity = visualSimilarity(anchor, candidate);
       if (similarity != null && similarity >= SIMILAR_CLUSTER_SIMILARITY) {
@@ -1669,6 +1739,58 @@ function buildSimilarClusters(items: ScoredPhoto[]): ScoredPhoto[][] {
   }
 
   return groups;
+}
+
+// Sparse random-hyperplane hashes retrieve candidates across the whole library.
+// Only used above the exhaustive limit. Full cosine similarity still decides
+// membership, so hash collisions cannot create false matches. Retrieval is
+// approximate: large, crowded buckets can miss some near-duplicates.
+function similarCandidateIndex(items: ScoredPhoto[]): (index: number) => number[] {
+  const bands = 4;
+  const bits = 8;
+  const samples = 16;
+  const signatures: string[][] = [];
+  const buckets = new Map<string, number[]>();
+  for (let index = 0; index < items.length; index++) {
+    const vector = items[index].embedding!;
+    const keys: string[] = [];
+    let seed = 0x9e3779b9;
+    for (let band = 0; band < bands; band++) {
+      let signature = 0;
+      for (let bit = 0; bit < bits; bit++) {
+        let projection = 0;
+        for (let sample = 0; sample < samples; sample++) {
+          seed = (Math.imul(seed, 1664525) + 1013904223) >>> 0;
+          const coordinate = seed % vector.length;
+          projection += vector[coordinate] * ((seed & 0x80000000) ? 1 : -1);
+        }
+        if (projection >= 0) signature |= 1 << bit;
+      }
+      const key = `${vector.length}:${band}:${signature}`;
+      keys.push(key);
+      const bucket = buckets.get(key);
+      if (bucket) bucket.push(index);
+      else buckets.set(key, [index]);
+    }
+    signatures.push(keys);
+  }
+  return (index) => {
+    const candidates = new Set<number>();
+    for (const key of signatures[index]) {
+      const bucket = buckets.get(key)!;
+      let low = 0;
+      let high = bucket.length;
+      while (low < high) {
+        const middle = (low + high) >>> 1;
+        if (bucket[middle] <= index) low = middle + 1;
+        else high = middle;
+      }
+      for (let position = low; position < Math.min(bucket.length, low + SIMILAR_CANDIDATE_LIMIT); position++) {
+        candidates.add(bucket[position]);
+      }
+    }
+    return [...candidates].sort((a, b) => a - b).slice(0, SIMILAR_CANDIDATE_LIMIT);
+  };
 }
 
 function shouldJoinBurst(current: ScoredPhoto[], photo: ScoredPhoto): boolean {
@@ -1687,19 +1809,22 @@ function shouldJoinBurst(current: ScoredPhoto[], photo: ScoredPhoto): boolean {
   const anchorGap = captureGapBetween(anchor, photo);
 
   const sequenceBurst = sameSequenceRun
+    && (captureGap == null || captureGap <= LOOSE_BURST_WINDOW_MS)
+    && (anchorGap == null || anchorGap <= 12_000)
     && adjacentSimilarity != null
     && adjacentSimilarity >= SEQUENCE_VISUAL_SIMILARITY
     && (anchorSimilarity == null || anchorSimilarity >= BURST_VISUAL_SIMILARITY);
   const tightTimedBurst = captureGap != null
     && captureGap <= BURST_WINDOW_MS
     && (anchorGap == null || anchorGap <= 12_000)
-    && (!hasVisualSignal || adjacentSimilarity >= 0.62);
+    && (!hasVisualSignal || (adjacentSimilarity >= 0.62 && anchorSimilarity >= 0.62));
   const looseTimedBurst = captureGap != null
     && captureGap <= LOOSE_BURST_WINDOW_MS
     && anchorGap != null
     && anchorGap <= 12_000
     && adjacentSimilarity != null
-    && adjacentSimilarity >= BURST_VISUAL_SIMILARITY;
+    && adjacentSimilarity >= BURST_VISUAL_SIMILARITY
+    && (anchorSimilarity == null || anchorSimilarity >= BURST_VISUAL_SIMILARITY);
 
   return sequenceBurst || tightTimedBurst || looseTimedBurst;
 }
@@ -1754,10 +1879,11 @@ function pointwiseSignal(flag: CullFlag, rating: number): number {
   return clamp01(ratingSignal);
 }
 
-function recommendationFor(photo: Photo, finalScore: number, personalScore: number): AutoCullLabel {
+function recommendationFor(photo: Photo, finalScore: number, personalScore: number, hasPixels: boolean): AutoCullLabel {
   const flag = normalizeFlag(photo.flag);
-  if (flag === "pick" || (photo.rating ?? 0) >= 4) return "SELECT";
   if (flag === "reject") return "REJECT";
+  if (flag === "pick" || (photo.rating ?? 0) >= 4) return "SELECT";
+  if (!hasPixels) return "NEEDS_REVIEW";
   if (finalScore >= 0.68 || personalScore >= 0.72) return "SELECT";
   if (finalScore < 0.42) return "REJECT";
   if (finalScore < 0.52) return "NEEDS_REVIEW";
@@ -1765,10 +1891,35 @@ function recommendationFor(photo: Photo, finalScore: number, personalScore: numb
 }
 
 function recommendationConfidence(photo: Photo, finalScore: number, embedding: number[] | undefined): number {
+  if (normalizeFlag(photo.flag) !== "none") return 0.98;
+  if (!embedding) return 0.35;
   const manualBoost = normalizeFlag(photo.flag) !== "none" || (photo.rating ?? 0) > 0 ? 0.18 : 0;
   const distanceFromMiddle = Math.abs(finalScore - 0.5) * 1.15;
   const embeddingBoost = embedding ? 0.08 : -0.08;
   return clamp(0.45 + distanceFromMiddle + manualBoost + embeddingBoost, 0.25, 0.98);
+}
+
+function recommendationReasons(
+  photo: Photo,
+  technicalScore: number,
+  learnedSignal: number,
+  hasPixels: boolean,
+  trainingCount: number,
+): string[] {
+  const reasons: string[] = [];
+  const flag = normalizeFlag(photo.flag);
+  if (flag === "reject") reasons.push("You marked this photo as rejected.");
+  else if (flag === "pick") reasons.push("You marked this photo as a keeper.");
+  else if ((photo.rating ?? 0) >= 4) reasons.push("Your star rating marks this as a keeper.");
+  if (!hasPixels) reasons.push("Preview unavailable. Review the original before deciding.");
+  else if (technicalScore >= 0.7) reasons.push("Strong detail and exposure in the preview.");
+  else if (technicalScore < 0.42) reasons.push("Low detail or exposure score. Check focus and intentional lighting.");
+  else reasons.push("Moderate detail and exposure in the preview.");
+  if (learnedSignal > 0.03) reasons.push("Your previous choices favor frames with these features.");
+  else if (learnedSignal < -0.03) reasons.push("Your previous choices favor other frames.");
+  if (trainingCount === 0) reasons.push("No preferences learned yet. Keep or compare frames to teach this profile.");
+  else if (trainingCount < 6) reasons.push("Only a few preferences learned. Their influence is limited.");
+  return reasons;
 }
 
 function neutralPersonalScore(technicalScore: number): number {

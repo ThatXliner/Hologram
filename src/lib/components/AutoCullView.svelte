@@ -26,14 +26,14 @@
         DEFAULT_PREFERENCE_PROFILE_ID,
         buildAutoCullSession,
         createPreferenceProfile,
+        capturePreferenceFeatures,
         loadActivePreferenceProfileId,
         loadPairwisePreferences,
         loadPreferenceProfiles,
         loadPreferenceRefinements,
-        recordPreferenceRefinement,
         saveActivePreferenceProfileId,
-        savePairwisePreferences,
-        savePreferenceRefinements,
+        savePreferenceFeedback,
+        type AutoCullPreferenceRefinement,
         type AutoCullPreferenceProfile,
     } from "../autocull.ts";
     import {
@@ -267,8 +267,8 @@
         history = [];
         decisionsSinceAnalysis = 0;
         justCompleted = false;
-        preferenceProfiles = loadPreferenceProfiles(folder);
-        activePreferenceProfileId = loadActivePreferenceProfileId(folder);
+        preferenceProfiles = loadPreferenceProfiles();
+        activePreferenceProfileId = loadActivePreferenceProfileId();
         resolutions = loadResolutions(storage(), folder, activePreferenceProfileId, DEFAULT_PREFERENCE_PROFILE_ID);
         automatic = loadAutomaticDecisions(storage(), folder);
     }
@@ -346,15 +346,16 @@
             pruneAutomatic(library);
             const next = await buildAutoCullSession(
                 analysisPhotos,
-                loadPairwisePreferences(folder, profileId),
+                loadPairwisePreferences(profileId),
                 (nextProgress) => {
                     if (isCurrent()) progress = nextProgress;
                 },
-                loadPreferenceRefinements(folder, profileId),
+                loadPreferenceRefinements(profileId),
                 profileId === DEFAULT_PREFERENCE_PROFILE_ID,
                 folder,
                 // AutoCull's own flags are not the photographer's taste: never learn from them.
                 automaticPhotoIds(library, automatic),
+                profileId,
             );
             if (!isCurrent()) return;
             session = next;
@@ -382,16 +383,16 @@
         analysisRun++;
         history = [];
         activePreferenceProfileId = profileId;
-        saveActivePreferenceProfileId(folderPath, profileId);
+        saveActivePreferenceProfileId(profileId);
         resolutions = loadResolutions(storage(), folderPath, profileId, DEFAULT_PREFERENCE_PROFILE_ID);
         status = `Profile: ${preferenceProfiles.find((profile) => profile.id === profileId)?.name ?? "Default"}`;
     }
 
     function createProfile() {
-        const name = window.prompt("Preference profile name");
+        const name = window.prompt("New taste profile (used across all folders)");
         if (!name?.trim()) return;
-        const profile = createPreferenceProfile(folderPath, name);
-        preferenceProfiles = loadPreferenceProfiles(folderPath);
+        const profile = createPreferenceProfile(name);
+        preferenceProfiles = loadPreferenceProfiles();
         setPreferenceProfile(profile.id);
     }
 
@@ -526,6 +527,10 @@
      * profile, and reopen finished stacks whose decisions they change (dropping the comparisons
      * that stack taught). The automatic pass only records provenance. Nothing re-analyzes.
      */
+    function reportFeatureSave(saved: boolean) {
+        if (!saved && !destroyed) status = "Your decision is saved, but cross-shoot learning could not be saved on this device. Refresh to retry.";
+    }
+
     function commit(label: string, changes: DecisionChange[], options: CommitOptions = {}): CommitResult | null {
         const { resolveStack = null, confirmIds = [], automaticPass } = options;
         const folder = folderPath;
@@ -569,7 +574,8 @@
         if (changes.length === 0 && !resolveStack && Object.keys(automaticPatch).length === 0 && Object.keys(resolutionPatch).length === 0) return null;
 
         const retrained = [...reopened, ...(resolveStack && !automaticPass ? [resolveStack] : [])];
-        const currentPairwise = added.length || retrained.length ? loadPairwisePreferences(folder, profileId) : [];
+        const currentPairwise = loadPairwisePreferences(profileId);
+        const currentRefinements = loadPreferenceRefinements(profileId);
         const removed = retrained.flatMap((stack) => stackPairwise(currentPairwise, stack.photoIds));
         const removedSet = new Set(removed);
         const remaining = currentPairwise.filter((preference) => !removedSet.has(preference));
@@ -583,22 +589,41 @@
             decisions: changes,
             automatic: Object.fromEntries(Object.keys(automaticPatch).map((id) => [id, automatic[id] ?? null])),
             refinements: refinementIds.length
-                ? snapshotRefinements(loadPreferenceRefinements(folder, profileId), refinementIds)
+                ? snapshotRefinements(currentRefinements, refinementIds)
                 : {},
             pairwise: { added, replaced, removed },
             resolutions: Object.fromEntries(Object.keys(resolutionPatch).map((key) => [key, resolutions[key] ?? null])),
             selection: { photoId: selectedPhotoId },
         };
 
+        if (refinementIds.length || added.length || removed.length) {
+            const feedback: AutoCullPreferenceRefinement[] = refinementIds.map((id) => ({
+                photo_id: id, ...decisionAfter(id), confidence: decisionAfter(id).flag === "none" ? 0.62 : 1,
+                source: "manual_decision", updated_at: now,
+            }));
+            try {
+                savePreferenceFeedback(profileId, [...currentRefinements, ...feedback], [...remaining, ...added]);
+            } catch {
+                status = "Could not save your taste profile. Nothing changed. Free device storage and try again.";
+                return null;
+            }
+        }
         for (const id of refinementIds) {
-            const decision = decisionAfter(id);
-            recordPreferenceRefinement(folder, profileId, id, decision.flag, decision.rating);
+            const photo = nextById.get(id);
+            const analysis = recommendationsById.get(id) ?? recommendationsById.get(photo?.paired_with ?? "");
+            if (photo && analysis) void capturePreferenceFeatures([photo], { photos: [{ ...analysis, photo_id: id }] }).then(reportFeatureSave);
+        }
+        if (added.length && resolveStack && session) {
+            const members = resolveStack.photoIds.flatMap((id) => {
+                const photo = nextById.get(id);
+                return photo ? [photo] : [];
+            });
+            void capturePreferenceFeatures(members, session).then(reportFeatureSave);
         }
         for (const change of changes) {
             if (change.before.flag !== change.after.flag) photoStore.setPhotoFlag(change.id, change.after.flag);
             if (change.before.rating !== change.after.rating) photoStore.setPhotoRating(change.id, change.after.rating);
         }
-        if (added.length || removed.length) savePairwisePreferences(folder, [...remaining, ...added], profileId);
         if (Object.keys(resolutionPatch).length) {
             resolutions = withResolutions(resolutions, resolutionPatch);
             saveResolutions(storage(), folder, profileId, resolutions);
@@ -618,6 +643,17 @@
             status = "Nothing to undo";
             return;
         }
+        if (Object.keys(entry.refinements).length || entry.pairwise.added.length || entry.pairwise.removed.length) {
+            try {
+                savePreferenceFeedback(entry.profileId,
+                    restoreRefinements(loadPreferenceRefinements(entry.profileId), entry.refinements),
+                    [...revertPairwise(loadPairwisePreferences(entry.profileId), entry.pairwise.added, entry.pairwise.replaced), ...entry.pairwise.removed],
+                );
+            } catch {
+                status = "Could not save undo. Nothing changed. Free device storage and try again.";
+                return;
+            }
+        }
         history = history.slice(0, -1);
         const isActiveFolder = entry.folderPath === folderPath;
         const isActive = isActiveFolder && entry.profileId === activePreferenceProfileId;
@@ -625,23 +661,6 @@
             const current = decisionOf(change.id);
             if (current.flag !== change.before.flag) photoStore.setPhotoFlag(change.id, change.before.flag);
             if (current.rating !== change.before.rating) photoStore.setPhotoRating(change.id, change.before.rating);
-        }
-        if (Object.keys(entry.refinements).length) {
-            savePreferenceRefinements(
-                entry.folderPath,
-                entry.profileId,
-                restoreRefinements(loadPreferenceRefinements(entry.folderPath, entry.profileId), entry.refinements),
-            );
-        }
-        if (entry.pairwise.added.length || entry.pairwise.removed.length) {
-            savePairwisePreferences(
-                entry.folderPath,
-                [
-                    ...revertPairwise(loadPairwisePreferences(entry.folderPath, entry.profileId), entry.pairwise.added, entry.pairwise.replaced),
-                    ...entry.pairwise.removed,
-                ],
-                entry.profileId,
-            );
         }
         if (Object.keys(entry.resolutions).length) {
             const base = isActive ? resolutions : loadResolutions(storage(), entry.folderPath, entry.profileId, DEFAULT_PREFERENCE_PROFILE_ID);
@@ -686,8 +705,7 @@
 
     function decide(patch: Partial<PhotoDecision>, label: string, verb: string, advance = false) {
         if (!selectedPhotoId) return;
-        applyDecision(selectedPhotoId, patch, label, verb);
-        if (advance) advanceAfterDecision();
+        if (applyDecision(selectedPhotoId, patch, label, verb) && advance) advanceAfterDecision();
     }
 
     function keep(advance = false) {
@@ -768,6 +786,7 @@
         // Re-finishing confirms AutoCull's flags, or teaches a stack AutoCull closed without training.
         if (stack.photoIds.length > 1 && (!resolutionIsCurrent(stack, decisionOf, resolution) || confirming || (!resolution?.trained && stackHasPick(stack)))) {
             const result = commit(confirming ? "confirm stack" : "finish stack", [], { resolveStack: stack });
+            if (!result) return;
             const keepers = stack.photoIds.filter((id) => decisionOf(id).flag === "pick").length;
             const verb = confirming ? "Confirmed AutoCull's choice" : "Finished";
             status = result?.trained
@@ -775,6 +794,7 @@
                 : confirming ? verb : "Finished stack";
         } else if (stack.photoIds.length === 1 && confirming) {
             const result = commit("confirm", [], { confirmIds: stack.photoIds });
+            if (!result) return;
             if (result) status = `Confirmed ${photoName(stack.photoIds[0])}`;
         }
         goToNextPending(stack.key, stack.key);
@@ -1195,7 +1215,7 @@
                     </div>
                 {/if}
                 <div>
-                    {@render deckLabel("Taste profile")}
+                    {@render deckLabel("Taste profile · all shoots")}
                     <div class="flex flex-col gap-[2px]">
                         {#each preferenceProfiles as profile (profile.id)}
                             <button
@@ -1210,7 +1230,7 @@
                             <Plus size={12} /> New profile
                         </button>
                     </div>
-                    <p class="mt-1.5 px-1 text-[11px] italic leading-[1.5] text-subtle">Your keeps, rejects, ratings and finished stacks teach the active profile. AutoCull's own flags never do. Review progress is tracked per profile.</p>
+                    <p class="mt-1.5 px-1 text-[11px] italic leading-[1.5] text-subtle">Profiles are shared across every folder. Your keeps, rejects, ratings and finished stacks teach the active profile across shoots. AutoCull's own flags never do. Review progress stays with this folder and profile.</p>
                 </div>
             </div>
         </details>

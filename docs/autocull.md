@@ -56,6 +56,21 @@ Enter. The provenance is then cleared and the decision trains the active profile
 Flags changed elsewhere in the app also lose their provenance on the next analysis.
 Undo restores the provenance with the flag.
 
+### Taste across shoots
+
+Taste profiles and the active profile are shared across the library. Human labels
+and stack comparisons belong to the profile, rather than the open folder. The
+app keeps versioned image-feature snapshots in IndexedDB so feedback can train
+rankings in another shoot even when the original photos are not loaded. These
+snapshots contain numerical features, not copies of the originals.
+
+Existing folder profiles and feedback migrate into the shared store. Default
+feedback is combined; named profiles keep their identities. Old feedback without
+image features starts contributing across shoots after those source photos are
+analyzed again. Incompatible feature versions are ignored until refreshed.
+Automatic flags and stack completion stay scoped to their folder. Undo restores
+the active profile's feedback along with the shoot's decisions.
+
 ### Correcting a finished stack
 
 Changing a flag or rating in a finished stack reopens it. The comparisons

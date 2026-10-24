@@ -9,7 +9,7 @@ import { chromium, type Page } from "playwright";
 import { createServer } from "vite";
 
 const output = await mkdtemp(join(tmpdir(), "hologram-autocull-"));
-const server = await createServer({ server: { host: "127.0.0.1", port: 0 } });
+const server = await createServer({ server: { host: "127.0.0.1", port: 0, strictPort: false } });
 await server.listen();
 const executablePath = [chromium.executablePath(), "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"]
   .find(existsSync);
@@ -33,8 +33,6 @@ async function invokeCounts(page: Page): Promise<Record<string, number>> {
   return page.evaluate(() => ({ ...(window as unknown as { __invokeCounts: Record<string, number> }).__invokeCounts }));
 }
 
-const PAIRWISE_KEY = "hologram.autocull.pairwise.global";
-const REFINEMENTS_KEY = "hologram.autocull.preferenceRefinements.global.default";
 const AUTOMATIC_KEY = "hologram.autocull.automatic.v1.global";
 
 async function stored(page: Page, key: string): Promise<string | null> {
@@ -42,7 +40,7 @@ async function stored(page: Page, key: string): Promise<string | null> {
 }
 
 async function pairwise(page: Page): Promise<{ winner_photo_id: string; loser_photo_id: string }[]> {
-  return JSON.parse((await stored(page, PAIRWISE_KEY)) ?? "[]");
+  return JSON.parse((await stored(page, "hologram.autocull.taste.v1.feedback.default")) ?? "{}").pairs ?? [];
 }
 
 async function pairwiseCount(page: Page): Promise<number> {
@@ -54,14 +52,15 @@ async function automaticIds(page: Page): Promise<string[]> {
 }
 
 async function refinedIds(page: Page): Promise<string[]> {
-  return JSON.parse((await stored(page, REFINEMENTS_KEY)) ?? "[]").map((item: { photo_id: string }) => item.photo_id);
+  return (JSON.parse((await stored(page, "hologram.autocull.taste.v1.feedback.default")) ?? "{}").refinements ?? []).map((item: { photo_id: string }) => item.photo_id);
 }
 
 try {
-  const page = await browser.newPage({ viewport: { width: 1440, height: 1000 } });
+  const context = await browser.newContext({ viewport: { width: 1440, height: 1000 } });
+  const page = await context.newPage();
   const errors: string[] = [];
   page.on("pageerror", (error) => errors.push(error.message));
-  await page.addInitScript(() => {
+  await page.context().addInitScript(() => {
     const counts: Record<string, number> = {};
     Object.assign(window, {
       __invokeCounts: counts,
@@ -316,6 +315,32 @@ try {
   assert.equal(afterBatch[other].flag, "pick");
   for (const id of stackIds.filter((id) => id !== suggestedId && id !== other)) assert.equal(afterBatch[id].flag, "reject");
   assert.ok(await pairwiseCount(page) > pairwiseBefore, "Finishing a stack with keepers trains the profile");
+  const crossShootPhotos = await page.evaluate(async () => {
+    const path = "/src/lib/stores/photoStore.ts";
+    const { photoStore } = await import(path) as typeof import("../src/lib/stores/photoStore.ts");
+    return photoStore.photos.filter((photo) => ["original", "blurred", "street"].includes(photo.id))
+      .map((photo) => ({ ...photo, id: `shoot-b-${photo.id}`, file_path: `/shoot-b/${photo.file_name}`, flag: "none" as const, rating: 0 }));
+  });
+  const otherShoot = await page.context().newPage();
+  await otherShoot.goto(server.resolvedUrls!.local[0]);
+  const acrossShoots = await otherShoot.evaluate(async (photos) => {
+    const path = "/src/lib/autocull.ts";
+    const api = await import(path) as typeof import("../src/lib/autocull.ts");
+    const neutral = await api.buildAutoCullSession(photos, [], () => {}, [], false, "/shoot-b");
+    const learned = await api.buildAutoCullSession(photos, api.loadPairwisePreferences(), () => {}, api.loadPreferenceRefinements(), false, "/shoot-b");
+    const isolated = await api.buildAutoCullSession(photos, api.loadPairwisePreferences("untrained-profile"), () => {}, api.loadPreferenceRefinements("untrained-profile"), false, "/shoot-b");
+    return {
+      neutral: neutral.photos.map((photo) => photo.personal_score),
+      learned: learned.photos.map((photo) => photo.personal_score),
+      isolated: isolated.photos.map((photo) => photo.personal_score),
+      examples: learned.stats.training_examples,
+    };
+  }, crossShootPhotos);
+  await otherShoot.close();
+  assert.ok(acrossShoots.examples > 0, "A fresh app context learns from the previous shoot with its source photos absent");
+  assert.notDeepEqual(acrossShoots.learned, acrossShoots.neutral, "Saved preferences influence another shoot's scores");
+  assert.deepEqual(acrossShoots.isolated, acrossShoots.neutral, "A different profile does not inherit the first profile's taste");
+
   assert.notEqual(await currentKey(), stackKey, "The batch action finishes the stack and moves on");
   await press("Meta+z");
   const afterUndo = await decisions(page, stackIds);
@@ -385,7 +410,7 @@ try {
   await view.locator('[data-autocull-overview-state="preview"]').waitFor();
   assert.equal(await planCount("keep"), keepCount);
   assert.equal(await planCount("reject"), rejectCount);
-  const trainingStorage = async () => [await stored(page, PAIRWISE_KEY), await stored(page, REFINEMENTS_KEY)];
+  const trainingStorage = async () => [await stored(page, "hologram.autocull.taste.v1.feedback.default")];
   const trainingBefore = await trainingStorage();
   const applyAndCheck = async () => {
     await view.locator("[data-autocull-apply]").click();

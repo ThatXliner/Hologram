@@ -1,0 +1,529 @@
+{
+  "schema_version": 1,
+  "xgboost_version": "3.1.1",
+  "dataset_kind": "synthetic",
+  "feature_version": "gbdt-personal-ranker-v2:dinov2-small-transformersjs+perceptual-dct-focus-v4:sample:160:transformer:224:spatial:32:dct:32:10:grad:4:8",
+  "backend": "perceptual-dct-focus-v4",
+  "profile_id": "synthetic-default",
+  "verdict": "inconclusive",
+  "interpretation": "Synthetic correctness and harness smoke check only. Cannot conclude human taste quality or production performance.",
+  "methodology": {
+    "split": "leave-one-shoot-out; global training from all other shoots",
+    "repeats": 5,
+    "ordering": "alternating implementation order per repeat",
+    "deterministic_predictions": true,
+    "score": "probability centered on training prior; threshold 0.5; differences within 1e-6 receive half credit; neutral pointwise targets ignored",
+    "confidence_weighting": "training only; reported agreement is unweighted",
+    "timing": "train and predict cover learner operations only; wall includes runner overhead and native subprocess startup; no performance winner claimed",
+    "grouping": "caller must put bursts, duplicates, and related frames in the same shoot; pixel-level independence is not verified",
+    "automatic_feedback": "excluded from both training and held-out agreement"
+  },
+  "environment": {
+    "runtime": "1.4.4",
+    "platform": "darwin",
+    "release": "25.5.0",
+    "arch": "arm64",
+    "logical_cpus": 10,
+    "available_parallelism": 10,
+    "load_average": [
+      3.34912109375,
+      6.431640625,
+      9.3515625
+    ]
+  },
+  "volume": {
+    "shoots": 4,
+    "photos": 32,
+    "manual_pointwise": 32,
+    "manual_pairs": 4,
+    "automatic_excluded": 0
+  },
+  "agreement": {
+    "typescript": {
+      "pointwiseCredit": 32,
+      "pointwiseCount": 32,
+      "pairCredit": 4,
+      "pairCount": 4,
+      "pointwiseTotal": 32,
+      "pairTotal": 4,
+      "pointwise_accuracy": 1,
+      "pair_agreement": 1
+    },
+    "xgboost": {
+      "pointwiseCredit": 32,
+      "pointwiseCount": 32,
+      "pairCredit": 4,
+      "pairCount": 4,
+      "pointwiseTotal": 32,
+      "pairTotal": 4,
+      "pointwise_accuracy": 1,
+      "pair_agreement": 1
+    }
+  },
+  "folds": [
+    {
+      "shoot_id": "shoot-a",
+      "train_photos": 24,
+      "test_photos": 8,
+      "train_pointwise": 24,
+      "train_pairs": 3,
+      "typescript": {
+        "pointwiseCredit": 8,
+        "pointwiseCount": 8,
+        "pairCredit": 1,
+        "pairCount": 1,
+        "pointwiseTotal": 8,
+        "pairTotal": 1,
+        "scores": [
+          0.09139520979568953,
+          0.09139520979568953,
+          0.09139520979568953,
+          0.09139520979568953,
+          0.9086047902043104,
+          0.9086047902043104,
+          0.9086047902043104,
+          0.9086047902043104
+        ],
+        "train_ms": {
+          "median": 15.21095800000002,
+          "min": 14.531000000000006,
+          "max": 21.544458,
+          "samples": [
+            21.544458,
+            15.855790999999996,
+            14.531000000000006,
+            14.75862500000001,
+            15.21095800000002
+          ]
+        },
+        "predict_ms": {
+          "median": 0.026042000000003895,
+          "min": 0.013999999999995794,
+          "max": 0.12958300000000378,
+          "samples": [
+            0.12958300000000378,
+            0.026042000000003895,
+            0.015917000000001735,
+            0.013999999999995794,
+            0.045207999999973936
+          ]
+        },
+        "wall_ms": {
+          "median": 15.262709000000001,
+          "min": 14.553583000000003,
+          "max": 21.691417,
+          "samples": [
+            21.691417,
+            15.890167000000005,
+            14.553583000000003,
+            14.779917000000012,
+            15.262709000000001
+          ]
+        }
+      },
+      "xgboost": {
+        "pointwiseCredit": 8,
+        "pointwiseCount": 8,
+        "pairCredit": 1,
+        "pairCount": 1,
+        "pointwiseTotal": 8,
+        "pairTotal": 1,
+        "xgboost_version": "3.1.1",
+        "scores": [
+          0.09139520901785647,
+          0.09139520901785647,
+          0.09139520901785647,
+          0.09139520901785647,
+          0.9086047909821435,
+          0.9086047909821435,
+          0.9086047909821435,
+          0.9086047909821435
+        ],
+        "train_ms": {
+          "median": 4.570374999999999,
+          "min": 4.50425,
+          "max": 4.868167,
+          "samples": [
+            4.6355830000000005,
+            4.868167,
+            4.554082999999999,
+            4.50425,
+            4.570374999999999
+          ]
+        },
+        "predict_ms": {
+          "median": 0.042166999999999996,
+          "min": 0.039083,
+          "max": 0.072334,
+          "samples": [
+            0.044,
+            0.072334,
+            0.042166999999999996,
+            0.039083,
+            0.04125
+          ]
+        },
+        "wall_ms": {
+          "median": 10.954959000000002,
+          "min": 10.026916999999997,
+          "max": 11.832707999999997,
+          "samples": [
+            11.832707999999997,
+            11.27975,
+            10.954959000000002,
+            10.026916999999997,
+            10.894542000000001
+          ]
+        }
+      }
+    },
+    {
+      "shoot_id": "shoot-b",
+      "train_photos": 24,
+      "test_photos": 8,
+      "train_pointwise": 24,
+      "train_pairs": 3,
+      "typescript": {
+        "pointwiseCredit": 8,
+        "pointwiseCount": 8,
+        "pairCredit": 1,
+        "pairCount": 1,
+        "pointwiseTotal": 8,
+        "pairTotal": 1,
+        "scores": [
+          0.09139520979568953,
+          0.09139520979568953,
+          0.09139520979568953,
+          0.09139520979568953,
+          0.9086047902043104,
+          0.9086047902043104,
+          0.9086047902043104,
+          0.9086047902043104
+        ],
+        "train_ms": {
+          "median": 14.71875,
+          "min": 14.493915999999984,
+          "max": 14.818832999999984,
+          "samples": [
+            14.805250000000001,
+            14.493915999999984,
+            14.625957999999997,
+            14.71875,
+            14.818832999999984
+          ]
+        },
+        "predict_ms": {
+          "median": 0.012082999999989852,
+          "min": 0.01054200000001515,
+          "max": 0.025249999999999773,
+          "samples": [
+            0.025249999999999773,
+            0.018167000000005373,
+            0.01054200000001515,
+            0.012082999999989852,
+            0.010625000000004547
+          ]
+        },
+        "wall_ms": {
+          "median": 14.737959000000018,
+          "min": 14.521041000000025,
+          "max": 14.835791999999998,
+          "samples": [
+            14.832042000000001,
+            14.521041000000025,
+            14.641917000000007,
+            14.737959000000018,
+            14.835791999999998
+          ]
+        }
+      },
+      "xgboost": {
+        "pointwiseCredit": 8,
+        "pointwiseCount": 8,
+        "pairCredit": 1,
+        "pairCount": 1,
+        "pointwiseTotal": 8,
+        "pairTotal": 1,
+        "xgboost_version": "3.1.1",
+        "scores": [
+          0.09139520901785647,
+          0.09139520901785647,
+          0.09139520901785647,
+          0.09139520901785647,
+          0.9086047909821435,
+          0.9086047909821435,
+          0.9086047909821435,
+          0.9086047909821435
+        ],
+        "train_ms": {
+          "median": 4.530583,
+          "min": 4.5022079999999995,
+          "max": 4.586375,
+          "samples": [
+            4.560167000000001,
+            4.5028749999999995,
+            4.586375,
+            4.5022079999999995,
+            4.530583
+          ]
+        },
+        "predict_ms": {
+          "median": 0.036167,
+          "min": 0.032375,
+          "max": 0.042874999999999996,
+          "samples": [
+            0.034083,
+            0.036167,
+            0.042874999999999996,
+            0.037208,
+            0.032375
+          ]
+        },
+        "wall_ms": {
+          "median": 10.476707999999974,
+          "min": 9.920375000000007,
+          "max": 10.722750000000019,
+          "samples": [
+            10.476707999999974,
+            9.920375000000007,
+            10.672415999999998,
+            10.449583999999987,
+            10.722750000000019
+          ]
+        }
+      }
+    },
+    {
+      "shoot_id": "shoot-c",
+      "train_photos": 24,
+      "test_photos": 8,
+      "train_pointwise": 24,
+      "train_pairs": 3,
+      "typescript": {
+        "pointwiseCredit": 8,
+        "pointwiseCount": 8,
+        "pairCredit": 1,
+        "pairCount": 1,
+        "pointwiseTotal": 8,
+        "pairTotal": 1,
+        "scores": [
+          0.09139520979568953,
+          0.09139520979568953,
+          0.09139520979568953,
+          0.09139520979568953,
+          0.9086047902043104,
+          0.9086047902043104,
+          0.9086047902043104,
+          0.9086047902043104
+        ],
+        "train_ms": {
+          "median": 14.80925000000002,
+          "min": 14.415583999999967,
+          "max": 15.298457999999982,
+          "samples": [
+            14.663875000000019,
+            14.80925000000002,
+            14.415583999999967,
+            15.199749999999995,
+            15.298457999999982
+          ]
+        },
+        "predict_ms": {
+          "median": 0.015374999999949068,
+          "min": 0.013125000000002274,
+          "max": 0.04245900000000802,
+          "samples": [
+            0.013750000000015916,
+            0.015374999999949068,
+            0.013125000000002274,
+            0.04245900000000802,
+            0.02879200000000992
+          ]
+        },
+        "wall_ms": {
+          "median": 14.83133300000003,
+          "min": 14.436082999999996,
+          "max": 15.33541600000001,
+          "samples": [
+            14.683790999999985,
+            14.83133300000003,
+            14.436082999999996,
+            15.251083999999992,
+            15.33541600000001
+          ]
+        }
+      },
+      "xgboost": {
+        "pointwiseCredit": 8,
+        "pointwiseCount": 8,
+        "pairCredit": 1,
+        "pairCount": 1,
+        "pointwiseTotal": 8,
+        "pairTotal": 1,
+        "xgboost_version": "3.1.1",
+        "scores": [
+          0.09139520901785647,
+          0.09139520901785647,
+          0.09139520901785647,
+          0.09139520901785647,
+          0.9086047909821435,
+          0.9086047909821435,
+          0.9086047909821435,
+          0.9086047909821435
+        ],
+        "train_ms": {
+          "median": 4.764459,
+          "min": 4.659083,
+          "max": 4.861125,
+          "samples": [
+            4.861125,
+            4.7867500000000005,
+            4.764459,
+            4.659083,
+            4.659708
+          ]
+        },
+        "predict_ms": {
+          "median": 0.06883399999999999,
+          "min": 0.042125,
+          "max": 0.074625,
+          "samples": [
+            0.074625,
+            0.06883399999999999,
+            0.07195800000000001,
+            0.055291,
+            0.042125
+          ]
+        },
+        "wall_ms": {
+          "median": 11.094208999999978,
+          "min": 10.64854200000002,
+          "max": 11.444042000000024,
+          "samples": [
+            11.444042000000024,
+            10.790040999999974,
+            11.10616699999997,
+            10.64854200000002,
+            11.094208999999978
+          ]
+        }
+      }
+    },
+    {
+      "shoot_id": "shoot-d",
+      "train_photos": 24,
+      "test_photos": 8,
+      "train_pointwise": 24,
+      "train_pairs": 3,
+      "typescript": {
+        "pointwiseCredit": 8,
+        "pointwiseCount": 8,
+        "pairCredit": 1,
+        "pairCount": 1,
+        "pointwiseTotal": 8,
+        "pairTotal": 1,
+        "scores": [
+          0.09139520979568953,
+          0.09139520979568953,
+          0.09139520979568953,
+          0.09139520979568953,
+          0.9086047902043104,
+          0.9086047902043104,
+          0.9086047902043104,
+          0.9086047902043104
+        ],
+        "train_ms": {
+          "median": 14.775500000000022,
+          "min": 14.371959000000004,
+          "max": 14.829207999999994,
+          "samples": [
+            14.724084000000005,
+            14.775500000000022,
+            14.81049999999999,
+            14.371959000000004,
+            14.829207999999994
+          ]
+        },
+        "predict_ms": {
+          "median": 0.0105829999999969,
+          "min": 0.009665999999981523,
+          "max": 0.02804100000003018,
+          "samples": [
+            0.02804100000003018,
+            0.0105829999999969,
+            0.010334000000000287,
+            0.009665999999981523,
+            0.014167000000043117
+          ]
+        },
+        "wall_ms": {
+          "median": 14.794708000000014,
+          "min": 14.388582999999983,
+          "max": 14.85433299999994,
+          "samples": [
+            14.758833999999979,
+            14.794708000000014,
+            14.82529199999999,
+            14.388582999999983,
+            14.85433299999994
+          ]
+        }
+      },
+      "xgboost": {
+        "pointwiseCredit": 8,
+        "pointwiseCount": 8,
+        "pairCredit": 1,
+        "pairCount": 1,
+        "pointwiseTotal": 8,
+        "pairTotal": 1,
+        "xgboost_version": "3.1.1",
+        "scores": [
+          0.09139520901785647,
+          0.09139520901785647,
+          0.09139520901785647,
+          0.09139520901785647,
+          0.9086047909821435,
+          0.9086047909821435,
+          0.9086047909821435,
+          0.9086047909821435
+        ],
+        "train_ms": {
+          "median": 4.548042000000001,
+          "min": 4.534375,
+          "max": 4.8245,
+          "samples": [
+            4.548042000000001,
+            4.75925,
+            4.546334,
+            4.534375,
+            4.8245
+          ]
+        },
+        "predict_ms": {
+          "median": 0.040625,
+          "min": 0.036417,
+          "max": 0.056749999999999995,
+          "samples": [
+            0.039333,
+            0.056749999999999995,
+            0.036417,
+            0.040625,
+            0.046708
+          ]
+        },
+        "wall_ms": {
+          "median": 10.5745,
+          "min": 10.314000000000021,
+          "max": 11.344208000000094,
+          "samples": [
+            10.377916999999968,
+            11.11179100000004,
+            10.5745,
+            10.314000000000021,
+            11.344208000000094
+          ]
+        }
+      }
+    }
+  ]
+}

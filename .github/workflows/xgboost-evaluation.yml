@@ -1,0 +1,53 @@
+name: XGBoost evaluation
+
+on:
+  pull_request:
+    paths:
+      - 'tools/xgboost-eval/**'
+      - 'scripts/*xgboost*'
+      - 'src/lib/autocull.ts'
+      - '.github/workflows/xgboost-evaluation.yml'
+  workflow_dispatch:
+
+jobs:
+  native-evaluation:
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-latest, macos-15, windows-latest]
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/checkout@v4
+        with:
+          repository: dmlc/xgboost
+          ref: 5e806d1b858acbc4488f436111f3e4c34f6186ce
+          submodules: recursive
+          path: .xgboost-source
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - name: Build CPU-only native library
+        run: |
+          cmake -S .xgboost-source -B .xgboost-source/build -DCMAKE_BUILD_TYPE=Release -DUSE_OPENMP=OFF -DUSE_CUDA=OFF
+          cmake --build .xgboost-source/build --config Release --parallel 2
+          echo "XGBOOST_LIB_DIR=$GITHUB_WORKSPACE/.xgboost-source/lib" >> "$GITHUB_ENV"
+          echo "$GITHUB_WORKSPACE/.xgboost-source/lib" >> "$GITHUB_PATH"
+      - name: Test and build evaluator
+        run: |
+          cargo test --manifest-path tools/xgboost-eval/Cargo.toml --locked
+          cargo build --release --manifest-path tools/xgboost-eval/Cargo.toml --locked
+      - name: Test comparison runner
+        run: bun test scripts/xgboost-evaluation.test.ts
+      - name: Compare learners on synthetic choices
+        run: |
+          executable=tools/xgboost-eval/target/release/hologram-xgboost-eval
+          if [[ "$RUNNER_OS" == Windows ]]; then executable="$executable.exe"; fi
+          bun scripts/evaluate-xgboost.ts --synthetic --native "$executable" > xgboost-synthetic-report.json
+      - uses: actions/upload-artifact@v4
+        with:
+          name: xgboost-evaluation-${{ runner.os }}
+          path: xgboost-synthetic-report.json

@@ -118,7 +118,7 @@ type PairwiseExample = {
 };
 
 type FeatureRecord = {
-  photo: Photo;
+  backend?: string;
   embedding?: number[];
   technicalScore: number;
   rankerFeatures: number[];
@@ -162,8 +162,154 @@ type RankingModel = {
   examples: RankedExample[];
 };
 
-function preferenceScope(folderPath: string | null): string {
-  return folderPath?.trim() || "global";
+const TASTE_PREFIX = "hologram.autocull.taste.v1";
+
+export type PreferenceFeatureSnapshot = {
+  photoId: string;
+  version: string;
+  backend: string;
+  rankerFeatures: number[];
+  embedding: number[];
+};
+
+const PREFERENCE_FEATURE_VERSION = `${RANKER_VERSION}:${FEATURE_CACHE_VERSION}`;
+const preferenceFeatureMemory = new Map<string, PreferenceFeatureSnapshot>();
+let preferenceDb: Promise<IDBDatabase | null> | undefined;
+let preferenceWrites: Promise<boolean> = Promise.resolve(true);
+
+function isFiniteVector(value: unknown, length?: number): value is number[] {
+  return Array.isArray(value) && value.length > 0 && (length === undefined || value.length === length)
+    && value.every((item) => typeof item === "number" && Number.isFinite(item));
+}
+
+function isPreferenceFeatureSnapshot(value: unknown): value is PreferenceFeatureSnapshot {
+  return typeof value === "object" && value !== null
+    && "photoId" in value && typeof value.photoId === "string"
+    && "version" in value && value.version === PREFERENCE_FEATURE_VERSION
+    && "backend" in value && typeof value.backend === "string"
+    && "rankerFeatures" in value && isFiniteVector(value.rankerFeatures, 11 + EMBEDDING_RANKER_FEATURES)
+    && "embedding" in value && isFiniteVector(value.embedding) && value.embedding.some((item) => item !== 0);
+}
+
+function makePreferenceSnapshot(photoId: string, rankerFeatures: number[], pixels: PixelFeatures): PreferenceFeatureSnapshot {
+  return { photoId, version: PREFERENCE_FEATURE_VERSION, backend: pixels.backend, rankerFeatures, embedding: [...pixels.embedding] };
+}
+
+async function openPreferenceDb(): Promise<IDBDatabase | null> {
+  if (typeof indexedDB === "undefined") return null;
+  preferenceDb ??= new Promise((resolve) => {
+    try {
+      const request = indexedDB.open("hologram-autocull-taste", 1);
+      request.onupgradeneeded = () => request.result.createObjectStore("features", { keyPath: "photoId" });
+      request.onsuccess = () => {
+        request.result.onversionchange = () => { request.result.close(); preferenceDb = undefined; };
+        resolve(request.result);
+      };
+      request.onerror = () => resolve(null);
+      request.onblocked = () => resolve(null);
+    } catch { resolve(null); }
+  });
+  const db = await preferenceDb;
+  if (!db) preferenceDb = undefined;
+  return db;
+}
+
+async function persistPreferenceSnapshots(snapshots: PreferenceFeatureSnapshot[]): Promise<boolean> {
+  const valid = snapshots.filter(isPreferenceFeatureSnapshot);
+  for (const snapshot of valid) preferenceFeatureMemory.set(snapshot.photoId, snapshot);
+  if (!valid.length) return true;
+  const db = await openPreferenceDb();
+  if (!db) return false;
+  return new Promise((resolve) => {
+    try {
+      const transaction = db.transaction("features", "readwrite");
+      for (const snapshot of valid) transaction.objectStore("features").put(snapshot);
+      transaction.oncomplete = () => resolve(true);
+      transaction.onerror = () => resolve(false);
+      transaction.onabort = () => resolve(false);
+    } catch {
+      resolve(false);
+    }
+  });
+}
+
+export function capturePreferenceFeatures(photos: Photo[], session: Pick<AutoCullSession, "photos">): Promise<boolean> {
+  const analysisById = new Map(session.photos.map((analysis) => [analysis.photo_id, analysis]));
+  const snapshots = photos.flatMap((photo) => {
+    const analysis = analysisById.get(photo.id);
+    if (!analysis?.embedding?.length) return [];
+    const pixels = { embedding: analysis.embedding, technicalScore: analysis.technical_score, backend: analysis.embedding_backend ?? PERCEPTUAL_EMBEDDING_BACKEND };
+    return [makePreferenceSnapshot(photo.id, rankerFeatureVector(photo, pixels, pixels.technicalScore), pixels)];
+  });
+  preferenceWrites = preferenceWrites.then(() => persistPreferenceSnapshots(snapshots));
+  return preferenceWrites;
+}
+
+export async function loadPreferenceFeatureSnapshots(photoIds: string[]): Promise<Map<string, PreferenceFeatureSnapshot>> {
+  await preferenceWrites;
+  const result = new Map<string, PreferenceFeatureSnapshot>();
+  const db = await openPreferenceDb();
+  if (db) {
+    await new Promise<void>((resolve) => {
+      try {
+        const transaction = db.transaction("features", "readonly");
+        for (const id of new Set(photoIds)) {
+          const request = transaction.objectStore("features").get(id);
+          request.onsuccess = () => {
+            if (isPreferenceFeatureSnapshot(request.result)) result.set(id, request.result);
+          };
+        }
+        transaction.oncomplete = () => resolve();
+        transaction.onerror = () => resolve();
+        transaction.onabort = () => resolve();
+      } catch { resolve(); }
+    });
+  }
+  for (const id of photoIds) {
+    const snapshot = preferenceFeatureMemory.get(id);
+    if (snapshot) result.set(id, snapshot);
+  }
+  return result;
+}
+
+function migratePreferenceLibrary() {
+  if (localStorage.getItem(`${TASTE_PREFIX}.migrated`) === "1") return;
+  const profiles: AutoCullPreferenceProfile[] = [];
+  const refinements = new Map<string, AutoCullPreferenceRefinement[]>();
+  const pairs = new Map<string, AutoCullPairwisePreference[]>();
+  const keys = Array.from({ length: localStorage.length }, (_, index) => localStorage.key(index)).filter((key): key is string => key !== null).sort();
+  function parsedArray(key: string): unknown[] {
+    try { const value: unknown = JSON.parse(localStorage.getItem(key) ?? "[]"); return Array.isArray(value) ? value : []; }
+    catch { return []; }
+  }
+  for (const key of keys) {
+    if (key.startsWith("hologram.autocull.preferenceProfiles.")) profiles.push(...parsedArray(key).filter(isPreferenceProfile));
+  }
+  profiles.push(...parsedArray(preferenceProfilesKey()).filter(isPreferenceProfile));
+  const profileIds = normalizePreferenceProfiles(profiles).map((profile) => profile.id);
+  for (const key of keys) {
+    if (key.startsWith("hologram.autocull.preferenceRefinements.")) {
+      const id = profileIds.find((id) => key.endsWith(`.${encodeURIComponent(id)}`));
+      if (id) refinements.set(id, [...(refinements.get(id) ?? []), ...parsedArray(key).filter(isPreferenceRefinement)]);
+    }
+    if (key.startsWith("hologram.autocull.pairwise.")) {
+      const id = profileIds.find((id) => id !== DEFAULT_PREFERENCE_PROFILE_ID && key.endsWith(`.profile.${encodeURIComponent(id)}`)) ?? DEFAULT_PREFERENCE_PROFILE_ID;
+      pairs.set(id, [...(pairs.get(id) ?? []), ...parsedArray(key).filter(isPairwisePreference)]);
+    }
+  }
+  for (const id of profileIds) {
+    const merged = [...(refinements.get(id) ?? []), ...parsedArray(preferenceRefinementsKey(id)).filter(isPreferenceRefinement)].sort((a, b) => a.updated_at.localeCompare(b.updated_at));
+    localStorage.setItem(preferenceRefinementsKey(id), JSON.stringify(dedupePreferenceRefinements(merged).map(({ ranker_features, embedding, ...label }) => label)));
+    const mergedPairs = [...(pairs.get(id) ?? []), ...parsedArray(pairwisePreferenceKey(id)).filter(isPairwisePreference)].sort((a, b) => a.created_at.localeCompare(b.created_at));
+    localStorage.setItem(pairwisePreferenceKey(id), JSON.stringify(dedupePairwise(mergedPairs)));
+  }
+  localStorage.setItem(preferenceProfilesKey(), JSON.stringify(normalizePreferenceProfiles(profiles)));
+  if (!localStorage.getItem(activePreferenceProfileKey())) {
+    const activeKey = keys.find((key) => key.startsWith("hologram.autocull.activePreferenceProfile."));
+    const active = activeKey ? localStorage.getItem(activeKey) : null;
+    if (active && profileIds.includes(active)) localStorage.setItem(activePreferenceProfileKey(), active);
+  }
+  localStorage.setItem(`${TASTE_PREFIX}.migrated`, "1");
 }
 
 function defaultPreferenceProfile(): AutoCullPreferenceProfile {
@@ -175,37 +321,33 @@ function defaultPreferenceProfile(): AutoCullPreferenceProfile {
   };
 }
 
-function preferenceProfilesKey(folderPath: string | null): string {
-  return `hologram.autocull.preferenceProfiles.${preferenceScope(folderPath)}`;
+function preferenceProfilesKey(): string {
+  return `${TASTE_PREFIX}.profiles`;
 }
 
-function activePreferenceProfileKey(folderPath: string | null): string {
-  return `hologram.autocull.activePreferenceProfile.${preferenceScope(folderPath)}`;
+function activePreferenceProfileKey(): string {
+  return `${TASTE_PREFIX}.active`;
 }
 
 function preferenceRefinementsKey(
-  folderPath: string | null,
   profileId = DEFAULT_PREFERENCE_PROFILE_ID,
 ): string {
-  return `hologram.autocull.preferenceRefinements.${preferenceScope(folderPath)}.${encodeURIComponent(profileId)}`;
+  return `${TASTE_PREFIX}.refinements.${encodeURIComponent(profileId)}`;
 }
 
 export function pairwisePreferenceKey(
-  folderPath: string | null,
   profileId = DEFAULT_PREFERENCE_PROFILE_ID,
 ): string {
-  const base = `hologram.autocull.pairwise.${preferenceScope(folderPath)}`;
-  return profileId === DEFAULT_PREFERENCE_PROFILE_ID
-    ? base
-    : `${base}.profile.${encodeURIComponent(profileId)}`;
+  return `${TASTE_PREFIX}.pairwise.${encodeURIComponent(profileId)}`;
 }
 
-export function loadPreferenceProfiles(folderPath: string | null): AutoCullPreferenceProfile[] {
+export function loadPreferenceProfiles(): AutoCullPreferenceProfile[] {
   const fallback = [defaultPreferenceProfile()];
   if (typeof localStorage === "undefined") return fallback;
 
+  migratePreferenceLibrary();
   try {
-    const raw = localStorage.getItem(preferenceProfilesKey(folderPath));
+    const raw = localStorage.getItem(preferenceProfilesKey());
     const parsed = raw ? JSON.parse(raw) : [];
     const profiles = Array.isArray(parsed)
       ? parsed.filter(isPreferenceProfile)
@@ -217,53 +359,78 @@ export function loadPreferenceProfiles(folderPath: string | null): AutoCullPrefe
 }
 
 export function savePreferenceProfiles(
-  folderPath: string | null,
   profiles: AutoCullPreferenceProfile[],
 ) {
   if (typeof localStorage === "undefined") return;
-  localStorage.setItem(preferenceProfilesKey(folderPath), JSON.stringify(normalizePreferenceProfiles(profiles)));
+  migratePreferenceLibrary();
+  localStorage.setItem(preferenceProfilesKey(), JSON.stringify(normalizePreferenceProfiles(profiles)));
 }
 
-export function loadActivePreferenceProfileId(folderPath: string | null): string {
-  const profiles = loadPreferenceProfiles(folderPath);
+export function loadActivePreferenceProfileId(): string {
+  const profiles = loadPreferenceProfiles();
   const fallback = profiles[0]?.id ?? DEFAULT_PREFERENCE_PROFILE_ID;
   if (typeof localStorage === "undefined") return fallback;
 
-  const saved = localStorage.getItem(activePreferenceProfileKey(folderPath));
+  const saved = localStorage.getItem(activePreferenceProfileKey());
   return saved && profiles.some((profile) => profile.id === saved)
     ? saved
     : fallback;
 }
 
-export function saveActivePreferenceProfileId(folderPath: string | null, profileId: string) {
+export function saveActivePreferenceProfileId(profileId: string) {
   if (typeof localStorage === "undefined") return;
-  localStorage.setItem(activePreferenceProfileKey(folderPath), profileId);
+  migratePreferenceLibrary();
+  localStorage.setItem(activePreferenceProfileKey(), profileId);
 }
 
 export function createPreferenceProfile(
-  folderPath: string | null,
   name: string,
 ): AutoCullPreferenceProfile {
   const now = new Date().toISOString();
   const profile = {
     id: newPreferenceProfileId(),
-    name: name.trim() || `Profile ${loadPreferenceProfiles(folderPath).length + 1}`,
+    name: name.trim() || `Profile ${loadPreferenceProfiles().length + 1}`,
     created_at: now,
     updated_at: now,
   };
-  savePreferenceProfiles(folderPath, [...loadPreferenceProfiles(folderPath), profile]);
-  saveActivePreferenceProfileId(folderPath, profile.id);
+  savePreferenceProfiles([...loadPreferenceProfiles(), profile]);
+  saveActivePreferenceProfileId(profile.id);
   return profile;
 }
 
+function feedbackKey(profileId: string): string {
+  return `${TASTE_PREFIX}.feedback.${encodeURIComponent(profileId)}`;
+}
+
+function feedbackArray(profileId: string, field: "refinements" | "pairs", legacyKey: string): unknown {
+  const saved = localStorage.getItem(feedbackKey(profileId));
+  if (saved !== null) {
+    const parsed: unknown = JSON.parse(saved);
+    return parsed && typeof parsed === "object" && field in parsed ? Reflect.get(parsed, field) : [];
+  }
+  return JSON.parse(localStorage.getItem(legacyKey) ?? "[]");
+}
+
+export function savePreferenceFeedback(
+  profileId: string,
+  refinements: AutoCullPreferenceRefinement[],
+  pairs: AutoCullPairwisePreference[],
+): void {
+  if (typeof localStorage === "undefined") return;
+  migratePreferenceLibrary();
+  // One storage write keeps labels and comparisons atomic when the quota is exhausted.
+  localStorage.setItem(feedbackKey(profileId), JSON.stringify({
+    refinements: dedupePreferenceRefinements(refinements), pairs: dedupePairwise(pairs),
+  }));
+}
+
 export function loadPreferenceRefinements(
-  folderPath: string | null,
   profileId = DEFAULT_PREFERENCE_PROFILE_ID,
 ): AutoCullPreferenceRefinement[] {
   if (typeof localStorage === "undefined") return [];
+  migratePreferenceLibrary();
   try {
-    const raw = localStorage.getItem(preferenceRefinementsKey(folderPath, profileId));
-    const parsed = raw ? JSON.parse(raw) : [];
+    const parsed = feedbackArray(profileId, "refinements", preferenceRefinementsKey(profileId));
     return Array.isArray(parsed) ? dedupePreferenceRefinements(parsed.filter(isPreferenceRefinement)) : [];
   } catch {
     return [];
@@ -271,20 +438,13 @@ export function loadPreferenceRefinements(
 }
 
 export function savePreferenceRefinements(
-  folderPath: string | null,
   profileId: string,
   refinements: AutoCullPreferenceRefinement[],
 ) {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(
-    preferenceRefinementsKey(folderPath, profileId),
-    JSON.stringify(dedupePreferenceRefinements(refinements).slice(-4_000)),
-  );
-  touchPreferenceProfile(folderPath, profileId);
+  savePreferenceFeedback(profileId, refinements, loadPairwisePreferences(profileId));
 }
 
 export function recordPreferenceRefinement(
-  folderPath: string | null,
   profileId: string,
   photoId: string,
   flag: CullFlag,
@@ -292,9 +452,10 @@ export function recordPreferenceRefinement(
   photo?: Photo,
   analysis?: AutoCullPhoto,
 ) {
+  const captured = photo && analysis ? capturePreferenceFeatures([photo], { photos: [{ ...analysis, photo_id: photoId }] }) : Promise.resolve(true);
   const now = new Date().toISOString();
-  savePreferenceRefinements(folderPath, profileId, [
-    ...loadPreferenceRefinements(folderPath, profileId),
+  savePreferenceRefinements(profileId, [
+    ...loadPreferenceRefinements(profileId),
     {
       photo_id: photoId,
       flag: normalizeFlag(flag),
@@ -302,30 +463,18 @@ export function recordPreferenceRefinement(
       confidence: normalizeFlag(flag) === "none" ? 0.62 : 1,
       source: "manual_decision",
       updated_at: now,
-      ...(photo ? {
-        ranker_features: rankerFeatureVector(
-          photo,
-          analysis?.embedding ? {
-            embedding: analysis.embedding,
-            technicalScore: analysis.technical_score,
-            backend: analysis.embedding_backend ?? PERCEPTUAL_EMBEDDING_BACKEND,
-          } : null,
-          analysis?.technical_score ?? fallbackTechnicalScore(photo),
-        ),
-        embedding: analysis?.embedding ? [...analysis.embedding] : [],
-      } : {}),
     },
   ]);
+  return captured;
 }
 
 export function loadPairwisePreferences(
-  folderPath: string | null,
   profileId = DEFAULT_PREFERENCE_PROFILE_ID,
 ): AutoCullPairwisePreference[] {
   if (typeof localStorage === "undefined") return [];
+  migratePreferenceLibrary();
   try {
-    const raw = localStorage.getItem(pairwisePreferenceKey(folderPath, profileId));
-    const parsed = raw ? JSON.parse(raw) : [];
+    const parsed = feedbackArray(profileId, "pairs", pairwisePreferenceKey(profileId));
     return Array.isArray(parsed) ? parsed.filter(isPairwisePreference) : [];
   } catch {
     return [];
@@ -333,22 +482,18 @@ export function loadPairwisePreferences(
 }
 
 export function savePairwisePreferences(
-  folderPath: string | null,
   preferences: AutoCullPairwisePreference[],
   profileId = DEFAULT_PREFERENCE_PROFILE_ID,
 ) {
-  if (typeof localStorage === "undefined") return;
-  localStorage.setItem(pairwisePreferenceKey(folderPath, profileId), JSON.stringify(dedupePairwise(preferences)));
-  touchPreferenceProfile(folderPath, profileId);
+  savePreferenceFeedback(profileId, loadPreferenceRefinements(profileId), preferences);
 }
 
 export function addPairwisePreferences(
-  folderPath: string | null,
   preferences: AutoCullPairwisePreference[],
   profileId = DEFAULT_PREFERENCE_PROFILE_ID,
 ) {
-  savePairwisePreferences(folderPath, [
-    ...loadPairwisePreferences(folderPath, profileId),
+  savePairwisePreferences([
+    ...loadPairwisePreferences(profileId),
     ...preferences,
   ], profileId);
 }
@@ -370,8 +515,8 @@ function isPreferenceRefinement(value: unknown): value is AutoCullPreferenceRefi
   return (
     typeof item.photo_id === "string"
     && (item.flag === "none" || item.flag === "pick" || item.flag === "reject")
-    && typeof item.rating === "number"
-    && typeof item.confidence === "number"
+    && typeof item.rating === "number" && Number.isFinite(item.rating)
+    && typeof item.confidence === "number" && Number.isFinite(item.confidence)
     && item.source === "manual_decision"
     && typeof item.updated_at === "string"
   );
@@ -420,13 +565,16 @@ function newPreferenceProfileId(): string {
   return `profile-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 8)}`;
 }
 
-function touchPreferenceProfile(folderPath: string | null, profileId: string) {
-  if (profileId === DEFAULT_PREFERENCE_PROFILE_ID || typeof localStorage === "undefined") return;
-  const profiles = loadPreferenceProfiles(folderPath);
-  const now = new Date().toISOString();
-  savePreferenceProfiles(folderPath, profiles.map((profile) => (
-    profile.id === profileId ? { ...profile, updated_at: now } : profile
-  )));
+export function metadataTrainingExclusions(profileId: string): Set<string> {
+  const owned = new Set(loadPreferenceRefinements(profileId).map((item) => item.photo_id));
+  const excluded = new Set<string>();
+  for (const profile of loadPreferenceProfiles()) {
+    if (profile.id === profileId) continue;
+    for (const item of loadPreferenceRefinements(profile.id)) {
+      if (!owned.has(item.photo_id)) excluded.add(item.photo_id);
+    }
+  }
+  return excluded;
 }
 
 export async function buildAutoCullSession(
@@ -437,6 +585,7 @@ export async function buildAutoCullSession(
   learnFromPhotoMetadata = true,
   folderPath: string | null = null,
   excludedTrainingIds: ReadonlySet<string> = new Set(),
+  profileId = DEFAULT_PREFERENCE_PROFILE_ID,
 ): Promise<AutoCullSession> {
   const featuresById = new Map<string, PixelFeatures | null>();
   const total = photos.length;
@@ -452,7 +601,34 @@ export async function buildAutoCullSession(
   });
   await writeSqlFeatureCache(pendingSqlEntries, folderPath);
 
-  const session = rankAutoCullPhotos(photos, featuresById, preferences, refinements, learnFromPhotoMetadata, excludedTrainingIds);
+  const metadataExcludedIds = learnFromPhotoMetadata ? metadataTrainingExclusions(profileId) : new Set<string>();
+  if (learnFromPhotoMetadata) {
+    const known = new Set(refinements.map((item) => item.photo_id));
+    const imported = photos.filter((photo) => !known.has(photo.id) && !excludedTrainingIds.has(photo.id) && !metadataExcludedIds.has(photo.id)
+      && (normalizeFlag(photo.flag) !== "none" || (photo.rating ?? 0) > 0)).map((photo): AutoCullPreferenceRefinement => ({
+        photo_id: photo.id, flag: normalizeFlag(photo.flag), rating: photo.rating ?? 0,
+        confidence: normalizeFlag(photo.flag) === "none" ? 0.62 : 1,
+        source: "manual_decision", updated_at: new Date().toISOString(),
+      }));
+    if (imported.length) {
+      refinements = [...refinements, ...imported];
+      savePreferenceRefinements(profileId, refinements);
+    }
+  }
+  const referencedIds = new Set([
+    ...refinements.map((item) => item.photo_id),
+    ...preferences.flatMap((item) => [item.winner_photo_id, item.loser_photo_id]),
+  ]);
+  const records = buildFeatureRecords(photos, featuresById);
+  const captured = photos.filter((photo) => referencedIds.has(photo.id) && !excludedTrainingIds.has(photo.id)).flatMap((photo) => {
+    const pixels = featuresById.get(photo.id);
+    const record = records.get(photo.id);
+    return pixels && record ? [makePreferenceSnapshot(photo.id, record.rankerFeatures, pixels)] : [];
+  });
+  await persistPreferenceSnapshots(captured);
+  await preferenceWrites;
+  const snapshots = await loadPreferenceFeatureSnapshots([...referencedIds]);
+  const session = rankAutoCullPhotos(photos, featuresById, preferences, refinements, learnFromPhotoMetadata, excludedTrainingIds, snapshots, metadataExcludedIds);
   onProgress({ current: total, total });
   return session;
 }
@@ -465,14 +641,26 @@ export function rankAutoCullPhotos(
   refinements: AutoCullPreferenceRefinement[] = [],
   learnFromPhotoMetadata = true,
   excludedTrainingIds: ReadonlySet<string> = new Set(),
+  snapshots: ReadonlyMap<string, PreferenceFeatureSnapshot> = new Map(),
+  metadataExcludedIds: ReadonlySet<string> = new Set(),
 ): AutoCullSession {
   photos = photos.map((photo) => excludedTrainingIds.has(photo.id) ? { ...photo, flag: "none", rating: 0 } : photo);
   const featureRecordsById = buildFeatureRecords(photos, featuresById);
-  const examples = buildRankedExamples(photos.filter((photo) => !excludedTrainingIds.has(photo.id)), featureRecordsById, refinements.filter((item) => !excludedTrainingIds.has(item.photo_id)), learnFromPhotoMetadata);
-  const pairwiseExamples = buildPairwiseExamples(preferences.filter((item) => !excludedTrainingIds.has(item.winner_photo_id) && !excludedTrainingIds.has(item.loser_photo_id)), featureRecordsById);
-  const model = trainRankingModel(examples, pairwiseExamples);
-  const trainingCount = examples.length + pairwiseExamples.length;
-  const learningStrength = trainingCount / (trainingCount + 6);
+  const trainingRecords = new Map(featureRecordsById);
+  const backends = new Set([...featuresById.values()].flatMap((features) => features ? [features.backend] : []));
+  for (const [id, snapshot] of snapshots) {
+    if (!trainingRecords.has(id) && isPreferenceFeatureSnapshot(snapshot) && backends.has(snapshot.backend)) {
+      trainingRecords.set(id, { backend: snapshot.backend, embedding: snapshot.embedding, technicalScore: snapshot.rankerFeatures[0], rankerFeatures: snapshot.rankerFeatures });
+    }
+  }
+  const models = new Map<string, { model: RankingModel; count: number }>();
+  for (const backend of backends) {
+    const records = new Map([...trainingRecords].filter(([, record]) => record.backend === backend));
+    const examples = buildRankedExamples(photos.filter((photo) => !excludedTrainingIds.has(photo.id)), records, refinements.filter((item) => !excludedTrainingIds.has(item.photo_id)), learnFromPhotoMetadata, metadataExcludedIds);
+    const pairwiseExamples = buildPairwiseExamples(preferences.filter((item) => !excludedTrainingIds.has(item.winner_photo_id) && !excludedTrainingIds.has(item.loser_photo_id)), records);
+    models.set(backend, { model: trainRankingModel(examples, pairwiseExamples), count: examples.length + pairwiseExamples.length });
+  }
+  const trainingCount = [...models.values()].reduce((sum, item) => sum + item.count, 0);
 
   let scored = photos.map((photo) => {
     const record = featureRecordsById.get(photo.id);
@@ -480,8 +668,11 @@ export function rankAutoCullPhotos(
     const embedding = record?.embedding;
     const behaviorSignalValue = behaviorSignal(photo);
     const neutral = neutralPersonalScore(technicalScore);
-    const boostedScore = model.score(record?.rankerFeatures);
-    const learnedDelta = nearestNeighborDelta(embedding, model.examples);
+    const trained = record?.backend ? models.get(record.backend) : undefined;
+    const count = trained?.count ?? 0;
+    const learningStrength = count / (count + 6);
+    const boostedScore = trained?.model.score(record?.rankerFeatures);
+    const learnedDelta = nearestNeighborDelta(embedding, trained?.model.examples ?? []);
     const personalScore = clamp01(
       neutral
         + (boostedScore == null ? 0 : (boostedScore - 0.5) * 0.72 * learningStrength)
@@ -499,7 +690,7 @@ export function rankAutoCullPhotos(
       behavior_signal: behaviorSignalValue,
       recommendation: recommendationFor(photo, finalScore, personalScore, Boolean(embedding)),
       confidence: recommendationConfidence(photo, finalScore, embedding),
-      reasons: recommendationReasons(photo, technicalScore, personalScore - neutral - behaviorSignalValue, Boolean(embedding), trainingCount),
+      reasons: recommendationReasons(photo, technicalScore, personalScore - neutral - behaviorSignalValue, Boolean(embedding), count),
       embedding,
       embedding_backend: record?.embedding ? (featuresById.get(photo.id)?.backend ?? PERCEPTUAL_EMBEDDING_BACKEND) : undefined,
       captureMs: captureTimestampMs(photo),
@@ -567,7 +758,7 @@ function isPairwisePreference(value: unknown): value is AutoCullPairwisePreferen
   return (
     typeof item.winner_photo_id === "string"
     && typeof item.loser_photo_id === "string"
-    && typeof item.confidence === "number"
+    && typeof item.confidence === "number" && Number.isFinite(item.confidence)
     && typeof item.created_at === "string"
   );
 }
@@ -581,7 +772,7 @@ function dedupePairwise(preferences: AutoCullPairwisePreference[]): AutoCullPair
     seen.add(key);
     result.push(preference);
   }
-  return result.reverse().slice(-2_000);
+  return result.reverse();
 }
 
 async function extractCachedPixelFeatures(
@@ -1329,7 +1520,7 @@ function buildFeatureRecords(
     const pixelFeatures = featuresById.get(photo.id);
     const technicalScore = pixelFeatures?.technicalScore ?? fallbackTechnicalScore(photo);
     records.set(photo.id, {
-      photo,
+      backend: pixelFeatures?.backend,
       embedding: pixelFeatures?.embedding,
       technicalScore,
       rankerFeatures: rankerFeatureVector(photo, pixelFeatures, technicalScore),
@@ -1393,16 +1584,18 @@ function buildRankedExamples(
   recordsById: Map<string, FeatureRecord>,
   refinements: AutoCullPreferenceRefinement[],
   learnFromPhotoMetadata: boolean,
+  metadataExcludedIds: ReadonlySet<string>,
 ): RankedExample[] {
   const examples: RankedExample[] = [];
   const refinementsByPhotoId = new Map(refinements.map((refinement) => [refinement.photo_id, refinement]));
 
   for (const photo of photos) {
     const record = recordsById.get(photo.id);
-    if (!record) continue;
+    if (!record?.embedding?.length) continue;
     const refinement = refinementsByPhotoId.get(photo.id);
-    const rating = refinement?.rating ?? (learnFromPhotoMetadata ? photo.rating ?? 0 : 0);
-    const flag = refinement ? normalizeFlag(refinement.flag) : (learnFromPhotoMetadata ? normalizeFlag(photo.flag) : "none");
+    const learnMetadata = learnFromPhotoMetadata && !metadataExcludedIds.has(photo.id);
+    const rating = refinement?.rating ?? (learnMetadata ? photo.rating ?? 0 : 0);
+    const flag = refinement ? normalizeFlag(refinement.flag) : (learnMetadata ? normalizeFlag(photo.flag) : "none");
     if (flag === "none" && rating <= 0) continue;
     examples.push({
       vector: record.embedding ?? [],
@@ -1413,11 +1606,12 @@ function buildRankedExamples(
   }
   const activePhotoIds = new Set(photos.map((photo) => photo.id));
   for (const refinement of refinements) {
-    if (activePhotoIds.has(refinement.photo_id) || !refinement.ranker_features?.length) continue;
+    const record = recordsById.get(refinement.photo_id);
+    if (activePhotoIds.has(refinement.photo_id) || !record?.embedding?.length) continue;
     if (normalizeFlag(refinement.flag) === "none" && refinement.rating <= 0) continue;
     examples.push({
-      vector: refinement.embedding ?? [],
-      features: refinement.ranker_features,
+      vector: record.embedding,
+      features: record.rankerFeatures,
       signal: pointwiseSignal(normalizeFlag(refinement.flag), refinement.rating),
       confidence: refinement.confidence,
     });
@@ -1434,7 +1628,7 @@ function buildPairwiseExamples(
     if (preference.winner_photo_id === preference.loser_photo_id || !Number.isFinite(preference.confidence)) continue;
     const winner = recordsById.get(preference.winner_photo_id);
     const loser = recordsById.get(preference.loser_photo_id);
-    if (!winner || !loser || winner.rankerFeatures.length !== loser.rankerFeatures.length) continue;
+    if (!winner?.embedding?.length || !loser?.embedding?.length || winner.rankerFeatures.length !== loser.rankerFeatures.length) continue;
     examples.push({
       winnerFeatures: winner.rankerFeatures,
       loserFeatures: loser.rankerFeatures,

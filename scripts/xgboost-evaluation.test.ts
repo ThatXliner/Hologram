@@ -118,9 +118,9 @@ describe('held-out taste evaluation', () => {
     assert.equal(input.pairs[0].weight, 1);
   });
   test('native result validation rejects malformed or missing work', () => {
-    assert.throws(() => parseModelResult({ scores: [], train_ms: 0, predict_ms: 0 }, 1));
-    assert.throws(() => parseModelResult({ scores: [Infinity], train_ms: 0, predict_ms: 0 }, 1));
-    assert.throws(() => parseModelResult({ scores: [0.5], train_ms: -1, predict_ms: 0, xgboost_version: '3.1.1' }, 1));
+    assert.throws(() => parseModelResult({ schema_version: 1, xgboost_version: '3.1.1', scores: [], train_ms: 0, predict_ms: 0 }, 1), /prediction count/);
+    assert.throws(() => parseModelResult({ schema_version: 1, xgboost_version: '3.1.1', scores: [Infinity], train_ms: 0, predict_ms: 0 }, 1), /finite number/);
+    assert.throws(() => parseModelResult({ schema_version: 1, scores: [0.5], train_ms: -1, predict_ms: 0, xgboost_version: '3.1.1' }, 1), /Expected number/);
     assert.throws(() => parseModelResult({ schema_version: 99, scores: [0.5], train_ms: 0, predict_ms: 0, xgboost_version: '3.1.1' }, 1));
     assert.throws(() => parseModelResult({ schema_version: 1, scores: [0.5], train_ms: 0, predict_ms: 0, xgboost_version: '0.0.0' }, 1));
     assert.equal(parseModelResult({ schema_version: 1, scores: [0.5], train_ms: 1, predict_ms: 0, xgboost_version: '3.1.1' }, 1).xgboost_version, '3.1.1');

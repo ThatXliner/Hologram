@@ -104,14 +104,14 @@ export type AutoCullPreferenceRefinement = {
   embedding?: number[];
 };
 
-type RankedExample = {
+export type RankedExample = {
   vector: number[];
   features: number[];
   signal: number;
   confidence: number;
 };
 
-type PairwiseExample = {
+export type PairwiseExample = {
   winnerFeatures: number[];
   loserFeatures: number[];
   confidence: number;
@@ -172,7 +172,7 @@ export type PreferenceFeatureSnapshot = {
   embedding: number[];
 };
 
-const PREFERENCE_FEATURE_VERSION = `${RANKER_VERSION}:${FEATURE_CACHE_VERSION}`;
+export const PREFERENCE_FEATURE_VERSION = `${RANKER_VERSION}:${FEATURE_CACHE_VERSION}`;
 const preferenceFeatureMemory = new Map<string, PreferenceFeatureSnapshot>();
 let preferenceDb: Promise<IDBDatabase | null> | undefined;
 let preferenceWrites: Promise<boolean> = Promise.resolve(true);
@@ -1638,7 +1638,7 @@ function buildPairwiseExamples(
   return examples;
 }
 
-function trainRankingModel(examples: RankedExample[], pairwiseExamples: PairwiseExample[]): RankingModel {
+export function trainRankingModel(examples: RankedExample[], pairwiseExamples: PairwiseExample[]): RankingModel {
   const dimensions = examples[0]?.features.length ?? pairwiseExamples[0]?.winnerFeatures.length ?? 0;
   const usableExamples = examples.filter((example) => example.features.length === dimensions);
   const usablePairwiseExamples = pairwiseExamples.filter((example) => (

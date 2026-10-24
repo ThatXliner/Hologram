@@ -14,7 +14,8 @@
     "tauri": "tauri",
     "screenshots": "bun scripts/screenshots.ts",
     "screenshots:no-server": "bun scripts/screenshots.ts --no-server",
-    "bump": "bash scripts/bump-version.sh"
+    "bump": "bash scripts/bump-version.sh",
+    "eval:xgboost": "bun scripts/evaluate-xgboost.ts"
   },
   "license": "MIT",
   "dependencies": {

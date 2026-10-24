@@ -23,6 +23,55 @@ heuristics, not probabilities or substitutes for inspecting the original.
 - Cluster suggestions break score ties by photo ID. A margin below 0.04 is shown
   as a close call. Group similarity and recommendation strength are separate.
 
+## Automatic pass
+
+AutoCull opens on a summary of what it would do: how many photos it would keep,
+how many it would reject, and how many stacks still need the photographer. Nothing
+changes until **Apply AutoCull** is pressed. The pass is one undo step.
+
+- Only photos with no flag and no rating are touched. A RAW+JPEG pair is skipped
+  if either half already has a decision.
+- A single is kept when its technical score is at least 0.70 and rejected at 0.25
+  or below. Scores in between are left for review.
+- In a multi-frame stack, the best frame without a rejected partner is kept when
+  its technical score is at least 0.55 and its final score leads the runner-up by
+  0.04 or more,
+  or when every frame is a near-duplicate (cosine similarity of at least 0.995).
+  Frames similar to the winner (at least 0.90) are rejected. Any frame at 0.25 or
+  below is rejected. A stack is closed only when every frame has a decision.
+- Missing previews and unclear frames remain undecided. **Review exceptions** opens
+  the manual queue filtered to the stacks still open.
+
+### Provenance and learning
+
+AutoCull records the flags it set, per folder and shared by every taste profile.
+Those flags are not the photographer's taste. The automatic pass records no
+refinements or pairwise comparisons. Every later analysis excludes photos whose
+current flag still matches the recorded automatic flag, so the ranker cannot train
+on them.
+
+A flag becomes the photographer's own when they change it or confirm it. A
+confirmation is Keep/Reject/rating on the photo, or finishing its stack with
+Enter. The provenance is then cleared and the decision trains the active profile.
+Flags changed elsewhere in the app also lose their provenance on the next analysis.
+Undo restores the provenance with the flag.
+
+### Correcting a finished stack
+
+Changing a flag or rating in a finished stack reopens it. The comparisons
+that stack taught are removed, so an earlier winner does not stay in the training
+data after it is replaced. Finishing the stack again trains the new choice. Undo
+restores the earlier resolution and comparisons. Completion is tied to the saved
+flags and ratings, so changing profiles cannot revive an outdated completion.
+Historical taste comparisons stay with their profile until you finish that stack
+again. Switching profiles clears the current undo history. Older saved completions
+without a decision signature need confirmation once; their training is preserved.
+
+Decisions made in the loupe from AutoCull use the same undo history, provenance
+and training rules as the review stage. Decision keys do nothing on the summary or
+completion screens, where no photo is shown. Skipping the last open stack is not
+treated as finishing the review.
+
 ## Grouping policy
 
 Bursts require compatible camera metadata, timing or filename sequence evidence,
@@ -53,8 +102,22 @@ Chromium or installed Google Chrome. It stubs Tauri filesystem calls and disable
 the optional transformer download. Image decoding, perceptual feature extraction,
 ranking, caching and Svelte UI interactions execute normally. It checks the 12
 credited stock fixtures, blurred/noisy/clipped variants, missing and retryable
-previews, and Keep/Reject updates. Screenshots are written to a temporary directory
-printed by the script.
+previews, and Keep/Reject updates. The UI checks cover these cases:
+
+- The summary matches what is applied. Applying is one undo step, and decision
+  keys do nothing on the summary or completion screens.
+- A grid rating and a rejected RAW half are preserved.
+- Applying causes no rescans and writes no training data.
+- After re-analysis the preference count is unchanged, so AutoCull's own flags
+  were not used as training labels.
+- Confirming an automatic flag clears its provenance and trains the profile.
+- Correcting a finished stack's winner drops the old comparisons, retrains the new
+  winner, and undo restores the old comparisons.
+- Loupe decisions go into the AutoCull undo history.
+- Skipping the last open stack does not report completion.
+- The summary and review layouts fit 800×600.
+
+Screenshots are written to a temporary directory printed by the script.
 
 The unit suite covers sparse feedback, pairwise ordering and changed decisions,
 manual overrides, burst boundaries, deterministic results, and large collections

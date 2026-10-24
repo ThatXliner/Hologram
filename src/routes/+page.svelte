@@ -20,7 +20,7 @@
     import { buildSmartCollections } from "../lib/collections.ts";
     import { indexPhotoVisuals } from "../lib/visualIndex.ts";
     import { photoPreviewSrc } from "../lib/photoPreview.ts";
-    import type { CullFlag, Photo, PhotoFilter, SavedSearch, ThumbnailReady, VisualIndexEntry, VisualIndexProgress } from "../lib/types.ts";
+    import type { CullFlag, Photo, PhotoDecisionHandler, PhotoFilter, SavedSearch, ThumbnailReady, VisualIndexEntry, VisualIndexProgress } from "../lib/types.ts";
     import {
         Check,
         Circle,
@@ -96,6 +96,7 @@
     let previewStartIndex = $state(0);
     let previewConfirmCluster = $state<(() => void) | null>(null);
     let previewPreloadIds = $state<string[]>([]);
+    let previewDecision = $state<PhotoDecisionHandler | null>(null);
     const previewPhotos = $derived(
         previewScopeIds
             ? previewScopeIds
@@ -114,11 +115,13 @@
         selectedPhotoId: string,
         onConfirmCluster?: () => void,
         preloadPhotoIds: string[] = [],
+        onDecision?: PhotoDecisionHandler,
     ) {
         previewScopeIds = photoIds;
         previewStartIndex = Math.max(0, photoIds.indexOf(selectedPhotoId));
         previewConfirmCluster = onConfirmCluster ?? null;
         previewPreloadIds = preloadPhotoIds;
+        previewDecision = onDecision ?? null;
         photoStore.setViewMode("viewer");
     }
 
@@ -126,6 +129,7 @@
         if ($viewMode !== "viewer") {
             previewScopeIds = null;
             previewConfirmCluster = null;
+            previewDecision = null;
             previewPreloadIds = [];
         }
     });
@@ -808,6 +812,7 @@
             allPhotos={$filteredPhotos}
             startIndex={previewScopeIds ? previewStartIndex : $selectedIndex}
             onConfirmCluster={previewConfirmCluster}
+            onDecision={previewDecision}
             backgroundPreloadPhotos={previewPreloadPhotos}
         />
     {/if}

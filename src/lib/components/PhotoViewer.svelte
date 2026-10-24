@@ -3,7 +3,7 @@
     import { onDestroy, onMount, tick } from "svelte";
     import { photoStore } from "../stores/photoStore.ts";
     import { HologramAPI } from "../api.ts";
-    import type { CullFlag, Photo } from "../types.ts";
+    import type { CullFlag, Photo, PhotoDecisionHandler } from "../types.ts";
     import {
         Aperture,
         Calendar,
@@ -35,6 +35,7 @@
         allPhotos: Photo[];
         startIndex?: number;
         onConfirmCluster?: (() => void) | null;
+        onDecision?: PhotoDecisionHandler | null;
         backgroundPreloadPhotos?: Photo[];
     }
 
@@ -80,6 +81,7 @@
         allPhotos,
         startIndex = 0,
         onConfirmCluster = null,
+        onDecision = null,
         backgroundPreloadPhotos = [],
     }: Props = $props();
 
@@ -954,8 +956,13 @@
     }
 
     function setRatingForActive(rating: number) {
-        for (const id of relatedIds()) {
-            photoStore.setPhotoRating(id, rating);
+        if (!activePhoto) return;
+        if (onDecision) {
+            onDecision(activePhoto.id, { rating });
+        } else {
+            for (const id of relatedIds()) {
+                photoStore.setPhotoRating(id, rating);
+            }
         }
         if (rating > 0 && autoAdvance) navigateNext();
     }
@@ -963,15 +970,24 @@
     function setFlagForActive(flag: CullFlag) {
         if (!activePhoto) return;
         const next = activePhoto.flag === flag ? "none" : flag;
-        for (const id of relatedIds()) {
-            photoStore.setPhotoFlag(id, next);
+        if (onDecision) {
+            onDecision(activePhoto.id, { flag: next });
+        } else {
+            for (const id of relatedIds()) {
+                photoStore.setPhotoFlag(id, next);
+            }
         }
         if (next !== "none" && autoAdvance) navigateNext();
     }
 
     function clearCullForActive() {
-        for (const id of relatedIds()) {
-            photoStore.clearPhotoCull(id);
+        if (!activePhoto) return;
+        if (onDecision) {
+            onDecision(activePhoto.id, { flag: "none", rating: 0 });
+        } else {
+            for (const id of relatedIds()) {
+                photoStore.clearPhotoCull(id);
+            }
         }
     }
 

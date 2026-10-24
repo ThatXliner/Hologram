@@ -436,6 +436,7 @@ export async function buildAutoCullSession(
   refinements: AutoCullPreferenceRefinement[] = [],
   learnFromPhotoMetadata = true,
   folderPath: string | null = null,
+  excludedTrainingIds: ReadonlySet<string> = new Set(),
 ): Promise<AutoCullSession> {
   const featuresById = new Map<string, PixelFeatures | null>();
   const total = photos.length;
@@ -451,7 +452,7 @@ export async function buildAutoCullSession(
   });
   await writeSqlFeatureCache(pendingSqlEntries, folderPath);
 
-  const session = rankAutoCullPhotos(photos, featuresById, preferences, refinements, learnFromPhotoMetadata);
+  const session = rankAutoCullPhotos(photos, featuresById, preferences, refinements, learnFromPhotoMetadata, excludedTrainingIds);
   onProgress({ current: total, total });
   return session;
 }
@@ -463,10 +464,12 @@ export function rankAutoCullPhotos(
   preferences: AutoCullPairwisePreference[] = [],
   refinements: AutoCullPreferenceRefinement[] = [],
   learnFromPhotoMetadata = true,
+  excludedTrainingIds: ReadonlySet<string> = new Set(),
 ): AutoCullSession {
+  photos = photos.map((photo) => excludedTrainingIds.has(photo.id) ? { ...photo, flag: "none", rating: 0 } : photo);
   const featureRecordsById = buildFeatureRecords(photos, featuresById);
-  const examples = buildRankedExamples(photos, featureRecordsById, refinements, learnFromPhotoMetadata);
-  const pairwiseExamples = buildPairwiseExamples(preferences, featureRecordsById);
+  const examples = buildRankedExamples(photos.filter((photo) => !excludedTrainingIds.has(photo.id)), featureRecordsById, refinements.filter((item) => !excludedTrainingIds.has(item.photo_id)), learnFromPhotoMetadata);
+  const pairwiseExamples = buildPairwiseExamples(preferences.filter((item) => !excludedTrainingIds.has(item.winner_photo_id) && !excludedTrainingIds.has(item.loser_photo_id)), featureRecordsById);
   const model = trainRankingModel(examples, pairwiseExamples);
   const trainingCount = examples.length + pairwiseExamples.length;
   const learningStrength = trainingCount / (trainingCount + 6);

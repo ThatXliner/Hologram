@@ -127,3 +127,50 @@ describe("autocull grouping", () => {
     assert.equal(session.clusters.length, 20);
   });
 });
+
+describe("automatic choices never train their own ranker", () => {
+  it("excludes automatic metadata, saved refinements and comparisons from both scores and training counts", () => {
+    const neutral = [photo("auto-pick", 0), photo("auto-reject", 1), photo("unrelated", 60)];
+    const pixels = features(neutral, [[1, 0], [0.99, 0.01], [0, 1]]);
+    const automatic = [
+      { ...neutral[0], flag: "pick", rating: 5 },
+      { ...neutral[1], flag: "reject", rating: 0 },
+      neutral[2],
+    ] satisfies Photo[];
+    const excluded = new Set(["auto-pick", "auto-reject", "offscreen-auto"]);
+    const refinements = ["auto-pick", "auto-reject", "offscreen-auto"].map((id) => ({
+      photo_id: id, flag: "pick" as const, rating: 5, confidence: 1, source: "manual_decision" as const,
+      updated_at: "2026-01-01T00:00:00Z", ranker_features: [1, 0], embedding: [1, 0],
+    }));
+    const baseline = rankAutoCullPhotos(neutral, pixels);
+    for (const metadata of [true, false]) {
+      const result = rankAutoCullPhotos(automatic, pixels, [
+        preference("auto-pick", "unrelated"), preference("unrelated", "auto-reject"),
+      ], refinements, metadata, excluded);
+      assert.equal(result.stats.training_examples, 0);
+      assert.deepEqual(result.photos, baseline.photos);
+      assert.deepEqual(result.clusters, baseline.clusters);
+    }
+    assert.equal(automatic[0].flag, "pick", "ranking must not mutate stored decisions");
+  });
+
+  it("learns explicit manual corrections after their automatic ownership is removed", () => {
+    const photos = [photo("corrected", undefined, { flag: "pick" }), photo("still-auto", undefined, { flag: "reject" })];
+    const pixels = features(photos, [[1, 0], [0, 1]]);
+    const result = rankAutoCullPhotos(photos, pixels, [], [], true, new Set(["still-auto"]));
+    assert.equal(result.stats.training_examples, 1);
+    assert.equal(result.photos[0].recommendation, "SELECT");
+    assert.equal(result.photos[0].behavior_signal, 0.18);
+    assert.equal(result.photos[1].behavior_signal, 0);
+  });
+
+  it("retains independent human comparisons while ignoring any comparison involving an automatic decision", () => {
+    const photos = [photo("human-a"), photo("human-b"), photo("auto")];
+    const pixels = features(photos, [[1, 0, 0], [0, 1, 0], [0, 0, 1]]);
+    const result = rankAutoCullPhotos(photos, pixels, [
+      preference("human-a", "human-b"), preference("auto", "human-b"), preference("human-a", "auto"),
+    ], [], false, new Set(["auto"]));
+    assert.equal(result.stats.training_examples, 1);
+    assert.ok(result.photos[0].personal_score > result.photos[1].personal_score);
+  });
+});

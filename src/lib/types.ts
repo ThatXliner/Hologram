@@ -26,6 +26,11 @@ export interface Photo {
   flag?: CullFlag;
 }
 
+export type PhotoDecisionHandler = (
+  photoId: string,
+  patch: Partial<Pick<Photo, "flag" | "rating">>,
+) => void;
+
 export interface ExifData {
   camera_make?: string;
   camera_model?: string;

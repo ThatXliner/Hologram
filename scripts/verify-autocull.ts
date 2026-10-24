@@ -504,7 +504,7 @@ try {
   await overview.waitFor();
   await page.screenshot({ path: join(output, "autocull-overview-compact.png") });
   assert.ok(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth), "The overview should not overflow horizontally at 800px");
-  for (const selector of ["[data-autocull-plan-keep]", "[data-autocull-plan-reject]", "[data-autocull-plan-review]", "[data-autocull-review-exceptions]"]) {
+  for (const selector of ["[data-autocull-plan-keep]", "[data-autocull-plan-reject]", "[data-autocull-plan-review]", "[data-autocull-review-exceptions], [data-autocull-apply]"]) {
     const box = (await view.locator(selector).boundingBox())!;
     assert.ok(box.y + box.height <= 600 && box.x + box.width <= 800, `${selector} stays on screen at 800x600`);
   }

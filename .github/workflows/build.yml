@@ -191,6 +191,37 @@ jobs:
           tagName: ${{ github.ref_name }}
           releaseName: "Hologram v__VERSION__"
           releaseBody: "See the assets to download and install this version."
-          releaseDraft: false
+          releaseDraft: true
           prerelease: false
           args: ${{ matrix.args }}
+
+      - name: Verify released native learner
+        shell: bash
+        env:
+          APPLE_SIGNING_IDENTITY: ${{ env.CERT_ID }}
+        run: |
+          cargo build --release --manifest-path tools/xgboost-eval/Cargo.toml --locked
+          if [[ "${{ matrix.platform }}" == macos-* ]]; then
+            bun scripts/verify-native-bundle.ts src-tauri/target/aarch64-apple-darwin/release/bundle
+          else
+            bun scripts/verify-native-bundle.ts
+          fi
+
+      - name: Upload release native package report
+        uses: actions/upload-artifact@v4
+        with:
+          name: release-native-package-${{ runner.os }}
+          path: native-package-report.json
+
+  publish-release:
+    if: startsWith(github.ref, 'refs/tags/v')
+    needs: release
+    permissions:
+      contents: write
+    runs-on: ubuntu-latest
+    steps:
+      - name: Publish verified release
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          RELEASE_TAG: ${{ github.ref_name }}
+        run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false

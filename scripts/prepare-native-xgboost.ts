@@ -4,9 +4,15 @@ import { fileURLToPath } from "node:url";
 
 const revision = "5e806d1b858acbc4488f436111f3e4c34f6186ce";
 const root = resolve(dirname(fileURLToPath(import.meta.url)), "..");
-const target = process.env.TAURI_ENV_TARGET_TRIPLE ?? `${process.arch}-${process.platform}`;
+const architecture = process.arch === "arm64" ? "aarch64" : process.arch === "x64" ? "x86_64" : null;
+const host = process.platform === "darwin" ? "apple-darwin" : process.platform === "linux" ? "unknown-linux-gnu" : process.platform === "win32" ? "pc-windows-msvc" : null;
+if (!architecture || !host) throw new Error("Native XGBoost requires a supported 64-bit host");
+const target = `${architecture}-${host}`;
+if (process.env.TAURI_ENV_TARGET_TRIPLE && process.env.TAURI_ENV_TARGET_TRIPLE !== target) {
+  throw new Error(`Native XGBoost cross-compilation and universal targets are unsupported. Build on the target host (${target}).`);
+}
 const cache = join(root, ".cache", "xgboost", target);
-const source = process.env.HOLOGRAM_XGBOOST_SOURCE_DIR ?? join(cache, "source");
+const source = resolve(process.env.HOLOGRAM_XGBOOST_SOURCE_DIR ?? join(cache, "source"));
 const build = join(cache, "build");
 const resources = join(root, "src-tauri", "resources", "xgboost");
 const basename = process.platform === "win32" ? "xgboost.dll" : process.platform === "darwin" ? "libxgboost.dylib" : "libxgboost.so";
@@ -26,19 +32,23 @@ if (!existsSync(join(source, ".git"))) {
   run(["git", "clone", "--recursive", "--depth", "1", "--branch", "v3.1.1", "https://github.com/dmlc/xgboost.git", source]);
 }
 if (run(["git", "rev-parse", "HEAD"], source) !== revision) throw new Error(`XGBoost source must be pinned to ${revision}`);
+if (run(["git", "status", "--porcelain", "--untracked-files=all", "--ignore-submodules=none"], source) ||
+    run(["git", "submodule", "status", "--recursive"], source).split("\n").some(line => /^[+\-U]/.test(line))) {
+  throw new Error("XGBoost source and submodules must be clean and match the pinned revision");
+}
 const flags = ["-DCMAKE_BUILD_TYPE=Release", "-DUSE_OPENMP=OFF", "-DUSE_CUDA=OFF"];
 if (process.platform === "darwin") {
-  const architecture = target.startsWith("aarch64") ? "arm64" : target.startsWith("x86_64") ? "x86_64" : process.arch === "arm64" ? "arm64" : "x86_64";
+  const architecture = process.arch === "arm64" ? "arm64" : "x86_64";
   flags.push(`-DCMAKE_OSX_ARCHITECTURES=${architecture}`, "-DCMAKE_OSX_DEPLOYMENT_TARGET=10.15");
 }
 if (process.platform === "win32") flags.push("-DFORCE_SHARED_CRT=OFF");
-const stamp = join(resources, "build.json");
-const identity = JSON.stringify({ revision, target, flags });
+const stamp = join(root, ".cache", "xgboost", "native-resource-build.json");
+const identity = JSON.stringify({ revision, target, flags, source });
 const previous = existsSync(stamp) ? readFileSync(stamp, "utf8").trim() : null;
 if (!existsSync(output) || previous !== identity) {
   process.stdout.write(`Building CPU-only XGBoost 3.1.1 for ${target}\n`);
-  run(["cmake", "-S", source, "-B", build, ...flags]);
-  run(["cmake", "--build", build, "--config", "Release", "--parallel", "2"]);
+  run(["cmake", "-S", source, "-B", build, ...flags, ...(process.platform === "win32" ? ["-A", process.arch === "arm64" ? "ARM64" : "x64"] : [])]);
+  run(["cmake", "--build", build, "--config", "Release", "--clean-first", "--parallel", "2"]);
   if (!existsSync(library)) throw new Error(`XGBoost build did not produce ${library}`);
   mkdirSync(resources, { recursive: true });
   copyFileSync(library, `${output}.tmp`);

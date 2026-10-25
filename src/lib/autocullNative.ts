@@ -4,6 +4,13 @@ import type { PairwiseExample, RankedExample } from "./autocull.ts";
 
 export const NATIVE_RANKER_VERSION = "xgboost-personal-ranker-v1";
 const LEARNER_KEY = "hologram.autocull.learner.v1";
+const MAX_NATIVE_FEATURE_CELLS = 4_000_000;
+
+function validateNativeSize(pointwiseRows: number, pairCount: number, predictionRows: number, dimensions: number): void {
+  if ((pointwiseRows + pairCount * 2 + predictionRows) * dimensions > MAX_NATIVE_FEATURE_CELLS) {
+    throw new Error("Native analysis is too large. Use the built-in learner or analyze a smaller folder.");
+  }
+}
 
 export interface NativeRankerRequest {
   schema_version: 1;
@@ -39,6 +46,7 @@ export function nativeLearnerAvailable(): boolean {
 }
 
 export function nativeRankerRequest(examples: RankedExample[], pairs: PairwiseExample[], predict: number[][]): NativeRankerRequest {
+  validateNativeSize(examples.length, pairs.length, predict.length, 267);
   const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
   return {
     schema_version: 1,
@@ -81,6 +89,7 @@ export function parseNativeRankerResponse(value: unknown, request: NativeRankerR
 }
 
 export async function scoreNativeRanker(request: NativeRankerRequest): Promise<NativeRankerResponse> {
+  validateNativeSize(request.pointwise.length, request.pairs.length, request.predict.length, request.dimensions);
   const response: unknown = await invoke("score_autocull_native", { request });
   return parseNativeRankerResponse(response, request);
 }

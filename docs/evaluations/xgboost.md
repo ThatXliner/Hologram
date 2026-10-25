@@ -16,15 +16,15 @@ The initial comparison fixes 48 trees, depth 3, learning rate 0.08, L2 penalty 1
 
 ## Native execution and persistence
 
-`crates/autocull-ranker` owns the C API binding and objective. The evaluation CLI and Tauri command call that same library. Tauri resolves only its bundled resource directory and runs native work on a blocking worker. A semaphore serializes execution. The application never searches the system for XGBoost or reads a user-supplied native-library path.
+`crates/autocull-ranker` owns the C API binding and objective. The evaluation CLI and Tauri command call that same library. Tauri resolves only its bundled resource directory and runs native work on a blocking worker. A single permit rejects overlapping requests instead of queueing decoded evidence. Requests are limited to 4,000,000 feature cells in the frontend and at the native boundary. Larger folders can use the built-in learner. The application never searches the system for XGBoost or reads a user-supplied native-library path.
 
-A runtime-loaded library was chosen over a sidecar to keep one typed implementation without process supervision or a second executable to sign. This puts native execution in the application process. A sidecar would provide fault isolation, at the cost of another lifecycle and process protocol.
+Both a library and a sidecar could share the objective. Runtime loading avoids process supervision and a second executable to sign. This puts native execution in the application process. A sidecar would provide fault isolation, at the cost of another lifecycle and process protocol.
 
 Each request trains an ephemeral model from a complete immutable evidence batch. No native model is cached or persisted. Correction and undo therefore retrain from the current saved feedback on the next analysis. Native ranker version `xgboost-personal-ranker-v1` is separate from the unchanged feature-snapshot version.
 
 The bundled XGBoost version is 3.1.1 at commit `5e806d1b858acbc4488f436111f3e4c34f6186ce`. Training and inference require no Python or user-installed runtime. Git, CMake, and a C++ compiler are build-time requirements. OpenMP and CUDA are disabled. Windows uses the static MSVC runtime. Signed macOS releases explicitly sign and verify the dylib with the application signing identity before Tauri copies it as a resource.
 
-Engine switches and successful decisions or undo invalidate pending analysis. Superseded analysis cannot import stale metadata feedback or publish old suggestions. Native work already running or queued is not cancelled. Results are discarded when their analysis is obsolete.
+Engine switches and successful decisions or undo invalidate pending analysis. Superseded analysis cannot import stale metadata feedback or publish old suggestions. Native work already running is not cancelled. Results are discarded when their analysis is obsolete.
 
 ## Opt in
 
@@ -44,7 +44,7 @@ The comparison evaluates the tree contribution alone. A replacement decision mus
 
 ## Verify the implementation
 
-`bun run tauri dev` and `bun run tauri build` prepare the pinned CPU library automatically. The generated source cache and native resource are ignored by Git. `HOLOGRAM_XGBOOST_SOURCE_DIR` can select an existing checkout at the exact pinned revision for development builds.
+`bun run tauri dev` and `bun run tauri build` prepare the pinned CPU library automatically. The generated source cache and native resource are ignored by Git. `HOLOGRAM_XGBOOST_SOURCE_DIR` can select a clean checkout at the exact pinned revision with matching clean submodules. Build identity stays outside bundled resources. Preparation supports the host architecture only and rejects cross or universal targets. Linux compatibility follows the build distribution, currently Ubuntu 24.04, without an older glibc compatibility claim.
 
 Run native library tests and the evaluator after preparation.
 
@@ -75,13 +75,15 @@ The browser race check controls native response delays to exercise errors and st
 bun scripts/verify-native-autocull-races.ts
 ```
 
-The package check extracts the Linux Debian package or Windows MSI, or inspects the macOS application bundle. It loads the copied library and checks real keeper ordering. It also requires the bundled license. CI records installer sizes and native-library bytes.
+The package check extracts Linux Debian and AppImage packages or Windows MSI, or inspects the macOS application bundle. Signed release checks require a valid sealed macOS application and a library with its matching TeamIdentifier. Tagged releases remain drafts until every platform package passes verification. Developer ID signing and notarization have not been exercised locally. It loads the copied library and checks real keeper ordering. It also requires the bundled license. CI records installer sizes and native-library bytes.
 
 ```bash
 bun scripts/verify-native-bundle.ts
 ```
 
 Resource measurements ran on a busy host and have no profiler attribution. They record tree training, prediction, and standalone scorer memory at 100 and 500 observations with 500 predictions. They exclude preview extraction and application IPC, so timing differences do not establish an application speedup.
+
+The historical local package check used an unsigned development app. It proves copied-library loading, not Developer ID distribution.
 
 The [real macOS workflow report](native-workflow-macos.json) records 27 passing assertions. [Synthetic resource measurements](native-resources-macos.json) record larger scorer workloads and their limits. The older [synthetic comparison report](xgboost-synthetic-macos.json) remains the initial small-workload baseline. Neither report supplies human-quality evidence.
 

@@ -7,6 +7,7 @@ import {
 } from "./autocull.ts";
 import {
   loadAutoCullLearner, saveAutoCullLearner, nativeRankerRequest, parseNativeRankerResponse,
+  scoreNativeRanker,
   NATIVE_RANKER_VERSION, type NativeRankerRequest, type NativeRankerResponse,
 } from "./autocullNative.ts";
 import type { Photo } from "./types.ts";
@@ -38,6 +39,18 @@ const refinement = (photo_id: string): AutoCullPreferenceRefinement => ({ photo_
 beforeEach(() => Object.defineProperty(globalThis, "localStorage", { value: new MemoryStorage(), configurable: true }));
 
 describe("native learner boundary", () => {
+  it("bounds combined training and prediction features before constructing native requests", () => {
+    const predict = Array.from({ length: Math.floor(4_000_000 / 267) }, () => [1]);
+    assert.equal(nativeRankerRequest([], [], predict).predict.length, predict.length);
+    assert.throws(() => nativeRankerRequest([], [{ winnerFeatures: [1], loserFeatures: [0], confidence: 1 }], predict), /smaller folder/);
+  });
+
+  it("rejects oversized direct requests before native IPC", async () => {
+    const request: NativeRankerRequest = { schema_version: 1, dimensions: 267, pointwise: [], pairs: [],
+      predict: Array.from({ length: Math.floor(4_000_000 / 267) + 1 }, () => [1]) };
+    await assert.rejects(scoreNativeRanker(request), /smaller folder/);
+  });
+
   it("defaults to built-in and keeps its device setting separate from feedback", () => {
     localStorage.setItem("hologram.autocull.taste.v1.feedback.default", "sentinel");
     assert.equal(loadAutoCullLearner(), "builtin");

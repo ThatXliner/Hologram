@@ -9,3 +9,8 @@ node_modules
 vite.config.json.timestamp-*
 vite.config.ts.timestamp-*
 *.pth
+
+.cache/xgboost/
+/src-tauri/resources/xgboost/
+
+/native-package-report.json

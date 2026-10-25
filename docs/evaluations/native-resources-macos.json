@@ -1,0 +1,214 @@
+{
+  "kind": "synthetic-resource-measurement",
+  "verdict": "inconclusive",
+  "method": "Five alternating runs per learner and volume. Native wall time includes process launch, serialization and resource-counter wrapper. Native RSS is the standalone scorer process, not application growth. Internal train/predict timers cover learner operations. No preview extraction, full application IPC or human-quality comparison. No speedup or adoption claim.",
+  "environment": {
+    "platform": "darwin",
+    "arch": "arm64",
+    "cpus": 10,
+    "load_average": [
+      10.4423828125,
+      13.02197265625,
+      11.04931640625
+    ]
+  },
+  "executable_bytes": 601232,
+  "workloads": [
+    {
+      "pointwise": 100,
+      "pairs": 10,
+      "predictions": 500,
+      "typescript": {
+        "train_ms": {
+          "median": 570.586041,
+          "min": 543.828792,
+          "max": 589.088375,
+          "samples": [
+            543.828792,
+            589.088375,
+            567.1699169999999,
+            570.586041,
+            575.6329580000001
+          ]
+        },
+        "predict_ms": {
+          "median": 0.5001670000001468,
+          "min": 0.4695000000001528,
+          "max": 1.4126250000000482,
+          "samples": [
+            1.4126250000000482,
+            0.6971670000000358,
+            0.5001670000001468,
+            0.4695000000001528,
+            0.4970419999999649
+          ]
+        },
+        "wall_ms": {
+          "median": 571.140625,
+          "min": 545.446083,
+          "max": 589.869416,
+          "samples": [
+            545.446083,
+            589.869416,
+            567.7395409999999,
+            571.140625,
+            576.2208329999999
+          ]
+        },
+        "native_process_resident_bytes": null,
+        "prediction_count": 500,
+        "score_checksum": 269.0171861356604
+      },
+      "xgboost": {
+        "train_ms": {
+          "median": 61.548667,
+          "min": 60.678125,
+          "max": 82.407625,
+          "samples": [
+            82.407625,
+            60.678125,
+            61.508083,
+            61.548667,
+            61.600625
+          ]
+        },
+        "predict_ms": {
+          "median": 1.1731669999999998,
+          "min": 1.155667,
+          "max": 1.300334,
+          "samples": [
+            1.300334,
+            1.170958,
+            1.155667,
+            1.1731669999999998,
+            1.1885839999999999
+          ]
+        },
+        "wall_ms": {
+          "median": 82.29054099999985,
+          "min": 79.4675420000001,
+          "max": 545.536458,
+          "samples": [
+            545.536458,
+            79.4675420000001,
+            82.41999999999962,
+            82.29054099999985,
+            81.41624999999976
+          ]
+        },
+        "native_process_resident_bytes": {
+          "median": 14368768,
+          "min": 13926400,
+          "max": 15990784,
+          "samples": [
+            13926400,
+            15990784,
+            13926400,
+            15253504,
+            14368768
+          ]
+        },
+        "prediction_count": 500,
+        "score_checksum": 268.95365650227313
+      }
+    },
+    {
+      "pointwise": 500,
+      "pairs": 50,
+      "predictions": 500,
+      "typescript": {
+        "train_ms": {
+          "median": 4093.141334,
+          "min": 4001.7605000000003,
+          "max": 4450.873,
+          "samples": [
+            4059.3062919999998,
+            4450.873,
+            4001.7605000000003,
+            4093.141334,
+            4098.205042000001
+          ]
+        },
+        "predict_ms": {
+          "median": 0.5006249999969441,
+          "min": 0.48816699999952107,
+          "max": 0.5316249999996217,
+          "samples": [
+            0.48841600000014296,
+            0.5316249999996217,
+            0.48816699999952107,
+            0.5006249999969441,
+            0.5259159999986878
+          ]
+        },
+        "wall_ms": {
+          "median": 4093.7210840000007,
+          "min": 4002.3208750000013,
+          "max": 4451.482166,
+          "samples": [
+            4059.805375,
+            4451.482166,
+            4002.3208750000013,
+            4093.7210840000007,
+            4098.8008329999975
+          ]
+        },
+        "native_process_resident_bytes": null,
+        "prediction_count": 500,
+        "score_checksum": 245.24872401240393
+      },
+      "xgboost": {
+        "train_ms": {
+          "median": 298.368958,
+          "min": 293.89300000000003,
+          "max": 301.115667,
+          "samples": [
+            293.89300000000003,
+            298.368958,
+            301.115667,
+            298.147958,
+            299.424417
+          ]
+        },
+        "predict_ms": {
+          "median": 1.345791,
+          "min": 1.132625,
+          "max": 1.522916,
+          "samples": [
+            1.202792,
+            1.132625,
+            1.45425,
+            1.345791,
+            1.522916
+          ]
+        },
+        "wall_ms": {
+          "median": 327.90187499999956,
+          "min": 320.97508300000027,
+          "max": 335.91162500000064,
+          "samples": [
+            320.97508300000027,
+            325.1163749999996,
+            335.91162500000064,
+            327.90187499999956,
+            328.67866700000013
+          ]
+        },
+        "native_process_resident_bytes": {
+          "median": 24133632,
+          "min": 22413312,
+          "max": 24215552,
+          "samples": [
+            24215552,
+            22413312,
+            22511616,
+            24166400,
+            24133632
+          ]
+        },
+        "prediction_count": 500,
+        "score_checksum": 245.22134572241552
+      }
+    }
+  ]
+}

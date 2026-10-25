@@ -4,8 +4,12 @@ on:
   pull_request:
     paths:
       - 'tools/xgboost-eval/**'
+      - 'crates/autocull-ranker/**'
       - 'scripts/*xgboost*'
       - 'src/lib/autocull.ts'
+      - 'src/lib/autocullNative*'
+      - 'src/lib/components/AutoCullView.svelte'
+      - 'scripts/verify-native-autocull*'
       - '.github/workflows/xgboost-evaluation.yml'
   workflow_dispatch:
 
@@ -38,6 +42,7 @@ jobs:
           echo "$GITHUB_WORKSPACE/.xgboost-source/lib" >> "$GITHUB_PATH"
       - name: Test and build evaluator
         run: |
+          cargo test --manifest-path crates/autocull-ranker/Cargo.toml --locked
           cargo test --manifest-path tools/xgboost-eval/Cargo.toml --locked
           cargo build --release --manifest-path tools/xgboost-eval/Cargo.toml --locked
       - name: Test comparison runner
@@ -51,3 +56,15 @@ jobs:
         with:
           name: xgboost-evaluation-${{ runner.os }}
           path: xgboost-synthetic-report.json
+
+  frontend-workflow:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: oven-sh/setup-bun@v2
+      - run: bun install --frozen-lockfile
+      - run: bunx playwright install --with-deps chromium
+      - run: bun test
+      - run: bun run check
+      - run: bun run test:autocull
+      - run: bun scripts/verify-native-autocull-races.ts

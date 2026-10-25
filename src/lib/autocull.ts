@@ -1,6 +1,8 @@
 import type {
   AutoCullCluster,
   AutoCullLabel,
+  AutoCullLearner,
+  AutoCullLearnerRun,
   AutoCullPairwisePreference,
   AutoCullPhoto,
   AutoCullSession,
@@ -11,6 +13,7 @@ import type {
 import { invoke } from "@tauri-apps/api/core";
 import { photoPreviewSrc } from "./photoPreview.ts";
 import { heavyMediaConcurrency } from "./concurrency.ts";
+import { nativeRankerRequest, scoreNativeRanker, NATIVE_RANKER_VERSION } from "./autocullNative.ts";
 
 const DINO_MODEL_ID = "onnx-community/dinov2-small";
 const TRANSFORMER_EMBEDDING_BACKEND = "dinov2-small-transformersjs";
@@ -586,7 +589,10 @@ export async function buildAutoCullSession(
   folderPath: string | null = null,
   excludedTrainingIds: ReadonlySet<string> = new Set(),
   profileId = DEFAULT_PREFERENCE_PROFILE_ID,
+  learner: AutoCullLearner = "builtin",
+  isCurrent: () => boolean = () => true,
 ): Promise<AutoCullSession> {
+  if (!isCurrent()) throw new Error("Analysis was superseded by newer choices");
   const featuresById = new Map<string, PixelFeatures | null>();
   const total = photos.length;
   const sqlCache = await readSqlFeatureCache(photos, folderPath);
@@ -600,6 +606,7 @@ export async function buildAutoCullSession(
     onProgress({ current: completed, total, current_file: photo.file_name });
   });
   await writeSqlFeatureCache(pendingSqlEntries, folderPath);
+  if (!isCurrent()) throw new Error("Analysis was superseded by newer choices");
 
   const metadataExcludedIds = learnFromPhotoMetadata ? metadataTrainingExclusions(profileId) : new Set<string>();
   if (learnFromPhotoMetadata) {
@@ -628,9 +635,40 @@ export async function buildAutoCullSession(
   await persistPreferenceSnapshots(captured);
   await preferenceWrites;
   const snapshots = await loadPreferenceFeatureSnapshots([...referencedIds]);
-  const session = rankAutoCullPhotos(photos, featuresById, preferences, refinements, learnFromPhotoMetadata, excludedTrainingIds, snapshots, metadataExcludedIds);
+  if (!isCurrent()) throw new Error("Analysis was superseded by newer choices");
+  const rank = learner === "xgboost-native" ? rankAutoCullPhotosWithNative : rankAutoCullPhotos;
+  const session = await rank(photos, featuresById, preferences, refinements, learnFromPhotoMetadata, excludedTrainingIds, snapshots, metadataExcludedIds);
   onProgress({ current: total, total });
   return session;
+}
+
+function prepareAutoCullRanking(
+  photos: Photo[],
+  featuresById: Map<string, PixelFeatures | null>,
+  preferences: AutoCullPairwisePreference[] = [],
+  refinements: AutoCullPreferenceRefinement[] = [],
+  learnFromPhotoMetadata = true,
+  excludedTrainingIds: ReadonlySet<string> = new Set(),
+  snapshots: ReadonlyMap<string, PreferenceFeatureSnapshot> = new Map(),
+  metadataExcludedIds: ReadonlySet<string> = new Set(),
+) {
+  photos = photos.map((photo) => excludedTrainingIds.has(photo.id) ? { ...photo, flag: "none", rating: 0 } : photo);
+  const featureRecordsById = buildFeatureRecords(photos, featuresById);
+  const trainingRecords = new Map(featureRecordsById);
+  const backends = new Set([...featuresById.values()].flatMap((features) => features ? [features.backend] : []));
+  for (const [id, snapshot] of snapshots) {
+    if (!trainingRecords.has(id) && isPreferenceFeatureSnapshot(snapshot) && backends.has(snapshot.backend)) {
+      trainingRecords.set(id, { backend: snapshot.backend, embedding: snapshot.embedding, technicalScore: snapshot.rankerFeatures[0], rankerFeatures: snapshot.rankerFeatures });
+    }
+  }
+  const batches = new Map<string, { examples: RankedExample[]; pairs: PairwiseExample[] }>();
+  for (const backend of backends) {
+    const records = new Map([...trainingRecords].filter(([, record]) => record.backend === backend));
+    const examples = buildRankedExamples(photos.filter((photo) => !excludedTrainingIds.has(photo.id)), records, refinements.filter((item) => !excludedTrainingIds.has(item.photo_id)), learnFromPhotoMetadata, metadataExcludedIds);
+    const pairwiseExamples = buildPairwiseExamples(preferences.filter((item) => !excludedTrainingIds.has(item.winner_photo_id) && !excludedTrainingIds.has(item.loser_photo_id)), records);
+    batches.set(backend, { examples, pairs: pairwiseExamples });
+  }
+  return { photos, featureRecordsById, batches };
 }
 
 // Keep ranking independent of image loading so cached and fresh analysis use the same policy.
@@ -644,22 +682,47 @@ export function rankAutoCullPhotos(
   snapshots: ReadonlyMap<string, PreferenceFeatureSnapshot> = new Map(),
   metadataExcludedIds: ReadonlySet<string> = new Set(),
 ): AutoCullSession {
-  photos = photos.map((photo) => excludedTrainingIds.has(photo.id) ? { ...photo, flag: "none", rating: 0 } : photo);
-  const featureRecordsById = buildFeatureRecords(photos, featuresById);
-  const trainingRecords = new Map(featureRecordsById);
-  const backends = new Set([...featuresById.values()].flatMap((features) => features ? [features.backend] : []));
-  for (const [id, snapshot] of snapshots) {
-    if (!trainingRecords.has(id) && isPreferenceFeatureSnapshot(snapshot) && backends.has(snapshot.backend)) {
-      trainingRecords.set(id, { backend: snapshot.backend, embedding: snapshot.embedding, technicalScore: snapshot.rankerFeatures[0], rankerFeatures: snapshot.rankerFeatures });
-    }
-  }
+  const prepared = prepareAutoCullRanking(photos, featuresById, preferences, refinements, learnFromPhotoMetadata, excludedTrainingIds, snapshots, metadataExcludedIds);
+  const models = new Map([...prepared.batches].map(([backend, batch]) => [backend, { model: trainRankingModel(batch.examples, batch.pairs), count: batch.examples.length + batch.pairs.length }]));
+  return finishAutoCullRanking(prepared, models, { engine: "builtin" });
+}
+
+export async function rankAutoCullPhotosWithNative(
+  photos: Photo[],
+  featuresById: Map<string, PixelFeatures | null>,
+  preferences: AutoCullPairwisePreference[] = [],
+  refinements: AutoCullPreferenceRefinement[] = [],
+  learnFromPhotoMetadata = true,
+  excludedTrainingIds: ReadonlySet<string> = new Set(),
+  snapshots: ReadonlyMap<string, PreferenceFeatureSnapshot> = new Map(),
+  metadataExcludedIds: ReadonlySet<string> = new Set(),
+  score = scoreNativeRanker,
+): Promise<AutoCullSession> {
+  const prepared = prepareAutoCullRanking(photos, featuresById, preferences, refinements, learnFromPhotoMetadata, excludedTrainingIds, snapshots, metadataExcludedIds);
   const models = new Map<string, { model: RankingModel; count: number }>();
-  for (const backend of backends) {
-    const records = new Map([...trainingRecords].filter(([, record]) => record.backend === backend));
-    const examples = buildRankedExamples(photos.filter((photo) => !excludedTrainingIds.has(photo.id)), records, refinements.filter((item) => !excludedTrainingIds.has(item.photo_id)), learnFromPhotoMetadata, metadataExcludedIds);
-    const pairwiseExamples = buildPairwiseExamples(preferences.filter((item) => !excludedTrainingIds.has(item.winner_photo_id) && !excludedTrainingIds.has(item.loser_photo_id)), records);
-    models.set(backend, { model: trainRankingModel(examples, pairwiseExamples), count: examples.length + pairwiseExamples.length });
+  const learner: AutoCullLearnerRun = { engine: "xgboost-native", version: "3.1.1", training_rows: 0, train_ms: 0, predict_ms: 0 };
+  for (const [backend, batch] of prepared.batches) {
+    const records = [...prepared.featureRecordsById].filter(([, record]) => record.backend === backend);
+    const request = nativeRankerRequest(batch.examples, batch.pairs, records.map(([, record]) => record.rankerFeatures));
+    const response = await score(request);
+    const byFeatures = new Map(records.map(([, record], index) => [record.rankerFeatures, response.scores[index]]));
+    models.set(backend, { count: batch.examples.length + batch.pairs.length, model: {
+      examples: batch.examples,
+      score: (features) => features ? byFeatures.get(features) ?? null : null,
+    } });
+    learner.training_rows += response.training_rows;
+    learner.train_ms += response.train_ms;
+    learner.predict_ms += response.predict_ms;
   }
+  return finishAutoCullRanking(prepared, models, learner);
+}
+
+function finishAutoCullRanking(
+  prepared: ReturnType<typeof prepareAutoCullRanking>,
+  models: Map<string, { model: RankingModel; count: number }>,
+  learner: AutoCullLearnerRun,
+): AutoCullSession {
+  const { photos, featureRecordsById } = prepared;
   const trainingCount = [...models.values()].reduce((sum, item) => sum + item.count, 0);
 
   let scored = photos.map((photo) => {
@@ -692,7 +755,7 @@ export function rankAutoCullPhotos(
       confidence: recommendationConfidence(photo, finalScore, embedding),
       reasons: recommendationReasons(photo, technicalScore, personalScore - neutral - behaviorSignalValue, Boolean(embedding), count),
       embedding,
-      embedding_backend: record?.embedding ? (featuresById.get(photo.id)?.backend ?? PERCEPTUAL_EMBEDDING_BACKEND) : undefined,
+      embedding_backend: record?.embedding ? record.backend : undefined,
       captureMs: captureTimestampMs(photo),
       sortTimeMs: sortTimestampMs(photo),
       sequence: filenameSequence(photo.file_name),
@@ -718,7 +781,8 @@ export function rankAutoCullPhotos(
   }) => photo);
   return {
     embedding_backend: EMBEDDING_BACKEND,
-    ranker_version: RANKER_VERSION,
+    ranker_version: learner.engine === "xgboost-native" ? NATIVE_RANKER_VERSION : RANKER_VERSION,
+    learner,
     generated_at: new Date().toISOString(),
     photos: outputPhotos,
     clusters,

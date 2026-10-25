@@ -87,10 +87,11 @@
         type StackStatus,
         type StorageLike,
     } from "../autocullReview.ts";
+    import { loadAutoCullLearner, saveAutoCullLearner, nativeLearnerAvailable } from "../autocullNative.ts";
     import { HologramAPI } from "../api.ts";
     import { photoStore, viewMode } from "../stores/photoStore.ts";
     import PhotoPreviewCard from "./PhotoPreviewCard.svelte";
-    import type { AutoCullLabel, AutoCullSession, Photo, PhotoDecisionHandler, VisualIndexProgress } from "../types.ts";
+    import type { AutoCullLabel, AutoCullLearner, AutoCullSession, Photo, PhotoDecisionHandler, VisualIndexProgress } from "../types.ts";
 
     interface Props {
         photos: Photo[];
@@ -129,6 +130,11 @@
     let automatic = $state.raw<AutomaticDecisions>({});
     let history = $state.raw<ReviewSnapshot[]>([]);
     let decisionsSinceAnalysis = $state(0);
+    let requestedLearner = $state<AutoCullLearner>(loadAutoCullLearner());
+    let learnerFailure = $state("");
+    let analysisInterrupted = $state(false);
+    let advancedOpen = $state(false);
+    const learnerAvailable = nativeLearnerAvailable();
 
     // Plain variables: these coordinate async work and must not trigger effects.
     let loadedFolder: string | null | undefined = undefined;
@@ -136,6 +142,10 @@
     let analysisRun = 0;
     let destroyed = false;
 
+    const actualLearner = $derived(session?.learner?.engine ?? "builtin");
+    const learnerMismatch = $derived(Boolean(session && actualLearner !== requestedLearner));
+    const learnerBlocked = $derived(isAnalyzing || learnerMismatch || Boolean(learnerFailure) || analysisInterrupted);
+    const learnerName = (learner: AutoCullLearner) => learner === "xgboost-native" ? "XGBoost" : "built-in";
     const wide = $derived(innerWidth >= 1024);
     const photosById = $derived(new Map(photos.map((photo) => [photo.id, photo])));
     // Paired RAW files are hidden from the display list but share every decision.
@@ -262,6 +272,8 @@
         lastAnalysisKey = "";
         isAnalyzing = false;
         session = null;
+        learnerFailure = "";
+        analysisInterrupted = false;
         mode = "overview";
         selectedPhotoId = null;
         history = [];
@@ -275,11 +287,12 @@
 
     // Only structural changes (files, previews, folder, profile) re-analyze. Flags and
     // ratings are read live from the photos, so decisions never reorder the queue.
-    function analysisInputKey(items: Photo[], profileId: string, folder: string | null): string {
+    function analysisInputKey(items: Photo[], profileId: string, folder: string | null, learner: AutoCullLearner): string {
         if (items.length === 0) return "";
         return [
             folder ?? "",
             profileId,
+            learner,
             items.map((photo) => [
                 photo.id,
                 photo.file_path,
@@ -291,7 +304,7 @@
     }
 
     $effect(() => {
-        const key = analysisInputKey(photos, activePreferenceProfileId, folderPath);
+        const key = analysisInputKey(photos, activePreferenceProfileId, folderPath, requestedLearner);
         if (!key || key === lastAnalysisKey) return;
         const timeout = window.setTimeout(() => void runAnalysis(), 350);
         return () => window.clearTimeout(timeout);
@@ -316,7 +329,8 @@
         const library = allPhotos;
         const folder = folderPath;
         const profileId = activePreferenceProfileId;
-        lastAnalysisKey = analysisInputKey(input, profileId, folder);
+        const learner = requestedLearner;
+        lastAnalysisKey = analysisInputKey(input, profileId, folder, learner);
         if (input.length === 0) {
             session = null;
             return;
@@ -324,6 +338,8 @@
         const runId = ++analysisRun;
         const isCurrent = () => runId === analysisRun && !destroyed;
         isAnalyzing = true;
+        learnerFailure = "";
+        analysisInterrupted = false;
         progress = { current: 0, total: input.length };
         try {
             const missingIds = await HologramAPI.findMissingPhotoIds(library);
@@ -333,7 +349,7 @@
             if (missing.size > 0) {
                 // Files deleted outside Hologram leave the library. They are not taste signals.
                 photoStore.removePhotos(missingIds);
-                lastAnalysisKey = analysisInputKey(analysisPhotos, profileId, folder);
+                lastAnalysisKey = analysisInputKey(analysisPhotos, profileId, folder, learner);
                 const stats = await HologramAPI.getPhotoStats(library.filter((photo) => !missing.has(photo.id)));
                 if (!isCurrent()) return;
                 photoStore.setStats(stats);
@@ -356,6 +372,8 @@
                 // AutoCull's own flags are not the photographer's taste: never learn from them.
                 automaticPhotoIds(library, automatic),
                 profileId,
+                learner,
+                isCurrent,
             );
             if (!isCurrent()) return;
             session = next;
@@ -365,7 +383,13 @@
                 : "";
             status = `${next.stats.indexed}/${next.stats.total} previews analyzed${missingNote}`;
         } catch (error) {
-            if (isCurrent()) status = error instanceof Error ? error.message : String(error);
+            if (isCurrent()) {
+                status = error instanceof Error ? error.message : String(error);
+                if (learner === "xgboost-native") {
+                    learnerFailure = status;
+                    advancedOpen = true;
+                }
+            }
         } finally {
             if (runId === analysisRun) isAnalyzing = false;
         }
@@ -376,11 +400,36 @@
         void runAnalysis();
     }
 
+    function setLearner(learner: AutoCullLearner) {
+        if (learner === requestedLearner) return;
+        try { saveAutoCullLearner(learner); }
+        catch {
+            status = "Could not save the learner setting. Nothing changed.";
+            return;
+        }
+        lastAnalysisKey = "";
+        analysisRun++;
+        isAnalyzing = false;
+        learnerFailure = "";
+        analysisInterrupted = true;
+        requestedLearner = learner;
+    }
+
+    function invalidatePendingAnalysis() {
+        if (!isAnalyzing) return;
+        analysisRun++;
+        isAnalyzing = false;
+        analysisInterrupted = true;
+    }
+
     function setPreferenceProfile(profileId: string) {
         if (!preferenceProfiles.some((profile) => profile.id === profileId)) return;
         if (profileId === activePreferenceProfileId) return;
         // Invalidate in-flight analysis for the old profile; the input key change schedules a new run.
         analysisRun++;
+        isAnalyzing = false;
+        learnerFailure = "";
+        analysisInterrupted = true;
         history = [];
         activePreferenceProfileId = profileId;
         saveActivePreferenceProfileId(profileId);
@@ -608,6 +657,7 @@
                 return null;
             }
         }
+        invalidatePendingAnalysis();
         for (const id of refinementIds) {
             const photo = nextById.get(id);
             const analysis = recommendationsById.get(id) ?? recommendationsById.get(photo?.paired_with ?? "");
@@ -654,6 +704,7 @@
                 return;
             }
         }
+        invalidatePendingAnalysis();
         history = history.slice(0, -1);
         const isActiveFolder = entry.folderPath === folderPath;
         const isActive = isActiveFolder && entry.profileId === activePreferenceProfileId;
@@ -819,7 +870,7 @@
     }
 
     function applyAutoCull() {
-        if (!plan || !planReady) return;
+        if (!plan || !planReady || learnerBlocked) return;
         const kept = plan.keepIds.length;
         const rejected = plan.rejectIds.length;
         const result = commit(AUTO_LABEL, plan.changes, { automaticPass: { resolveKeys: planResolveKeys } });
@@ -1018,6 +1069,28 @@
     </div>
 {/snippet}
 
+{#snippet learnerStatus()}
+    <div class="font-mono text-[10.5px] leading-[1.6] text-muted-foreground" data-autocull-session-learner={session ? actualLearner : "none"} data-autocull-requested-learner={requestedLearner}>
+        {#if session}
+            This analysis: {learnerName(actualLearner)}{actualLearner === "xgboost-native" ? " (experimental)" : ""}
+            {#if session.learner?.engine === "xgboost-native"}
+                <span> · {session.learner.training_rows} training rows · {session.learner.train_ms.toFixed(1)} ms</span>
+                {#if session.learner.training_rows === 0}<p>No eligible feedback to train yet.</p>{/if}
+            {/if}
+        {/if}
+        {#if learnerMismatch && isAnalyzing}<p class="text-info">Re-ranking with {learnerName(requestedLearner)}. Previous suggestions stay visible until analysis finishes.</p>{/if}
+        {#if learnerFailure}
+            <div class="mt-2 rounded-md border border-reject/30 bg-reject/5 p-2 text-[11px]" role="alert" data-autocull-learner-error>
+                <p>XGBoost analysis failed. {learnerFailure}</p>
+                <p class="mt-1">AutoCull will not apply previous suggestions until you retry or switch back.</p>
+                <div class="mt-2 flex gap-3"><button class="underline" onclick={refreshAnalysis}>Retry</button><button class="underline" onclick={() => setLearner("builtin")}>Use built-in learner</button></div>
+            </div>
+        {:else if analysisInterrupted}
+            <p class="mt-1 text-info">Analysis changed. <button class="underline" onclick={refreshAnalysis}>Refresh analysis</button> to update suggestions.</p>
+        {/if}
+    </div>
+{/snippet}
+
 {#snippet overviewScreen()}
     {@const o = overview}
     {@const decidedByAuto = o.keepIds.length + o.rejectIds.length}
@@ -1077,7 +1150,8 @@
                     <button
                         class="inline-flex h-9 items-center gap-2 rounded-md bg-primary px-4 text-[13px] font-semibold text-primary-foreground transition-opacity hover:opacity-90 disabled:opacity-50"
                         onclick={applyAutoCull}
-                        disabled={isAnalyzing}
+                        disabled={learnerBlocked}
+                        title={learnerBlocked ? "Refresh the requested learner before applying these suggestions." : undefined}
                         data-autocull-apply
                     ><WandSparkles size={15} />Apply AutoCull</button>
                     <button
@@ -1100,6 +1174,8 @@
                 {/if}
                 {#if isAnalyzing}<span class="flex items-center gap-1.5 font-mono text-[10.5px] text-info"><Loader2 size={12} class="animate-spin" />Updating analysis</span>{/if}
             </div>
+
+            {@render learnerStatus()}
 
             <p class="min-h-[15px] font-mono text-[10.5px] text-muted-foreground" role="status" aria-live="polite" data-autocull-status>{status}</p>
 
@@ -1184,7 +1260,7 @@
             </section>
         {/if}
 
-        <details class="group border-t border-border pt-3" data-autocull-advanced>
+        <details bind:open={advancedOpen} class="group border-t border-border pt-3" data-autocull-advanced>
             <summary class="cursor-pointer list-none font-mono text-[10px] font-semibold uppercase tracking-[0.1em] text-subtle transition-colors hover:text-foreground">
                 <span class="inline-block transition-transform group-open:rotate-90">›</span> Analysis &amp; taste profile
             </summary>
@@ -1214,6 +1290,16 @@
                         {/if}
                     </div>
                 {/if}
+                <div data-autocull-learner>
+                    {@render deckLabel("Learner")}
+                    <label class="flex items-start gap-2 text-[12px] font-medium text-foreground">
+                        <input type="checkbox" class="mt-[3px] accent-primary" checked={requestedLearner === "xgboost-native"} disabled={!learnerAvailable} onchange={(event) => setLearner(event.currentTarget.checked ? "xgboost-native" : "builtin")} data-autocull-learner-toggle />
+                        <span>Use XGBoost learner <span class="ml-1 rounded border border-maybe/40 px-1 font-mono text-[9px] text-maybe">EXPERIMENTAL</span></span>
+                    </label>
+                    <p class="mt-1 text-[11px] leading-[1.5] text-subtle">Same feedback, features and taste profile. Real culling choices have not been evaluated yet, so the built-in learner stays the default.</p>
+                    {#if !learnerAvailable}<p class="mt-1 text-[11px] text-subtle">Available in the desktop app.</p>{/if}
+                    {@render learnerStatus()}
+                </div>
                 <div>
                     {@render deckLabel("Taste profile · all shoots")}
                     <div class="flex flex-col gap-[2px]">
@@ -1237,7 +1323,7 @@
     </div>
 {/snippet}
 
-<section bind:this={root} class="relative flex h-full min-h-0 flex-col bg-background" data-autocull-view data-autocull-mode={session ? mode : "loading"}>
+<section bind:this={root} class="relative flex h-full min-h-0 flex-col bg-background" data-autocull-view data-autocull-mode={session ? mode : "loading"} data-autocull-active-learner={session ? actualLearner : "none"}>
     <!-- HEADER: mode · progress · filters · undo · refresh -->
     <header class="flex shrink-0 flex-wrap items-center gap-x-3 gap-y-1.5 border-b border-border bg-card px-3 py-2">
         <div class="flex min-w-0 items-center gap-2.5">
@@ -1326,6 +1412,7 @@
             {:else}
                 <div class="flex flex-col items-center gap-3 text-center">
                     {#if status}<p class="max-w-sm text-[12px] text-muted-foreground">{status}</p>{/if}
+                    {@render learnerStatus()}
                     <button class="inline-flex h-10 items-center gap-2 rounded-md bg-primary px-4 text-sm font-semibold text-primary-foreground transition-opacity hover:opacity-90" onclick={refreshAnalysis}>
                         <Sparkles size={16} /> Analyze {photos.length} photos
                     </button>

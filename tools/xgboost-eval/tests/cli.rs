@@ -32,6 +32,7 @@ fn json_stdout_contains_centered_pair_scores() {
     assert!(output.stderr.is_empty());
     let response: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
     assert_eq!(response["xgboost_version"], "3.1.1");
+    assert_eq!(response["ranker_version"], "xgboost-personal-ranker-v1");
     assert!(response["scores"][0].as_f64().unwrap() > 0.5);
     assert!(response["scores"][1].as_f64().unwrap() < 0.5);
     for field in ["train_ms", "predict_ms"] {
@@ -50,4 +51,27 @@ fn malformed_input_exits_with_stderr_only() {
         assert!(output.stdout.is_empty());
         assert!(!output.stderr.is_empty());
     }
+}
+
+#[test]
+fn missing_library_directory_fails_without_a_success_report() {
+    let mut child = Command::new(env!("CARGO_BIN_EXE_hologram-xgboost-eval"))
+        .env_remove("XGBOOST_LIB_DIR")
+        .stdin(Stdio::piped())
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()
+        .unwrap();
+    child
+        .stdin
+        .take()
+        .unwrap()
+        .write_all(
+            br#"{"schema_version":1,"dimensions":1,"pointwise":[],"pairs":[],"predict":[[0]]}"#,
+        )
+        .unwrap();
+    let output = child.wait_with_output().unwrap();
+    assert!(!output.status.success());
+    assert!(output.stdout.is_empty());
+    assert!(String::from_utf8_lossy(&output.stderr).contains("set XGBOOST_LIB_DIR"));
 }

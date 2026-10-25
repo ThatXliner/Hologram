@@ -1,3 +1,7 @@
+mod autocull_ranker;
+#[cfg(feature = "native-autocull-smoke")]
+mod autocull_smoke;
+
 use anyhow::Result;
 use chrono::{DateTime, Utc};
 use exif as kamadak_exif;
@@ -1421,7 +1425,7 @@ struct XmpMetadataPatch {
     flag: Option<String>,
 }
 
-fn open_db(app: &AppHandle, folder_path: Option<&str>) -> Result<rusqlite::Connection, String> {
+fn open_db(_app: &AppHandle, folder_path: Option<&str>) -> Result<rusqlite::Connection, String> {
     let db_path = if let Some(folder_path) = folder_path.filter(|path| !path.trim().is_empty()) {
         let folder = Path::new(folder_path);
         if !folder.is_dir() {
@@ -1429,10 +1433,19 @@ fn open_db(app: &AppHandle, folder_path: Option<&str>) -> Result<rusqlite::Conne
         }
         folder.join("hologram.sql")
     } else {
-        app.path()
-            .app_data_dir()
-            .map_err(|e| e.to_string())?
-            .join("hologram.db")
+        #[cfg(feature = "native-autocull-smoke")]
+        {
+            let root = std::env::var_os("HOLOGRAM_AUTOCULL_SMOKE_DIR")
+                .ok_or("native verification directory is missing")?;
+            std::path::PathBuf::from(root).join("hologram.db")
+        }
+        #[cfg(not(feature = "native-autocull-smoke"))]
+        {
+            _app.path()
+                .app_data_dir()
+                .map_err(|e| e.to_string())?
+                .join("hologram.db")
+        }
     };
     if let Some(parent) = db_path.parent() {
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
@@ -2295,13 +2308,35 @@ async fn export_photos(
 
 #[cfg_attr(mobile, tauri::mobile_entry_point)]
 pub fn run() {
-    tauri::Builder::default()
+    let context = tauri::generate_context!();
+    #[cfg(feature = "native-autocull-smoke")]
+    let context = {
+        let mut context = context;
+        autocull_smoke::configure(&mut context).expect("invalid native AutoCull verification context");
+        context
+    };
+    let base_handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+        scan_folder_fast, find_missing_photo_ids, generate_thumbnails,
+        prerender_raws, prioritize_raw_renders, filter_photos, get_photo_stats,
+        load_full_resolution_image_command, apply_edits_and_save, denoise_image,
+        set_photo_metadata, get_photo_metadata, read_autocull_feature_cache,
+        write_autocull_feature_cache, export_xmp_sidecars, import_xmp_sidecars,
+        export_photos, autocull_ranker::score_autocull_native
+    ];
+    #[cfg(feature = "native-autocull-smoke")]
+    let smoke_handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![
+        autocull_smoke::report_autocull_smoke,
+        autocull_smoke::autocull_smoke_fixture
+    ];
+    let builder = tauri::Builder::default()
         .plugin(tauri_plugin_opener::init())
         .plugin(tauri_plugin_fs::init())
         .plugin(tauri_plugin_dialog::init())
         .plugin(tauri_plugin_updater::Builder::new().build())
         .plugin(tauri_plugin_process::init())
         .setup(|app| {
+            #[cfg(feature = "native-autocull-smoke")]
+            autocull_smoke::setup(app)?;
             // Load DnCNN ONNX model for AI denoising
             let resource_dir = app
                 .path()
@@ -2328,25 +2363,14 @@ pub fn run() {
             app.manage(DenoiseModel(Arc::new(Mutex::new(session))));
             Ok(())
         })
-        .invoke_handler(tauri::generate_handler![
-            scan_folder_fast,
-            find_missing_photo_ids,
-            generate_thumbnails,
-            prerender_raws,
-            prioritize_raw_renders,
-            filter_photos,
-            get_photo_stats,
-            load_full_resolution_image_command,
-            apply_edits_and_save,
-            denoise_image,
-            set_photo_metadata,
-            get_photo_metadata,
-            read_autocull_feature_cache,
-            write_autocull_feature_cache,
-            export_xmp_sidecars,
-            import_xmp_sidecars,
-            export_photos
-        ])
-        .run(tauri::generate_context!())
-        .expect("error while running tauri application");
+        .invoke_handler(move |invoke| {
+            #[cfg(feature = "native-autocull-smoke")]
+            if matches!(invoke.message.command(), "report_autocull_smoke" | "autocull_smoke_fixture") {
+                return smoke_handler(invoke);
+            }
+            base_handler(invoke)
+        });
+    #[cfg(feature = "native-autocull-smoke")]
+    let builder = builder.on_page_load(autocull_smoke::on_page_load);
+    builder.run(context).expect("error while running tauri application");
 }

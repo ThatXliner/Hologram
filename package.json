@@ -15,7 +15,9 @@
     "screenshots": "bun scripts/screenshots.ts",
     "screenshots:no-server": "bun scripts/screenshots.ts --no-server",
     "bump": "bash scripts/bump-version.sh",
-    "eval:xgboost": "bun scripts/evaluate-xgboost.ts"
+    "eval:xgboost": "bun scripts/evaluate-xgboost.ts",
+    "test:autocull-native": "bun scripts/verify-native-autocull.ts",
+    "test:autocull-native-races": "bun scripts/verify-native-autocull-races.ts"
   },
   "license": "MIT",
   "dependencies": {

@@ -65,6 +65,17 @@ jobs:
       - name: Build the app
         run: bun run tauri build --ci --config src-tauri/tauri.ci.conf.json
 
+      - name: Verify packaged native learner
+        run: |
+          cargo build --release --manifest-path tools/xgboost-eval/Cargo.toml --locked
+          bun scripts/verify-native-bundle.ts
+
+      - name: Upload native package report
+        uses: actions/upload-artifact@v4
+        with:
+          name: native-package-${{ runner.os }}
+          path: native-package-report.json
+
       - name: Upload artifacts
         uses: actions/upload-artifact@v4
         with:

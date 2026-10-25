@@ -1981,6 +1981,7 @@ dependencies = [
  "base64 0.22.1",
  "chrono",
  "futures",
+ "hologram-autocull-ranker",
  "image 0.25.8",
  "kamadak-exif",
  "ndarray",
@@ -2002,6 +2003,14 @@ dependencies = [
  "uuid",
  "walkdir",
  "zip",
+]
+
+[[package]]
+name = "hologram-autocull-ranker"
+version = "0.1.0"
+dependencies = [
+ "libloading 0.8.9",
+ "serde",
 ]
 
 [[package]]

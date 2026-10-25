@@ -14,10 +14,14 @@ edition = "2021"
 name = "hologram_lib"
 crate-type = ["staticlib", "cdylib", "rlib"]
 
+[features]
+native-autocull-smoke = []
+
 [build-dependencies]
 tauri-build = { version = "^2", features = [] }
 
 [dependencies]
+hologram-autocull-ranker = { path = "../crates/autocull-ranker" }
 tauri = { version = "^2", features = ["protocol-asset"] }
 tauri-plugin-opener = "^2"
 tauri-plugin-fs = "2.0.0"

@@ -33,7 +33,7 @@ async function invokeCounts(page: Page): Promise<Record<string, number>> {
   return page.evaluate(() => ({ ...(window as unknown as { __invokeCounts: Record<string, number> }).__invokeCounts }));
 }
 
-const AUTOMATIC_KEY = "hologram.autocull.automatic.v1.global";
+const AUTOMATIC_KEY = "hologram.autocull.automatic.v2";
 
 async function stored(page: Page, key: string): Promise<string | null> {
   return page.evaluate((key) => localStorage.getItem(key), key);

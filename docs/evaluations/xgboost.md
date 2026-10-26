@@ -42,6 +42,20 @@ Assign all bursts and near-duplicates to one shoot before export. The runner can
 
 The comparison evaluates the tree contribution alone. A replacement decision must also compare complete blended decisions on human choices. Follow-up promotion must retain feedback and snapshots, rerun the real native workflow, and remove the custom trainer only after the evaluation passes.
 
+## Export a decision book
+
+In AutoCull, open **Analysis & taste profile** and export the active profile's decision book. Hologram gathers effective manual decisions, comparisons, and compatible saved features across folders. Correction and undo change the next export. The book uses opaque aliases and contains no original images or file paths. Derived image features may reveal coarse image content. Its summary counts feedback omitted because features or source groups are missing or incompatible, or because a photo is still marked automatic. Automatic provenance is shared by photo identity across folders. Legacy folder records migrate once; explicit confirmation clears that provenance, and undo restores it.
+
+Older saved features may lack source-folder identity. Open and analyze those folders again to capture that identity before exporting. A one-folder book can be saved. An empty book summary can be inspected, but saving requires exportable human feedback. Evaluation requires at least two shoots and held-out manual choices in the selected dataset.
+
+Check that each source folder represents one independent shoot before running the comparison. Keep bursts, near-duplicates, and related frames in the same group. Folder grouping is provisional, so the runner requires an explicit acknowledgement.
+
+```bash
+bun scripts/evaluate-xgboost.ts --native tools/xgboost-eval/target/release/hologram-xgboost-eval --decision-book decision-book.json --confirm-source-groups
+```
+
+If the book contains multiple feature backends, add `--dataset-index N` to select a zero-based dataset index. The runner validates the selected dataset and records its index and the grouping acknowledgement in the report. Exported review labels and embeddings also support later experiments on blended decisions; this runner still measures the tree contribution alone.
+
 ## Verify the implementation
 
 `bun run tauri dev` and `bun run tauri build` prepare the pinned CPU library automatically. The generated source cache and native resource are ignored by Git. `HOLOGRAM_XGBOOST_SOURCE_DIR` can select a clean checkout at the exact pinned revision with matching clean submodules. Build identity stays outside bundled resources. Preparation supports the host architecture only and rejects cross or universal targets. Linux compatibility follows the build distribution, currently Ubuntu 24.04, without an older glibc compatibility claim.

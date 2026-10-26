@@ -40,7 +40,7 @@
     const { HologramAPI } = await import('/src/lib/api.ts');
     const { photoStore } = await import('/src/lib/stores/photoStore.ts');
     const fixture = await invoke('autocull_smoke_fixture');
-    automaticKey = `hologram.autocull.automatic.v1.${fixture.folder}`;
+    automaticKey = 'hologram.autocull.automatic.v2';
     const planApi = await import('/src/lib/autocullPlan.ts');
     automatic = () => planApi.loadAutomaticDecisions(localStorage, fixture.folder);
     const phase = localStorage.getItem('hologram.native-smoke.phase');
@@ -64,7 +64,18 @@
       check(!equal(learned.photos.map((photo) => photo.personal_score), neutral.photos.map((photo) => photo.personal_score)), 'saved human choices influence native scores on another shoot');
       check(equal(isolated.photos.map((photo) => photo.personal_score), neutral.photos.map((photo) => photo.personal_score)), 'untrained profile does not inherit another profile\'s taste');
       check(equal(feedback(), persisted.feedback), 'repeated native analysis never adds its own feedback');
-      await invoke('report_autocull_smoke', { result: { ok: true, checks: [...persisted.checks, ...checks], ranker_version: learned.ranker_version, training_examples: learned.stats.training_examples, elapsed_ms: persisted.elapsed_ms + performance.now() - started } });
+      const { createDecisionBook } = await import('/src/lib/autocullDecisionBook.ts');
+      const book = await createDecisionBook('default');
+      check(book.summary.manual_decisions === refs.length && book.reviews.length === refs.length, 'decision book retains effective human reviews after reload');
+      check(book.summary.missing_shoot === 0 && book.summary.photos > 0 && book.summary.shoots === 1, 'decision book retains durable source groups with source shoot absent');
+      check(book.summary.comparisons === pairs.length, 'decision book retains saved human comparisons');
+      const contents = JSON.stringify(book, null, 2);
+      check(!contents.includes(fixture.folder) && !contents.includes(fixture.other_folder)
+        && refs.every((ref) => !contents.includes(ref.photo_id)), 'decision book excludes original paths and photo identities');
+      const decisionBookPath = `${fixture.folder}/decision-book.json`;
+      await invoke('save_decision_book', { path: decisionBookPath, contents });
+      check(equal(feedback(), persisted.feedback), 'native decision book export leaves human feedback unchanged');
+      await invoke('report_autocull_smoke', { result: { ok: true, checks: [...persisted.checks, ...checks], ranker_version: learned.ranker_version, training_examples: learned.stats.training_examples, decision_book_path: decisionBookPath, decision_book_summary: book.summary, elapsed_ms: persisted.elapsed_ms + performance.now() - started } });
       return;
     }
     localStorage.clear();

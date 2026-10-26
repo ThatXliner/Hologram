@@ -97,7 +97,7 @@ describe("automatic cull policy", () => {
 });
 
 describe("automatic decision provenance", () => {
-  it("persists per folder, recognizes applied choices, and releases a manually corrected photo", () => {
+  it("persists across folders, recognizes applied choices, and releases a manually corrected photo", () => {
     const storage = memoryStorage();
     const photos = [photo("a"), photo("b")];
     const plan = buildAutoCullPlan(photos, photos, session([analysis("a", 0.8), analysis("b", 0.1)]));
@@ -105,7 +105,7 @@ describe("automatic decision provenance", () => {
     saveAutomaticDecisions(storage, "/photos", automatic);
     const reloaded = loadAutomaticDecisions(storage, "/photos");
     assert.deepEqual(reloaded, automatic);
-    assert.deepEqual(loadAutomaticDecisions(storage, "/other"), {});
+    assert.deepEqual(loadAutomaticDecisions(storage, "/other"), automatic);
     const applied = [...applyChanges(new Map(photos.map((p) => [p.id, p])), plan.changes, "after").values()];
     assert.deepEqual([...automaticPhotoIds(applied, reloaded)], ["a", "b"]);
     assert.deepEqual([...automaticPhotoIds(applied.map((p) => p.id === "a" ? { ...p, flag: "reject" } : p), reloaded)], ["b"]);

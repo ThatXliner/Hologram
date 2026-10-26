@@ -1,4 +1,5 @@
 mod autocull_ranker;
+mod decision_book;
 #[cfg(feature = "native-autocull-smoke")]
 mod autocull_smoke;
 
@@ -2321,7 +2322,8 @@ pub fn run() {
         load_full_resolution_image_command, apply_edits_and_save, denoise_image,
         set_photo_metadata, get_photo_metadata, read_autocull_feature_cache,
         write_autocull_feature_cache, export_xmp_sidecars, import_xmp_sidecars,
-        export_photos, autocull_ranker::score_autocull_native
+        export_photos, autocull_ranker::score_autocull_native,
+        decision_book::save_decision_book
     ];
     #[cfg(feature = "native-autocull-smoke")]
     let smoke_handler: fn(tauri::ipc::Invoke<tauri::Wry>) -> bool = tauri::generate_handler![

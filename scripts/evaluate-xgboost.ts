@@ -1,24 +1,10 @@
 import { availableParallelism, cpus, loadavg, platform, arch, release } from 'node:os';
 import { readFileSync } from 'node:fs';
 import { agreement, buildFolds, parseDataset, parseModelResult, runProduction, syntheticDataset, prepareNativeInput, type ModelResult, type NativeInput } from './xgboost-evaluation.ts';
+import { parseEvaluationOptions, selectDecisionBookDataset } from './decision-book-input.ts';
 
 declare const Bun: { argv: string[]; version: string; spawnSync(command: string[], options: { stdin: Uint8Array; stdout: 'pipe'; stderr: 'pipe' }): { exitCode: number; stdout: Uint8Array; stderr: Uint8Array } };
 
-function options(args: string[]) {
-  let native: string | undefined, dataset: string | undefined, synthetic = false;
-  for (let index = 0; index < args.length; index++) {
-    const arg = args[index];
-    if (arg === '--synthetic') synthetic = true;
-    else if (arg === '--native' || arg === '--dataset') {
-      const value = args[++index];
-      if (!value || value.startsWith('--')) throw new Error(`${arg} requires a path`);
-      if (arg === '--native') native = value;
-      else dataset = value;
-    } else throw new Error(`Unknown argument ${arg}`);
-  }
-  if (!native || Number(synthetic) + Number(dataset !== undefined) !== 1) throw new Error('Usage: bun scripts/evaluate-xgboost.ts --native /path/to/hologram-xgboost-eval (--synthetic | --dataset file.json)');
-  return { native, dataset, synthetic };
-}
 function summary(values: number[]) {
   const sorted = [...values].sort((a, b) => a - b);
   return { median: sorted[Math.floor(sorted.length / 2)], min: sorted[0], max: sorted.at(-1), samples: values };
@@ -29,8 +15,13 @@ function nativeRunner(executable: string, input: NativeInput): ModelResult {
   return parseModelResult(JSON.parse(new TextDecoder().decode(result.stdout)), input.predict.length);
 }
 function main() {
-  const args = options(Bun.argv.slice(2));
-  const data = args.synthetic ? syntheticDataset() : parseDataset(JSON.parse(readFileSync(args.dataset ?? '', 'utf8')));
+  const args = parseEvaluationOptions(Bun.argv.slice(2));
+  const source = args.source;
+  const book = source.kind === 'decision-book'
+    ? selectDecisionBookDataset(JSON.parse(readFileSync(source.path, 'utf8')), source)
+    : null;
+  const data = source.kind === 'synthetic' ? syntheticDataset()
+    : book ? book.dataset : parseDataset(JSON.parse(readFileSync(source.path, 'utf8')));
   const folds = buildFolds(data);
   const results = folds.map(fold => {
     const runs: Record<'typescript' | 'xgboost', ModelResult[]> = { typescript: [], xgboost: [] };
@@ -63,6 +54,7 @@ function main() {
   };
   process.stdout.write(JSON.stringify({
     schema_version: 1, xgboost_version: results[0]?.xgboost.xgboost_version, dataset_kind: data.kind, feature_version: data.feature_version, backend: data.backend, profile_id: data.profile_id,
+    input_source: book ? { kind: 'decision-book', dataset_index: book.datasetIndex, source_groups_confirmed: true } : { kind: source.kind },
     verdict: 'inconclusive',
     interpretation: data.kind === 'synthetic' ? 'Synthetic correctness and harness smoke check only. Cannot conclude human taste quality or production performance.' : 'Held-out shoot agreement on supplied manual feedback. Observational evidence only; requires representative independent shoots before adoption.',
     methodology: { split: 'leave-one-shoot-out; global training from all other shoots', repeats: 5, ordering: 'alternating implementation order per repeat', deterministic_predictions: true, score: 'probability centered on training prior; threshold 0.5; differences within 1e-6 receive half credit; neutral pointwise targets ignored', confidence_weighting: 'training only; reported agreement is unweighted', timing: 'train and predict cover learner operations only; wall includes runner overhead and native subprocess startup; no performance winner claimed', grouping: 'caller must put bursts, duplicates, and related frames in the same shoot; pixel-level independence is not verified', automatic_feedback: 'excluded from both training and held-out agreement' },

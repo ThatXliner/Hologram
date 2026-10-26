@@ -1,46 +1,92 @@
-import { cosineSimilarity } from "./autocull.ts";
+import { cosineSimilarity, type AutoCullPreferenceRefinement } from "./autocull.ts";
 import {
   buildReviewQueue, isDecided, normalizeDecision, pairedIds, planDecision, sameDecision,
   type DecisionChange, type PhotoDecision, type ReviewStack, type StorageLike,
 } from "./autocullReview.ts";
-import type { AutoCullPhoto, AutoCullSession, Photo } from "./types.ts";
+import type { AutoCullPairwisePreference, AutoCullPhoto, AutoCullSession, Photo } from "./types.ts";
 
-export type AutomaticDecisions = Record<string, PhotoDecision>;
+type AutomaticDecision = PhotoDecision & { alternatives?: PhotoDecision[] };
+export type AutomaticDecisions = Record<string, AutomaticDecision>;
+type AutomaticStorage = StorageLike & Partial<Pick<Storage, "length" | "key">>;
+const AUTOMATIC_KEY = "hologram.autocull.automatic.v2";
+const LEGACY_PREFIX = "hologram.autocull.automatic.v1.";
 
-function storageKey(folderPath: string | null): string {
-  return `hologram.autocull.automatic.v1.${folderPath?.trim() || "global"}`;
+function parseDecision(value: unknown): PhotoDecision | undefined {
+  if (!value || typeof value !== "object" || !("flag" in value) || !("rating" in value)) return;
+  if (value.flag !== "pick" && value.flag !== "reject") return;
+  if (typeof value.rating !== "number" || !Number.isInteger(value.rating) || value.rating < 0 || value.rating > 5) return;
+  return { flag: value.flag, rating: value.rating };
 }
 
-export function loadAutomaticDecisions(storage: StorageLike | null, folderPath: string | null): AutomaticDecisions {
+function parseAutomatic(raw: string | null): AutomaticDecisions {
   try {
-    const raw: unknown = JSON.parse(storage?.getItem(storageKey(folderPath)) ?? "{}");
-    if (!raw || typeof raw !== "object" || Array.isArray(raw)) return {};
-    const entries: [string, PhotoDecision][] = [];
-    for (const [id, value] of Object.entries(raw)) {
-      if (!value || typeof value !== "object" || !("flag" in value) || !("rating" in value)) continue;
-      if (value.flag !== "pick" && value.flag !== "reject") continue;
-      if (typeof value.rating !== "number" || !Number.isInteger(value.rating) || value.rating < 0 || value.rating > 5) continue;
-      entries.push([id, { flag: value.flag, rating: value.rating }]);
+    const value: unknown = JSON.parse(raw ?? "{}");
+    if (!value || typeof value !== "object" || Array.isArray(value)) return {};
+    const entries: [string, AutomaticDecision][] = [];
+    for (const [id, item] of Object.entries(value)) {
+      const decision = parseDecision(item);
+      if (!decision) continue;
+      const alternatives = item && typeof item === "object" && "alternatives" in item && Array.isArray(item.alternatives)
+        ? item.alternatives.flatMap((candidate: unknown) => { const parsed = parseDecision(candidate); return parsed ? [parsed] : []; }) : [];
+      entries.push([id, alternatives.length ? { ...decision, alternatives } : decision]);
     }
     return Object.fromEntries(entries);
-  } catch {
-    return {};
-  }
+  } catch { return {}; }
 }
 
-export function saveAutomaticDecisions(storage: StorageLike | null, folderPath: string | null, automatic: AutomaticDecisions): void {
+export function loadAutomaticDecisions(storage: AutomaticStorage | null, folderPath: string | null): AutomaticDecisions {
   try {
-    storage?.setItem(storageKey(folderPath), JSON.stringify(automatic));
-  } catch {
-    // Unavailable storage must not interrupt the current cull.
-  }
+    const current = storage?.getItem(AUTOMATIC_KEY) ?? null;
+    if (current !== null) return parseAutomatic(current);
+    const keys = new Set([`${LEGACY_PREFIX}${folderPath?.trim() || "global"}`]);
+    if (storage && typeof storage.length === "number" && typeof storage.key === "function") {
+      for (let index = 0; index < storage.length; index++) {
+        const key = storage.key(index);
+        if (key?.startsWith(LEGACY_PREFIX)) keys.add(key);
+      }
+    }
+    const automatic = new Map<string, AutomaticDecision>();
+    for (const key of keys) {
+      for (const [id, decision] of Object.entries(parseAutomatic(storage?.getItem(key) ?? null))) {
+        const previous = automatic.get(id);
+        if (!previous) { automatic.set(id, decision); continue; }
+        const choices = [previous, ...(previous.alternatives ?? [])];
+        if (!choices.some((item) => sameDecision(item, decision))) {
+          automatic.set(id, { ...previous, alternatives: [...(previous.alternatives ?? []), decision] });
+        }
+      }
+    }
+    const result = Object.fromEntries(automatic);
+    saveAutomaticDecisions(storage, folderPath, result);
+    return result;
+  } catch { return {}; }
 }
 
-export function automaticPhotoIds(photos: Photo[], automatic: AutomaticDecisions): Set<string> {
+export function saveAutomaticDecisions(storage: StorageLike | null, _folderPath: string | null, automatic: AutomaticDecisions): void {
+  try { storage?.setItem(AUTOMATIC_KEY, JSON.stringify(automatic)); } catch {}
+}
+
+export function automaticPhotoIds(photos: Pick<Photo, "id" | "flag" | "rating">[], automatic: AutomaticDecisions): Set<string> {
   return new Set(photos.filter((photo) => {
     const decision = Object.hasOwn(automatic, photo.id) ? automatic[photo.id] : undefined;
-    return decision && sameDecision(normalizeDecision(photo), decision);
+    return decision && [decision, ...(decision.alternatives ?? [])].some((candidate) => sameDecision(normalizeDecision(photo), candidate));
   }).map((photo) => photo.id));
+}
+
+export function automaticFeedbackPhotoIds({ photos = [], refinements, pairs, automatic }: {
+  photos?: Pick<Photo, "id" | "flag" | "rating">[];
+  refinements: AutoCullPreferenceRefinement[];
+  pairs: AutoCullPairwisePreference[];
+  automatic: AutomaticDecisions;
+}): Set<string> {
+  const excluded = automaticPhotoIds([
+    ...photos,
+    ...refinements.map((row) => ({ id: row.photo_id, flag: row.flag, rating: row.rating })),
+  ], automatic);
+  for (const pair of pairs) {
+    for (const id of [pair.winner_photo_id, pair.loser_photo_id]) if (Object.hasOwn(automatic, id)) excluded.add(id);
+  }
+  return excluded;
 }
 
 function hasEvidence(photo: AutoCullPhoto | undefined): photo is AutoCullPhoto & { embedding: number[] } {

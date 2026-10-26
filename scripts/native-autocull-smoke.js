@@ -40,7 +40,7 @@
     const { HologramAPI } = await import('/src/lib/api.ts');
     const { photoStore } = await import('/src/lib/stores/photoStore.ts');
     const fixture = await invoke('autocull_smoke_fixture');
-    automaticKey = `hologram.autocull.automatic.v1.${fixture.folder}`;
+    automaticKey = 'hologram.autocull.automatic.v2';
     const planApi = await import('/src/lib/autocullPlan.ts');
     automatic = () => planApi.loadAutomaticDecisions(localStorage, fixture.folder);
     const phase = localStorage.getItem('hologram.native-smoke.phase');

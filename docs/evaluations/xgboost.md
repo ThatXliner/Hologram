@@ -44,7 +44,7 @@ The comparison evaluates the tree contribution alone. A replacement decision mus
 
 ## Export a decision book
 
-In AutoCull, open **Analysis & taste profile** and export the active profile's decision book. Hologram gathers effective manual decisions, comparisons, and compatible saved features across folders. Correction and undo change the next export. The book uses opaque aliases and contains no originals or image paths. Its summary counts feedback omitted because features or source groups are missing or incompatible.
+In AutoCull, open **Analysis & taste profile** and export the active profile's decision book. Hologram gathers effective manual decisions, comparisons, and compatible saved features across folders. Correction and undo change the next export. The book uses opaque aliases and contains no original images or file paths. Derived image features may reveal coarse image content. Its summary counts feedback omitted because features or source groups are missing or incompatible, or because a photo is still marked automatic. Automatic provenance is shared by photo identity across folders. Legacy folder records migrate once; explicit confirmation clears that provenance, and undo restores it.
 
 Older saved features may lack source-folder identity. Open and analyze those folders again to capture that identity before exporting. A one-folder book can be saved. An empty book summary can be inspected, but saving requires exportable human feedback. Evaluation requires at least two shoots and held-out manual choices in the selected dataset.
 

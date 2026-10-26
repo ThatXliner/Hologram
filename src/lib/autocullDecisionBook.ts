@@ -7,6 +7,7 @@ import {
   type AutoCullPreferenceRefinement,
   type PreferenceFeatureSnapshot,
 } from "./autocull.ts";
+import { automaticFeedbackPhotoIds, loadAutomaticDecisions } from "./autocullPlan.ts";
 import type { AutoCullPairwisePreference, CullFlag, Photo } from "./types.ts";
 
 const MAX_FLOAT32 = 3.4028234663852886e38;
@@ -39,6 +40,7 @@ export interface DecisionBook {
     omitted_comparisons: number;
     unavailable_features: number;
     missing_shoot: number;
+    automatic_feedback: number;
   };
   photos: { id: string; shootId: string; backend: string; feature_version: string; features: number[]; embedding: number[] }[];
   reviews: { photoId: string; flag: CullFlag; rating: number; confidence: number; updated_at: string }[];
@@ -50,9 +52,10 @@ type BookInput = {
   pairs: AutoCullPairwisePreference[];
   snapshots: ReadonlyMap<string, PreferenceFeatureSnapshot>;
   createdAt?: string;
+  excludedAutomaticIds?: ReadonlySet<string>;
 };
 
-export function buildDecisionBook({ refinements, pairs, snapshots, createdAt = new Date().toISOString() }: BookInput): DecisionBook {
+export function buildDecisionBook({ refinements, pairs, snapshots, createdAt = new Date().toISOString(), excludedAutomaticIds = new Set<string>() }: BookInput): DecisionBook {
   const decisions = new Map(refinements.filter((row) => row.source === "manual_decision").map((row) => [row.photo_id, row]));
   const comparisons = new Map<string, AutoCullPairwisePreference>();
   for (const pair of pairs) {
@@ -67,9 +70,11 @@ export function buildDecisionBook({ refinements, pairs, snapshots, createdAt = n
   const summary: DecisionBook["summary"] = {
     manual_decisions: 0, comparisons: 0, photos: 0, shoots: 0, datasets: 0,
     omitted_decisions: 0, omitted_comparisons: 0, unavailable_features: 0, missing_shoot: 0,
+    automatic_feedback: [...referenced].filter((id) => excludedAutomaticIds.has(id)).length,
   };
   const usable = new Map<string, PreferenceFeatureSnapshot>();
   for (const id of [...referenced].sort()) {
+    if (excludedAutomaticIds.has(id)) continue;
     const snapshot = snapshots.get(id);
     if (!snapshot) { summary.unavailable_features++; continue; }
     if (snapshot.version !== PREFERENCE_FEATURE_VERSION || !BACKENDS.has(snapshot.backend)
@@ -149,5 +154,7 @@ export async function createDecisionBook(profileId: string, photos: Photo[] = []
   const ids = new Set(refinements.map((row) => row.photo_id));
   for (const pair of pairs) { ids.add(pair.winner_photo_id); ids.add(pair.loser_photo_id); }
   const snapshots = await loadPreferenceFeatureSnapshots([...ids], photos);
-  return buildDecisionBook({ refinements, pairs, snapshots });
+  const automatic = loadAutomaticDecisions(typeof localStorage === "undefined" ? null : localStorage, null);
+  const excludedAutomaticIds = automaticFeedbackPhotoIds({ refinements, pairs, automatic });
+  return buildDecisionBook({ refinements, pairs, snapshots, excludedAutomaticIds });
 }

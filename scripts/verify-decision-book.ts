@@ -101,12 +101,40 @@ try {
   const prepare = page.locator('[data-autocull-prepare-decision-book]');
   const save = page.locator('[data-autocull-save-decision-book]');
   const summary = page.locator('[data-autocull-decision-book-summary]');
+  await page.evaluate(async () => {
+    const modulePath = '/src/lib/stores/photoStore.ts';
+    const { photoStore } = await import(modulePath);
+    photoStore.setPhotoFlag('private-book-4', 'none');
+  });
+  await view.getByRole('button', { name: 'Refresh analysis', exact: true }).click();
+  await page.waitForFunction(() => {
+    const button = document.querySelector('[data-autocull-prepare-decision-book]');
+    return button instanceof HTMLButtonElement && !button.disabled;
+  });
+  assert.equal(await page.evaluate(() => Object.hasOwn(JSON.parse(localStorage.getItem('hologram.autocull.automatic.v2') ?? '{}'), 'private-book-4')), true, 'loading neutral metadata cannot erase known automatic provenance');
+  await page.evaluate(async () => {
+    const modulePath = '/src/lib/stores/photoStore.ts';
+    const { photoStore } = await import(modulePath);
+    photoStore.setPhotoFlag('private-book-4', 'pick');
+  });
+  await view.getByRole('button', { name: 'Refresh analysis', exact: true }).click();
+  await page.waitForFunction(() => {
+    const button = document.querySelector('[data-autocull-prepare-decision-book]');
+    return button instanceof HTMLButtonElement && !button.disabled;
+  });
+  const metadataScopeBook = await page.evaluate(async () => {
+    const modulePath = '/src/lib/autocullDecisionBook.ts';
+    const { createDecisionBook } = await import(modulePath);
+    return createDecisionBook('default');
+  });
+  assert.equal(metadataScopeBook.summary.manual_decisions, 4);
+  checks.push('metadata from another folder cannot erase automatic provenance or turn its returning flag into human feedback');
   await prepare.click();
   await save.waitFor();
   assert.match(await summary.innerText(), /4 labels · 2 comparisons · 4 photos/);
   assert.match(await summary.innerText(), /2 provisional shoots/);
   assert.match(await summary.innerText(), /1 labels and 0 comparisons omitted/);
-  assert.match(await summary.innerText(), /No images or file paths/);
+  assert.match(await summary.innerText(), /No original images or file paths/);
   checks.push('preparation reads saved human reviews, groups two shoots, and reports unavailable evidence');
   await summary.scrollIntoViewIfNeeded();
   await page.screenshot({ path: join(output, 'prepared.png'), fullPage: true });

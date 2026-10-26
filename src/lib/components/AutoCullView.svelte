@@ -41,6 +41,7 @@
     } from "../autocull.ts";
     import {
         automaticPhotoIds,
+        automaticFeedbackPhotoIds,
         buildAutoCullPlan,
         loadAutomaticDecisions,
         saveAutomaticDecisions,
@@ -129,7 +130,6 @@
     let activePreferenceProfileId = $state(DEFAULT_PREFERENCE_PROFILE_ID);
     let folderPath = $state<string | null>(null);
     let resolutions = $state.raw<ResolutionMap>({});
-    // Flags AutoCull set itself, per folder and shared by every profile. They never train.
     let automatic = $state.raw<AutomaticDecisions>({});
     let history = $state.raw<ReviewSnapshot[]>([]);
     let decisionsSinceAnalysis = $state(0);
@@ -330,15 +330,6 @@
         analysisRun++;
     });
 
-    /** Forget provenance for flags someone changed outside AutoCull: those are now the photographer's. */
-    function pruneAutomatic(library: Photo[]) {
-        const byId = new Map(library.map((photo) => [photo.id, photo]));
-        const stale = Object.keys(automatic).filter((id) => byId.has(id) && !sameDecision(normalizeDecision(byId.get(id)), automatic[id]));
-        if (stale.length === 0) return;
-        automatic = patchAutomatic(automatic, Object.fromEntries(stale.map((id) => [id, null])));
-        saveAutomaticDecisions(storage(), folderPath, automatic);
-    }
-
     async function runAnalysis() {
         invalidateDecisionBook();
         const input = photos;
@@ -375,18 +366,19 @@
                 status = "No photos to analyze";
                 return;
             }
-            pruneAutomatic(library);
+            const refinements = loadPreferenceRefinements(profileId);
+            const preferences = loadPairwisePreferences(profileId);
             const next = await buildAutoCullSession(
                 analysisPhotos,
-                loadPairwisePreferences(profileId),
+                preferences,
                 (nextProgress) => {
                     if (isCurrent()) progress = nextProgress;
                 },
-                loadPreferenceRefinements(profileId),
+                refinements,
                 profileId === DEFAULT_PREFERENCE_PROFILE_ID,
                 folder,
                 // AutoCull's own flags are not the photographer's taste: never learn from them.
-                automaticPhotoIds(library, automatic),
+                automaticFeedbackPhotoIds({ photos: library, refinements, pairs: preferences, automatic }),
                 profileId,
                 learner,
                 isCurrent,
@@ -781,7 +773,7 @@
             const base = isActiveFolder ? automatic : loadAutomaticDecisions(storage(), entry.folderPath);
             const restored = patchAutomatic(base, entry.automatic);
             saveAutomaticDecisions(storage(), entry.folderPath, restored);
-            if (isActiveFolder) automatic = restored;
+            automatic = restored;
         }
         if (entry.label !== AUTO_LABEL) decisionsSinceAnalysis = Math.max(0, decisionsSinceAnalysis - 1);
         justCompleted = false;
@@ -1399,8 +1391,9 @@
                                     {#if summary.omitted_decisions || summary.omitted_comparisons}
                                         <p class="mt-1 text-warning">{summary.omitted_decisions} labels and {summary.omitted_comparisons} comparisons omitted.</p>
                                         <p>{summary.unavailable_features} photos with missing or outdated features · {summary.missing_shoot} without a source group.</p>
+                                        {#if summary.automatic_feedback}<p>{summary.automatic_feedback} photos still marked automatic were excluded.</p>{/if}
                                     {/if}
-                                    <p class="mt-2">No images or file paths. IDs are replaced for this file.</p>
+                                    <p class="mt-2">No original images or file paths. Derived features may reveal coarse image content. IDs are replaced for this file.</p>
                                     <p class="mt-1">Shoot groups come from source folders. Check that related frames stay together before using them as independent test splits.</p>
                                     {#if summary.manual_decisions + summary.comparisons === 0}
                                         <p class="mt-2 text-muted-foreground">No exportable human reviews yet. Review photos in this profile and retry. Reopen older shoots to restore missing source groups.</p>

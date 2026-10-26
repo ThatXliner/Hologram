@@ -8,6 +8,7 @@ on:
       - 'scripts/*xgboost*'
       - 'src/lib/autocull.ts'
       - 'src/lib/autocullNative*'
+      - 'src/lib/autocullPlan*'
       - 'src/lib/autocullDecisionBook*'
       - 'src/lib/decisionBookFile.ts'
       - 'src-tauri/src/decision_book.rs'

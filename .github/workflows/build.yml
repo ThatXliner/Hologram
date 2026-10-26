@@ -7,11 +7,17 @@ on:
       - "v*"
   pull_request:
   workflow_dispatch:
+    inputs:
+      release_tag:
+        description: Existing release tag to rebuild and verify
+        required: false
+        default: ""
+        type: string
 
 jobs:
   build:
     # Only run CI builds on non-tag pushes and PRs
-    if: "!startsWith(github.ref, 'refs/tags/v')"
+    if: "!startsWith(github.ref, 'refs/tags/v') && !(github.event_name == 'workflow_dispatch' && inputs.release_tag != '')"
     strategy:
       matrix:
         os: [ubuntu-latest, macos-15, windows-latest]
@@ -90,7 +96,7 @@ jobs:
             src-tauri/target/release/bundle/*/*.msi
 
   release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     permissions:
       contents: write
     strategy:
@@ -114,13 +120,28 @@ jobs:
         uses: actions/checkout@v4
         with:
           lfs: true
+          ref: ${{ inputs.release_tag && format('refs/tags/{0}', inputs.release_tag) || github.ref }}
+
+      - name: Verify release target
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
+        run: |
+          node <<'NODE'
+          const fs = require('node:fs');
+          const tag = process.env.RELEASE_TAG;
+          const config = JSON.parse(fs.readFileSync('src-tauri/tauri.conf.json', 'utf8'));
+          if (!/^v[0-9]+\.[0-9]+\.[0-9]+$/.test(tag) || tag !== `v${config.version}`) {
+            throw new Error('Release tag must match the checked-out app version');
+          }
+          NODE
 
       - name: Install dependencies (Ubuntu only)
         if: matrix.platform == 'ubuntu-latest'
-        uses: awalsh128/cache-apt-pkgs-action@latest
-        with:
-          packages: libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
-          version: 1.0
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y libwebkit2gtk-4.1-dev libappindicator3-dev librsvg2-dev patchelf
+          pkg-config --exists glib-2.0 gtk+-3.0 webkit2gtk-4.1
 
       - uses: oven-sh/setup-bun@v2
         with:
@@ -191,7 +212,7 @@ jobs:
           TAURI_SIGNING_PRIVATE_KEY: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY }}
           TAURI_SIGNING_PRIVATE_KEY_PASSWORD: ${{ secrets.TAURI_SIGNING_PRIVATE_KEY_PASSWORD }}
         with:
-          tagName: ${{ github.ref_name }}
+          tagName: ${{ inputs.release_tag || github.ref_name }}
           releaseName: "Hologram v__VERSION__"
           releaseBody: "See the assets to download and install this version."
           releaseDraft: true
@@ -217,7 +238,7 @@ jobs:
           path: native-package-report.json
 
   publish-release:
-    if: startsWith(github.ref, 'refs/tags/v')
+    if: startsWith(github.ref, 'refs/tags/v') || (github.event_name == 'workflow_dispatch' && inputs.release_tag != '')
     needs: release
     permissions:
       contents: write
@@ -226,5 +247,5 @@ jobs:
       - name: Publish verified release
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
-          RELEASE_TAG: ${{ github.ref_name }}
+          RELEASE_TAG: ${{ inputs.release_tag || github.ref_name }}
         run: gh release edit "$RELEASE_TAG" --repo "$GITHUB_REPOSITORY" --draft=false

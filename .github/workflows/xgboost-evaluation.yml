@@ -8,6 +8,11 @@ on:
       - 'scripts/*xgboost*'
       - 'src/lib/autocull.ts'
       - 'src/lib/autocullNative*'
+      - 'src/lib/autocullDecisionBook*'
+      - 'src/lib/decisionBookFile.ts'
+      - 'src-tauri/src/decision_book.rs'
+      - 'scripts/decision-book*'
+      - 'scripts/verify-decision-book.ts'
       - 'src/lib/components/AutoCullView.svelte'
       - 'scripts/verify-native-autocull*'
       - '.github/workflows/xgboost-evaluation.yml'
@@ -68,3 +73,4 @@ jobs:
       - run: bun run check
       - run: bun run test:autocull
       - run: bun scripts/verify-native-autocull-races.ts
+      - run: bun scripts/verify-decision-book.ts

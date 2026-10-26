@@ -29,6 +29,18 @@ try {
   console.log(`Native workflow artifacts: ${output}`);
   assert.ok(typeof report === 'object' && report !== null && 'ok' in report && report.ok === true, JSON.stringify(report));
   assert.equal(status, 0, 'Native verification process exits successfully');
+  assert.ok('decision_book_path' in report && typeof report.decision_book_path === 'string', 'Native workflow reports its saved decision book');
+  assert.equal(resolve(report.decision_book_path), join(output, 'shoot-a', 'decision-book.json'), 'Native export stays in the disposable fixture');
+  const contents = await readFile(report.decision_book_path, 'utf8');
+  const book: unknown = JSON.parse(contents);
+  assert.ok(typeof book === 'object' && book !== null && 'kind' in book && book.kind === 'hologram-decision-book'
+    && 'schema_version' in book && book.schema_version === 1, 'Actual native output is a versioned decision book');
+  assert.ok('summary' in book && typeof book.summary === 'object' && book.summary !== null, 'Saved book has review counts');
+  assert.ok('decision_book_summary' in report, 'Native workflow reports expected review counts');
+  assert.deepEqual(book.summary, report.decision_book_summary, 'Actual native file preserves the generated review counts');
+  assert.ok('reviews' in book && Array.isArray(book.reviews) && 'manual_decisions' in book.summary
+    && book.reviews.length === book.summary.manual_decisions && book.reviews.length > 0, 'Saved native file retains human review rows');
+  assert.ok(!contents.includes(output) && !contents.includes('native-smoke-'), 'Saved native file excludes source paths and original photo IDs');
   console.log(JSON.stringify({ output, report }, null, 2));
 } finally {
   clearTimeout(timeout);

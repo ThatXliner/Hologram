@@ -6,6 +6,7 @@
         CircleCheck,
         CircleDot,
         CornerDownLeft,
+        Download,
         ListChecks,
         Loader2,
         Maximize2,
@@ -22,6 +23,8 @@
         XCircle,
     } from "@lucide/svelte";
     import { onDestroy, tick, untrack } from "svelte";
+    import { createDecisionBook, type DecisionBook } from "../autocullDecisionBook.ts";
+    import { saveDecisionBookFile } from "../decisionBookFile.ts";
     import {
         DEFAULT_PREFERENCE_PROFILE_ID,
         buildAutoCullSession,
@@ -135,6 +138,17 @@
     let analysisInterrupted = $state(false);
     let advancedOpen = $state(false);
     const learnerAvailable = nativeLearnerAvailable();
+
+    type PreparedDecisionBook = { book: DecisionBook; profileId: string; profileName: string; revision: number };
+    type DecisionBookExport =
+        | { kind: "idle" }
+        | { kind: "preparing" }
+        | { kind: "ready"; prepared: PreparedDecisionBook; error: string }
+        | { kind: "saving"; prepared: PreparedDecisionBook }
+        | { kind: "saved"; filename: string; labels: number; comparisons: number }
+        | { kind: "error"; message: string };
+    let decisionBookExport = $state.raw<DecisionBookExport>({ kind: "idle" });
+    let decisionBookRevision = 0;
 
     // Plain variables: these coordinate async work and must not trigger effects.
     let loadedFolder: string | null | undefined = undefined;
@@ -266,6 +280,7 @@
     });
 
     function resetForFolder(folder: string | null) {
+        invalidateDecisionBook();
         loadedFolder = folder;
         folderPath = folder;
         analysisRun++;
@@ -325,6 +340,7 @@
     }
 
     async function runAnalysis() {
+        invalidateDecisionBook();
         const input = photos;
         const library = allPhotos;
         const folder = folderPath;
@@ -431,10 +447,50 @@
         learnerFailure = "";
         analysisInterrupted = true;
         history = [];
+        invalidateDecisionBook();
         activePreferenceProfileId = profileId;
         saveActivePreferenceProfileId(profileId);
         resolutions = loadResolutions(storage(), folderPath, profileId, DEFAULT_PREFERENCE_PROFILE_ID);
         status = `Profile: ${preferenceProfiles.find((profile) => profile.id === profileId)?.name ?? "Default"}`;
+    }
+
+    function invalidateDecisionBook() {
+        decisionBookRevision++;
+        decisionBookExport = { kind: "idle" };
+    }
+
+    async function prepareDecisionBook() {
+        if (isAnalyzing || decisionBookExport.kind === "preparing" || decisionBookExport.kind === "saving") return;
+        const revision = ++decisionBookRevision;
+        const profileId = activePreferenceProfileId;
+        const profileName = preferenceProfiles.find((profile) => profile.id === profileId)?.name ?? "Default";
+        decisionBookExport = { kind: "preparing" };
+        try {
+            const book = await createDecisionBook(profileId, allPhotos);
+            if (revision !== decisionBookRevision || destroyed) return;
+            decisionBookExport = { kind: "ready", prepared: { book, profileId, profileName, revision }, error: "" };
+        } catch (error) {
+            if (revision !== decisionBookRevision || destroyed) return;
+            decisionBookExport = { kind: "error", message: error instanceof Error ? error.message : String(error) };
+        }
+    }
+
+    async function saveDecisionBook() {
+        if (decisionBookExport.kind !== "ready" || isAnalyzing) return;
+        const prepared = decisionBookExport.prepared;
+        const isCurrent = () => prepared.revision === decisionBookRevision && prepared.profileId === activePreferenceProfileId && !destroyed;
+        if (!isCurrent()) return;
+        decisionBookExport = { kind: "saving", prepared };
+        try {
+            const result = await saveDecisionBookFile({ book: prepared.book, isCurrent });
+            if (!isCurrent()) return;
+            decisionBookExport = result.kind === "saved"
+                ? { kind: "saved", filename: result.filename, labels: prepared.book.summary.manual_decisions, comparisons: prepared.book.summary.comparisons }
+                : { kind: "ready", prepared, error: "" };
+        } catch (error) {
+            if (!isCurrent()) return;
+            decisionBookExport = { kind: "ready", prepared, error: error instanceof Error ? error.message : String(error) };
+        }
     }
 
     function createProfile() {
@@ -658,6 +714,7 @@
             }
         }
         invalidatePendingAnalysis();
+        invalidateDecisionBook();
         for (const id of refinementIds) {
             const photo = nextById.get(id);
             const analysis = recommendationsById.get(id) ?? recommendationsById.get(photo?.paired_with ?? "");
@@ -705,6 +762,7 @@
             }
         }
         invalidatePendingAnalysis();
+        invalidateDecisionBook();
         history = history.slice(0, -1);
         const isActiveFolder = entry.folderPath === folderPath;
         const isActive = isActiveFolder && entry.profileId === activePreferenceProfileId;
@@ -1317,6 +1375,58 @@
                         </button>
                     </div>
                     <p class="mt-1.5 px-1 text-[11px] italic leading-[1.5] text-subtle">Profiles are shared across every folder. Your keeps, rejects, ratings and finished stacks teach the active profile across shoots. AutoCull's own flags never do. Review progress stays with this folder and profile.</p>
+                    <div class="mt-3 border-t border-border pt-2" data-autocull-decision-book>
+                        <button
+                            class="flex items-center gap-1.5 px-2 py-[5px] text-left text-[12px] text-subtle transition-colors hover:text-foreground disabled:cursor-wait disabled:opacity-50"
+                            onclick={prepareDecisionBook}
+                            disabled={isAnalyzing || decisionBookExport.kind === "preparing" || decisionBookExport.kind === "saving"}
+                            data-autocull-prepare-decision-book
+                        >
+                            {#if decisionBookExport.kind === "preparing"}<Loader2 size={12} class="animate-spin" />{:else}<Download size={12} />{/if}
+                            {decisionBookExport.kind === "preparing" ? "Reading saved reviews…" : "Export decision book…"}
+                        </button>
+                        <div aria-live="polite" class="px-2 text-[11px] leading-[1.5] text-subtle">
+                            {#if decisionBookExport.kind === "ready" || decisionBookExport.kind === "saving"}
+                                {@const prepared = decisionBookExport.prepared}
+                                {@const summary = prepared.book.summary}
+                                <div class="mt-1 rounded-md border border-border bg-background p-2" data-autocull-decision-book-summary>
+                                    <p class="font-medium text-foreground">{prepared.profileName}</p>
+                                    <p>{summary.manual_decisions} labels · {summary.comparisons} comparisons · {summary.photos} photos</p>
+                                    <p>{summary.shoots} provisional shoots · {summary.datasets} feature datasets</p>
+                                    {#each prepared.book.datasets as dataset}
+                                        <p class="mt-1 break-words font-mono text-[10px]">{dataset.backend} · {dataset.photos.length} snapshots</p>
+                                    {/each}
+                                    {#if summary.omitted_decisions || summary.omitted_comparisons}
+                                        <p class="mt-1 text-warning">{summary.omitted_decisions} labels and {summary.omitted_comparisons} comparisons omitted.</p>
+                                        <p>{summary.unavailable_features} photos with missing or outdated features · {summary.missing_shoot} without a source group.</p>
+                                    {/if}
+                                    <p class="mt-2">No images or file paths. IDs are replaced for this file.</p>
+                                    <p class="mt-1">Shoot groups come from source folders. Check that related frames stay together before using them as independent test splits.</p>
+                                    {#if summary.manual_decisions + summary.comparisons === 0}
+                                        <p class="mt-2 text-muted-foreground">No exportable human reviews yet. Review photos in this profile and retry. Reopen older shoots to restore missing source groups.</p>
+                                    {/if}
+                                    {#if decisionBookExport.kind === "ready" && decisionBookExport.error}
+                                        <p role="alert" class="mt-2 text-reject">Could not save the decision book. {decisionBookExport.error}</p>
+                                    {/if}
+                                    <div class="mt-2 flex items-center gap-2">
+                                        <button
+                                            class="rounded-md bg-secondary px-2 py-1 font-medium text-foreground hover:bg-accent disabled:opacity-50"
+                                            onclick={saveDecisionBook}
+                                            disabled={isAnalyzing || decisionBookExport.kind === "saving" || summary.manual_decisions + summary.comparisons === 0}
+                                            data-autocull-save-decision-book
+                                        >{decisionBookExport.kind === "saving" ? "Saving…" : "Save JSON"}</button>
+                                        <button class="px-1 py-1 hover:text-foreground" onclick={invalidateDecisionBook} disabled={decisionBookExport.kind === "saving"} data-autocull-cancel-decision-book>Cancel</button>
+                                    </div>
+                                </div>
+                            {:else if decisionBookExport.kind === "saved"}
+                                <p class="mt-1 break-words" data-autocull-decision-book-saved>Saved {decisionBookExport.filename} · {decisionBookExport.labels} labels · {decisionBookExport.comparisons} comparisons.</p>
+                            {:else if decisionBookExport.kind === "error"}
+                                <p role="alert" class="mt-1 text-reject">Could not prepare the decision book. {decisionBookExport.message} Retry the export.</p>
+                            {:else if decisionBookExport.kind === "idle"}
+                                <p class="mt-1">Generate a local JSON book from this profile's saved human reviews and feature snapshots.</p>
+                            {/if}
+                        </div>
+                    </div>
                 </div>
             </div>
         </details>

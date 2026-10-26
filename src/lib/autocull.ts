@@ -173,6 +173,7 @@ export type PreferenceFeatureSnapshot = {
   backend: string;
   rankerFeatures: number[];
   embedding: number[];
+  sourceGroup?: string;
 };
 
 export const PREFERENCE_FEATURE_VERSION = `${RANKER_VERSION}:${FEATURE_CACHE_VERSION}`;
@@ -190,12 +191,14 @@ function isPreferenceFeatureSnapshot(value: unknown): value is PreferenceFeature
     && "photoId" in value && typeof value.photoId === "string"
     && "version" in value && value.version === PREFERENCE_FEATURE_VERSION
     && "backend" in value && typeof value.backend === "string"
+    && (!("sourceGroup" in value) || value.sourceGroup === undefined || typeof value.sourceGroup === "string")
     && "rankerFeatures" in value && isFiniteVector(value.rankerFeatures, 11 + EMBEDDING_RANKER_FEATURES)
     && "embedding" in value && isFiniteVector(value.embedding) && value.embedding.some((item) => item !== 0);
 }
 
-function makePreferenceSnapshot(photoId: string, rankerFeatures: number[], pixels: PixelFeatures): PreferenceFeatureSnapshot {
-  return { photoId, version: PREFERENCE_FEATURE_VERSION, backend: pixels.backend, rankerFeatures, embedding: [...pixels.embedding] };
+async function makePreferenceSnapshot(photo: Photo, rankerFeatures: number[], pixels: PixelFeatures): Promise<PreferenceFeatureSnapshot> {
+  return { photoId: photo.id, version: PREFERENCE_FEATURE_VERSION, backend: pixels.backend, rankerFeatures,
+    embedding: [...pixels.embedding], sourceGroup: await preferenceSourceGroup(photo.file_path) };
 }
 
 async function openPreferenceDb(): Promise<IDBDatabase | null> {
@@ -218,7 +221,8 @@ async function openPreferenceDb(): Promise<IDBDatabase | null> {
 }
 
 async function persistPreferenceSnapshots(snapshots: PreferenceFeatureSnapshot[]): Promise<boolean> {
-  const valid = snapshots.filter(isPreferenceFeatureSnapshot);
+  const valid = snapshots.filter(isPreferenceFeatureSnapshot).map((snapshot) => ({ ...snapshot,
+    sourceGroup: snapshot.sourceGroup ?? preferenceFeatureMemory.get(snapshot.photoId)?.sourceGroup }));
   for (const snapshot of valid) preferenceFeatureMemory.set(snapshot.photoId, snapshot);
   if (!valid.length) return true;
   const db = await openPreferenceDb();
@@ -226,7 +230,17 @@ async function persistPreferenceSnapshots(snapshots: PreferenceFeatureSnapshot[]
   return new Promise((resolve) => {
     try {
       const transaction = db.transaction("features", "readwrite");
-      for (const snapshot of valid) transaction.objectStore("features").put(snapshot);
+      const store = transaction.objectStore("features");
+      for (const snapshot of valid) {
+        const request = store.get(snapshot.photoId);
+        request.onsuccess = () => {
+          const previous: unknown = request.result;
+          const updated = { ...snapshot, sourceGroup: snapshot.sourceGroup
+            ?? (isPreferenceFeatureSnapshot(previous) ? previous.sourceGroup : undefined) };
+          preferenceFeatureMemory.set(updated.photoId, updated);
+          store.put(updated);
+        };
+      }
       transaction.oncomplete = () => resolve(true);
       transaction.onerror = () => resolve(false);
       transaction.onabort = () => resolve(false);
@@ -236,19 +250,32 @@ async function persistPreferenceSnapshots(snapshots: PreferenceFeatureSnapshot[]
   });
 }
 
+export async function preferenceSourceGroup(filePath: string): Promise<string | undefined> {
+  const normalized = filePath.replaceAll("\\", "/");
+  const separator = normalized.lastIndexOf("/");
+  if (separator < 0) return undefined;
+  const folder = normalized.slice(0, separator) || "/";
+  try {
+    const digest = await crypto.subtle.digest("SHA-256", new TextEncoder().encode(folder));
+    return `folder-sha256:${Array.from(new Uint8Array(digest), (byte) => byte.toString(16).padStart(2, "0")).join("")}`;
+  } catch {
+    return undefined;
+  }
+}
+
 export function capturePreferenceFeatures(photos: Photo[], session: Pick<AutoCullSession, "photos">): Promise<boolean> {
   const analysisById = new Map(session.photos.map((analysis) => [analysis.photo_id, analysis]));
-  const snapshots = photos.flatMap((photo) => {
+  const pending = Promise.all(photos.map(async (photo) => {
     const analysis = analysisById.get(photo.id);
     if (!analysis?.embedding?.length) return [];
     const pixels = { embedding: analysis.embedding, technicalScore: analysis.technical_score, backend: analysis.embedding_backend ?? PERCEPTUAL_EMBEDDING_BACKEND };
-    return [makePreferenceSnapshot(photo.id, rankerFeatureVector(photo, pixels, pixels.technicalScore), pixels)];
-  });
-  preferenceWrites = preferenceWrites.then(() => persistPreferenceSnapshots(snapshots));
+    return [await makePreferenceSnapshot(photo, rankerFeatureVector(photo, pixels, pixels.technicalScore), pixels)];
+  }));
+  preferenceWrites = preferenceWrites.then(async () => persistPreferenceSnapshots((await pending).flat()));
   return preferenceWrites;
 }
 
-export async function loadPreferenceFeatureSnapshots(photoIds: string[]): Promise<Map<string, PreferenceFeatureSnapshot>> {
+export async function loadPreferenceFeatureSnapshots(photoIds: string[], sourcePhotos: Photo[] = []): Promise<Map<string, PreferenceFeatureSnapshot>> {
   await preferenceWrites;
   const result = new Map<string, PreferenceFeatureSnapshot>();
   const db = await openPreferenceDb();
@@ -272,6 +299,29 @@ export async function loadPreferenceFeatureSnapshots(photoIds: string[]): Promis
     const snapshot = preferenceFeatureMemory.get(id);
     if (snapshot) result.set(id, snapshot);
   }
+  const backfilled: PreferenceFeatureSnapshot[] = [];
+  for (const photo of sourcePhotos) {
+    const snapshot = result.get(photo.id);
+    if (!snapshot || snapshot.sourceGroup) continue;
+    const sourceGroup = await preferenceSourceGroup(photo.file_path);
+    if (!sourceGroup) continue;
+    const updated = { ...snapshot, sourceGroup };
+    result.set(photo.id, updated);
+    backfilled.push(updated);
+  }
+  if (backfilled.length) {
+    preferenceWrites = preferenceWrites.then(() => {
+      const current = backfilled.map((snapshot) => {
+        const latest = preferenceFeatureMemory.get(snapshot.photoId) ?? snapshot;
+        const updated = { ...latest, sourceGroup: latest.sourceGroup ?? snapshot.sourceGroup };
+        result.set(snapshot.photoId, updated);
+        return updated;
+      });
+      return persistPreferenceSnapshots(current);
+    });
+    await preferenceWrites;
+  }
+
   return result;
 }
 
@@ -627,12 +677,12 @@ export async function buildAutoCullSession(
     ...preferences.flatMap((item) => [item.winner_photo_id, item.loser_photo_id]),
   ]);
   const records = buildFeatureRecords(photos, featuresById);
-  const captured = photos.filter((photo) => referencedIds.has(photo.id) && !excludedTrainingIds.has(photo.id)).flatMap((photo) => {
+  const captured = await Promise.all(photos.filter((photo) => referencedIds.has(photo.id) && !excludedTrainingIds.has(photo.id)).map(async (photo) => {
     const pixels = featuresById.get(photo.id);
     const record = records.get(photo.id);
-    return pixels && record ? [makePreferenceSnapshot(photo.id, record.rankerFeatures, pixels)] : [];
-  });
-  await persistPreferenceSnapshots(captured);
+    return pixels && record ? [await makePreferenceSnapshot(photo, record.rankerFeatures, pixels)] : [];
+  }));
+  preferenceWrites = preferenceWrites.then(() => isCurrent() ? persistPreferenceSnapshots(captured.flat()) : false);
   await preferenceWrites;
   const snapshots = await loadPreferenceFeatureSnapshots([...referencedIds]);
   if (!isCurrent()) throw new Error("Analysis was superseded by newer choices");
@@ -2133,7 +2183,7 @@ function behaviorSignal(photo: Photo): number {
   return clamp(signal, -0.3, 0.3);
 }
 
-function pointwiseSignal(flag: CullFlag, rating: number): number {
+export function pointwiseSignal(flag: CullFlag, rating: number): number {
   const ratingSignal = rating > 0 ? rating / 5 : 0.5;
   if (flag === "pick") return clamp01(Math.max(0.78, ratingSignal));
   if (flag === "reject") return clamp01(Math.min(0.18, ratingSignal * 0.35));

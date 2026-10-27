@@ -7,13 +7,15 @@
     <meta name="color-scheme" content="dark" />
     <meta
       name="description"
-      content="Hologram is a fast, local-first photo culling and management app for photographers who want complete control over their files."
+      content="Hologram is a fast, local-first photo culling and management app for photographers who want complete control over their files. Version 1.2.0 is available for macOS, Windows, and Linux."
     />
     <meta property="og:type" content="website" />
+    <meta property="og:site_name" content="Hologram" />
+    <meta property="og:url" content="https://bryanhu.com/Hologram/" />
     <meta property="og:title" content="Hologram — Cull the shoot. Keep your files." />
     <meta
       property="og:description"
-      content="Pro-grade RAW+JPEG culling, local AutoCull, deep EXIF filters, and a keyboard-first workflow. Your originals never leave your machine."
+      content="Pro-grade RAW+JPEG culling, a local AutoCull that keeps learning your taste across shoots, deep EXIF filters, and a keyboard-first workflow. Your originals never leave your machine."
     />
     <meta property="og:image" content="https://bryanhu.com/Hologram/og.png" />
     <meta name="twitter:card" content="summary_large_image" />
@@ -25,7 +27,7 @@
     <meta name="twitter:image" content="https://bryanhu.com/Hologram/og.png" />
     <link rel="canonical" href="https://bryanhu.com/Hologram/" />
     <link rel="icon" href="./favicon.png" />
-    <link rel="stylesheet" href="./styles.css?v=aspect-ratio-v2" />
+    <link rel="stylesheet" href="./styles.css?v=release-1.2.0" />
     <title>Hologram — Local-first photo culling</title>
   </head>
   <body>
@@ -40,6 +42,7 @@
       <nav class="nav-links" id="site-nav" aria-label="Primary navigation">
         <a href="#workflow">Workflow</a>
         <a href="#autocull">AutoCull</a>
+        <a href="#release">What's new</a>
         <a href="#principles">Principles</a>
       </nav>
 
@@ -53,10 +56,10 @@
         >
         <a
           class="button button-small"
-          href="https://nightly.link/ThatXliner/Hologram/workflows/build/main"
+          href="https://github.com/ThatXliner/Hologram/releases/tag/v1.2.0"
           target="_blank"
           rel="noreferrer"
-          >Get the nightly</a
+          >Download 1.2.0</a
         >
         <button class="menu-toggle" type="button" aria-controls="site-nav" aria-expanded="false">
           <span></span><span></span><span></span><span class="sr-only">Toggle menu</span>
@@ -68,7 +71,7 @@
       <section class="hero" id="top">
         <div class="hero-glow" aria-hidden="true"></div>
         <div class="shell hero-copy reveal">
-          <p class="eyebrow"><span class="status-dot"></span> Local-first photo workflow <span>/</span> macOS first</p>
+          <p class="eyebrow"><span class="status-dot"></span> Version 1.2.0 is out <span>/</span> Local-first photo workflow</p>
           <h1>Cull the shoot.<br /><em>Keep your files.</em></h1>
           <p class="hero-deck">
             Hologram is the fast, keyboard-first workspace for photographers who want RAW+JPEG control,
@@ -77,14 +80,20 @@
           <div class="hero-actions">
             <a
               class="button"
-              href="https://nightly.link/ThatXliner/Hologram/workflows/build/main"
+              href="https://github.com/ThatXliner/Hologram/releases/tag/v1.2.0"
               target="_blank"
               rel="noreferrer"
-              >Download the nightly <span aria-hidden="true">↘</span></a
+              >Download Hologram 1.2.0 <span aria-hidden="true">↘</span></a
             >
-            <a class="text-link" href="#workflow">See the workflow <span aria-hidden="true">↓</span></a>
+            <a class="text-link" href="#release">What's new in 1.2.0 <span aria-hidden="true">↓</span></a>
           </div>
-          <p class="build-note">Open source · Active development · Your originals stay untouched</p>
+          <p class="platform-note">
+            <a href="https://github.com/ThatXliner/Hologram/releases/download/v1.2.0/hologram_1.2.0_aarch64.dmg"
+              >macOS Apple Silicon (.dmg)</a
+            >
+            <span aria-hidden="true">·</span> Windows x64 <span aria-hidden="true">·</span> Linux x64
+          </p>
+          <p class="build-note">Open source · Stable release · Your originals stay untouched</p>
         </div>
 
         <div class="shell hero-product reveal" data-delay="1">
@@ -209,16 +218,16 @@
       <section class="section shell feature-section" id="autocull">
         <div class="feature-copy reveal">
           <p class="eyebrow">intelligence with boundaries</p>
-          <h2>Introducing<br /><em>AutoCull.</em></h2>
+          <h2>AutoCull learns<br /><em>your taste.</em></h2>
           <p>
-            Hologram groups bursts, scores technical quality, and learns from the picks you make—all on your machine.
+            Hologram groups bursts, scores technical quality, and learns from the calls you make, all on your machine.
             Every recommendation is inspectable. Every final decision is still yours.
           </p>
           <ul class="check-list">
             <li><span>✓</span> Burst and similarity clustering</li>
-            <li><span>✓</span> Adjustable reject threshold</li>
+            <li><span>✓</span> A summary before anything applies, undone in one step</li>
             <li><span>✓</span> Technical + personal score breakdown</li>
-            <li><span>✓</span> Taste profiles trained by your choices</li>
+            <li><span>✓</span> One taste profile that carries across shoots</li>
           </ul>
           <p class="micro-note">Manual flags always win.</p>
         </div>
@@ -227,30 +236,82 @@
           <div class="shot-label"><span>LOCAL MODEL</span><span>12 / 12 indexed</span></div>
           <img
             src="./assets/autocull.webp"
-            alt="AutoCull showing burst recommendations, score confidence, and manual controls"
+            alt="AutoCull ranking a set of photos with a technical and personal score breakdown and manual Keep and Reject controls"
             loading="lazy"
             width="2200"
             height="1375"
           />
-          <div class="score-float" aria-hidden="true">
-            <span>SELECT</span><strong>7.6</strong><small>98% confidence</small>
+        </div>
+      </section>
+
+      <section class="section release-section" id="release" aria-labelledby="release-title">
+        <div class="shell">
+          <div class="section-heading reveal">
+            <p class="eyebrow">New in 1.2.0</p>
+            <div>
+              <h2 id="release-title">Taste that carries over.<br /><em>Evidence you can rerun.</em></h2>
+              <p class="section-lede">
+                AutoCull now keeps learning from one profile across every folder you open, and gives you the data to
+                check how it learns.
+              </p>
+            </div>
+          </div>
+
+          <div class="release-grid">
+            <article class="release-item reveal">
+              <div class="release-meta"><span>01</span><span class="release-tag">AutoCull</span></div>
+              <h3>Your taste profile follows you between shoots.</h3>
+              <p>
+                Your saved picks, rejects, ratings, and comparisons carry across folders with your active profile.
+                Keep teaching AutoCull as you review each shoot.
+              </p>
+              <ul class="release-facts">
+                <li>Your manual reviews teach it. Its own automatic picks don't.</li>
+                <li>Corrections and undo change what it learns.</li>
+              </ul>
+            </article>
+
+            <article class="release-item reveal" data-delay="1">
+              <div class="release-meta">
+                <span>02</span><span class="release-tag release-tag-experimental">Experimental · Opt-in</span>
+              </div>
+              <h3>A native XGBoost learner, if you want to try it.</h3>
+              <p>
+                Try <strong>Use XGBoost learner</strong> under Analysis &amp; taste profile.
+                It trains locally with no extra setup. The built-in learner stays the default.
+              </p>
+              <p class="release-caveat">
+                <b>Experimental</b>We haven't established that it ranks better on held-out human reviews.
+              </p>
+            </article>
+
+            <article class="release-item reveal" data-delay="2">
+              <div class="release-meta"><span>03</span><span class="release-tag">Export</span></div>
+              <h3>Decision books for repeatable evaluation.</h3>
+              <p>
+                Export a decision book and Hologram generates a JSON file from your saved reviews and derived
+                image features. Compare trainers against the same decisions without relabeling your photos.
+              </p>
+              <ul class="release-facts">
+                <li>Anonymous photo IDs, with no original images or file paths.</li>
+                <li>Automatic decisions stay out of the review data.</li>
+              </ul>
+              <p class="release-caveat">
+                <b>Before you share one</b>Derived features can still reveal coarse image content.
+              </p>
+            </article>
+          </div>
+
+          <div class="release-foot reveal">
+            <span>Hologram 1.2.0 · macOS Apple Silicon · Windows x64 · Linux x64</span>
+            <a href="https://github.com/ThatXliner/Hologram/releases/tag/v1.2.0" target="_blank" rel="noreferrer"
+              >Release notes &amp; downloads <span aria-hidden="true">↗</span></a
+            >
           </div>
         </div>
       </section>
 
-      <!--<section class="manifesto-band" id="principles">
-        <div class="shell manifesto-grid">
-          <p class="eyebrow reveal">The deal</p>
-          <div class="manifesto-copy reveal" data-delay="1">
-            <h2>Your files are not a subscription.</h2>
-            <p>
-              No cloud library. No proprietary vault. No surprise rewrite of your originals. Hologram reads the
-              folders you already own and puts the fastest decisions one keystroke away.
-            </p>
-          </div>
-        </div>
-      </section>-->
-      <section class="section shell values-section">
+      <section class="section shell values-section" id="principles">
         <div class="section-heading reveal">
           <p class="eyebrow">Built on a few stubborn beliefs</p>
           <h2>Professional tools should<br />respect professional intent.</h2>
@@ -282,10 +343,10 @@
           <div class="hero-actions">
             <a
               class="button button-dark"
-              href="https://nightly.link/ThatXliner/Hologram/workflows/build/main"
+              href="https://github.com/ThatXliner/Hologram/releases/tag/v1.2.0"
               target="_blank"
               rel="noreferrer"
-              >Get Hologram nightly <span aria-hidden="true">↘</span></a
+              >Get Hologram 1.2.0 <span aria-hidden="true">↘</span></a
             >
             <a
               class="text-link text-link-dark"
@@ -295,7 +356,7 @@
               >Star on GitHub <span aria-hidden="true">↗</span></a
             >
           </div>
-          <p class="build-note build-note-dark">Free and open source · Builds for macOS, Windows, and Linux</p>
+          <p class="build-note build-note-dark">Free and open source · macOS Apple Silicon, Windows x64, and Linux x64</p>
         </div>
       </section>
     </main>
@@ -308,6 +369,7 @@
         </div>
         <div class="footer-links">
           <a href="https://github.com/ThatXliner/Hologram" target="_blank" rel="noreferrer">GitHub ↗</a>
+          <a href="https://github.com/ThatXliner/Hologram/releases/tag/v1.2.0" target="_blank" rel="noreferrer">Release notes ↗</a>
           <a href="https://github.com/ThatXliner/Hologram/issues/6" target="_blank" rel="noreferrer">Roadmap ↗</a>
           <a href="https://github.com/ThatXliner/Hologram/blob/main/LICENSE" target="_blank" rel="noreferrer">License ↗</a>
         </div>

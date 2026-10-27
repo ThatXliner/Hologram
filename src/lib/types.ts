@@ -156,6 +156,7 @@ export interface PhotoMetadata {
   notes: string;
   rating: number;
   flag: CullFlag;
+  xmp_cull_revision?: string | null;
 }
 
 export interface AutoCullPhoto {
@@ -218,6 +219,23 @@ export interface AutoCullSession {
 export interface XmpSidecarResult {
   processed_count: number;
   skipped_count: number;
+}
+
+export interface XmpImportOutcome {
+  photo_id: string;
+  file_path: string;
+  sidecar_path: string | null;
+  status: "imported" | "unchanged" | "skipped" | "error";
+  message: string;
+}
+
+export interface XmpImportResult {
+  imported_count: number;
+  unchanged_count: number;
+  skipped_count: number;
+  error_count: number;
+  outcomes: XmpImportOutcome[];
+  metadata: Record<string, PhotoMetadata>;
 }
 
 export interface PhotoStats {

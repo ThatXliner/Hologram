@@ -49,7 +49,12 @@ pub fn on_page_load<R: Runtime>(
     payload: &tauri::webview::PageLoadPayload<'_>,
 ) {
     if payload.event() == tauri::webview::PageLoadEvent::Finished {
-        if let Err(error) = webview.eval(include_str!("../../scripts/native-autocull-smoke.js")) {
+        let script = if std::env::var("HOLOGRAM_SMOKE_SCENARIO").as_deref() == Ok("xmp") {
+            include_str!("../../scripts/native-xmp-smoke.js")
+        } else {
+            include_str!("../../scripts/native-autocull-smoke.js")
+        };
+        if let Err(error) = webview.eval(script) {
             eprintln!("native smoke injection failed: {error}");
             webview.app_handle().exit(1);
         }
@@ -69,11 +74,17 @@ pub fn autocull_smoke_fixture() -> Result<SmokeFixture, String> {
     let folder = root.join("shoot-a");
     let other = root.join("shoot-b");
     let portrait = include_bytes!("../../scripts/fixtures/stock/portrait.jpg");
-    for path in [&folder, &other] {
-        std::fs::create_dir_all(path).map_err(|e| e.to_string())?;
-        for name in ["original", "duplicate", "blurred", "black", "white"] {
-            std::fs::write(path.join(format!("{name}.jpg")), portrait)
-                .map_err(|e| e.to_string())?;
+    if std::env::var("HOLOGRAM_SMOKE_SCENARIO").as_deref() == Ok("xmp") {
+        if !folder.join("black.jpg.xmp").is_file() {
+            return Err("prepare the XMP fixture with scripts/verify-native-xmp.ts".into());
+        }
+    } else {
+        for path in [&folder, &other] {
+            std::fs::create_dir_all(path).map_err(|e| e.to_string())?;
+            for name in ["original", "duplicate", "blurred", "black", "white"] {
+                std::fs::write(path.join(format!("{name}.jpg")), portrait)
+                    .map_err(|e| e.to_string())?;
+            }
         }
     }
     Ok(SmokeFixture {

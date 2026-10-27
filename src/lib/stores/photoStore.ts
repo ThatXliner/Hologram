@@ -3,12 +3,14 @@ import type {
   CullFlag,
   EmbeddedJpegPreview,
   Photo,
+  PhotoMetadata,
   PhotoFilter,
   PhotoStats,
   AppState,
   ScanProgress,
 } from "../types.ts";
 import { HologramAPI } from "../api.ts";
+import { beginXmpImport, finishXmpImport, reconcileXmpImports, resolveXmpImportFailure, xmpImportFailure } from "../xmpImport.ts";
 
 const RAW_FILE_TYPES = new Set([
   "3FR", "ARI", "ARW", "BAY", "CAP", "CRW", "CR2", "CR3", "DATA", "DCS", "DCR",
@@ -30,6 +32,10 @@ function createPhotoStore() {
   };
 
   const { subscribe, set, update } = writable<AppState>(initialState);
+  let libraryGeneration = 0;
+  let metadataWriteGeneration = 0;
+  const metadataWrites = new Set<Promise<void>>();
+  let metadataWriteError: unknown;
 
   // Index for O(1) thumbnail patching
   let photoIndex = new Map<string, number>();
@@ -122,6 +128,7 @@ function createPhotoStore() {
     photoId: string,
     patch: Partial<Pick<Photo, "tags" | "notes" | "rating" | "flag">>,
   ) {
+    const folderPath = HologramAPI.getActiveFolderPath();
     let tags: string[] = [];
     let notes = "";
     let rating = 0;
@@ -157,10 +164,53 @@ function createPhotoStore() {
     });
 
     if (found) {
-      HologramAPI.setPhotoMetadata(photoId, tags, notes, rating, flag).catch((e) =>
-        console.error("setPhotoMetadata failed:", e),
-      );
+      metadataWriteGeneration++;
+      const write = HologramAPI.setPhotoMetadata(photoId, tags, notes, rating, flag, folderPath);
+      metadataWrites.add(write);
+      void write.catch((error: unknown) => {
+        metadataWriteError = error;
+        console.error("setPhotoMetadata failed:", error);
+      }).finally(() => metadataWrites.delete(write));
     }
+  }
+
+  function applyMetadata(metadataMap: Record<string, PhotoMetadata>) {
+    update((state) => {
+      const photos = [...state.photos];
+      const filteredPhotos = [...state.filteredPhotos];
+      for (const [id, meta] of Object.entries(metadataMap)) {
+        const pi = photoIndex.get(id);
+        const patch = {
+          tags: meta.tags ?? [], notes: meta.notes ?? "",
+          rating: normalizeRating(meta.rating), flag: normalizeFlag(meta.flag),
+        };
+        if (pi !== undefined) photos[pi] = { ...photos[pi], ...patch };
+        const fi = filteredIndex.get(id);
+        if (fi !== undefined) filteredPhotos[fi] = { ...filteredPhotos[fi], ...patch };
+      }
+      return { ...state, photos, filteredPhotos };
+    });
+  }
+
+  function currentPhotos(): Photo[] {
+    let photos: Photo[] = [];
+    const unsubscribe = subscribe((state) => { photos = state.photos; });
+    unsubscribe();
+    return photos;
+  }
+
+  async function flushMetadataWrites() {
+    while (metadataWrites.size) await Promise.allSettled([...metadataWrites]);
+    if (metadataWriteError !== undefined) {
+      const error = metadataWriteError;
+      metadataWriteError = undefined;
+      throw error;
+    }
+  }
+
+  function applyImportedMetadata(metadataMap: Record<string, PhotoMetadata>, folderPath: string | null, sourcePhotos = currentPhotos()) {
+    reconcileXmpImports(metadataMap, sourcePhotos);
+    if (folderPath === HologramAPI.getActiveFolderPath()) applyMetadata(metadataMap);
   }
 
   return {
@@ -173,12 +223,14 @@ function createPhotoStore() {
       unsubscribe();
       return currentState!.photos;
     },
-    setPhotos: (photos: Photo[]) =>
+    setPhotos: (photos: Photo[]) => {
+      libraryGeneration++;
       update((state) => {
         const newState = { ...state, photos, filteredPhotos: photos };
         rebuildIndex(newState);
         return newState;
-      }),
+      });
+    },
     removePhotos: (photoIds: string[]) =>
       update((state) => {
         if (photoIds.length === 0) return state;
@@ -229,32 +281,49 @@ function createPhotoStore() {
     setPhotoFlag: (photoId: string, flag: CullFlag) =>
       patchPhotoMetadata(photoId, { flag: normalizeFlag(flag) }),
     clearPhotoCull: (photoId: string) => patchPhotoMetadata(photoId, { rating: 0, flag: "none" }),
+    flushMetadataWrites,
+    applyImportedMetadata,
+    refreshImportedMetadata: async (photoIds: string[], folderPath: string | null, sourcePhotos: Photo[]) => {
+      if (photoIds.length === 0) return;
+      beginXmpImport();
+      try {
+        while (true) {
+          await flushMetadataWrites();
+          const writeGeneration = metadataWriteGeneration;
+          const generation = libraryGeneration;
+          const metadataMap = await HologramAPI.getPhotoMetadata(photoIds, folderPath);
+          if (writeGeneration !== metadataWriteGeneration) continue;
+          reconcileXmpImports(metadataMap, sourcePhotos);
+          resolveXmpImportFailure(photoIds);
+          if (generation === libraryGeneration && folderPath === HologramAPI.getActiveFolderPath()) applyMetadata(metadataMap);
+          return;
+        }
+      } catch (error) {
+        throw xmpImportFailure(error, photoIds);
+      } finally {
+        finishXmpImport();
+      }
+    },
     loadMetadata: async (photoIds: string[]) => {
       if (photoIds.length === 0) return;
+      const folderPath = HologramAPI.getActiveFolderPath();
+      const generation = libraryGeneration;
+      const writeGeneration = metadataWriteGeneration;
+      const sourcePhotos = currentPhotos();
       try {
-        const metadataMap = await HologramAPI.getPhotoMetadata(photoIds);
-        update((state) => {
-          const photos = [...state.photos];
-          const filteredPhotos = [...state.filteredPhotos];
-          for (const [id, meta] of Object.entries(metadataMap)) {
-            const pi = photoIndex.get(id);
-            const patch = {
-              tags: meta.tags ?? [],
-              notes: meta.notes ?? "",
-              rating: normalizeRating(meta.rating),
-              flag: normalizeFlag(meta.flag),
-            };
-            if (pi !== undefined) photos[pi] = { ...photos[pi], ...patch };
-            const fi = filteredIndex.get(id);
-            if (fi !== undefined) filteredPhotos[fi] = { ...filteredPhotos[fi], ...patch };
-          }
-          return { ...state, photos, filteredPhotos };
-        });
+        const metadataMap = await HologramAPI.getPhotoMetadata(photoIds, folderPath);
+        if (generation !== libraryGeneration || writeGeneration !== metadataWriteGeneration || folderPath !== HologramAPI.getActiveFolderPath()) return;
+        reconcileXmpImports(metadataMap, sourcePhotos);
+        resolveXmpImportFailure(photoIds);
+        applyMetadata(metadataMap);
       } catch (e) {
         console.error("loadMetadata failed:", e);
       }
     },
-    reset: () => set(initialState),
+    reset: () => {
+      libraryGeneration++;
+      set(initialState);
+    },
   };
 }
 

@@ -1,5 +1,6 @@
 mod autocull_ranker;
 mod decision_book;
+mod xmp_import;
 #[cfg(feature = "native-autocull-smoke")]
 mod autocull_smoke;
 
@@ -1392,12 +1393,14 @@ async fn load_full_resolution_image_command(file_path: String) -> Response {
     load_full_resolution_image(path)
 }
 
-#[derive(Debug, Clone, Serialize, Deserialize)]
+#[derive(Debug, Clone, PartialEq, Eq, Serialize, Deserialize)]
 pub struct PhotoMetadata {
     pub tags: Vec<String>,
     pub notes: String,
     pub rating: u8,
     pub flag: String,
+    #[serde(default)]
+    pub xmp_cull_revision: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -1416,14 +1419,6 @@ pub struct AutoCullFeatureCacheEntry {
     pub file_size: u64,
     pub modified_at: String,
     pub features: Option<AutoCullFeatureValues>,
-}
-
-#[derive(Debug, Clone, Default)]
-struct XmpMetadataPatch {
-    tags: Option<Vec<String>>,
-    notes: Option<String>,
-    rating: Option<u8>,
-    flag: Option<String>,
 }
 
 fn open_db(_app: &AppHandle, folder_path: Option<&str>) -> Result<rusqlite::Connection, String> {
@@ -1452,6 +1447,11 @@ fn open_db(_app: &AppHandle, folder_path: Option<&str>) -> Result<rusqlite::Conn
         fs::create_dir_all(parent).map_err(|e| e.to_string())?;
     }
     let conn = rusqlite::Connection::open(&db_path).map_err(|e| e.to_string())?;
+    initialize_metadata_db(&conn)?;
+    Ok(conn)
+}
+
+fn initialize_metadata_db(conn: &rusqlite::Connection) -> Result<(), String> {
     conn.execute_batch(
         "CREATE TABLE IF NOT EXISTS photo_metadata (
             photo_id TEXT PRIMARY KEY,
@@ -1470,7 +1470,21 @@ fn open_db(_app: &AppHandle, folder_path: Option<&str>) -> Result<rusqlite::Conn
         "ALTER TABLE photo_metadata ADD COLUMN flag TEXT NOT NULL DEFAULT 'none'",
         [],
     );
-    Ok(conn)
+    let columns: Vec<String> = conn
+        .prepare("PRAGMA table_info(photo_metadata)")
+        .map_err(|e| e.to_string())?
+        .query_map([], |row| row.get(1))
+        .map_err(|e| e.to_string())?
+        .collect::<Result<_, _>>()
+        .map_err(|e| e.to_string())?;
+    if !columns.iter().any(|column| column == "xmp_cull_revision") {
+        conn.execute(
+            "ALTER TABLE photo_metadata ADD COLUMN xmp_cull_revision TEXT",
+            [],
+        )
+        .map_err(|e| e.to_string())?;
+    }
+    Ok(())
 }
 
 fn open_cache_db(
@@ -1618,15 +1632,27 @@ fn set_photo_metadata(
     flag: String,
 ) -> Result<(), String> {
     let conn = open_db(&app, folder_path.as_deref())?;
-    let tags_json = serde_json::to_string(&tags).map_err(|e| e.to_string())?;
+    write_photo_metadata(&conn, &photo_id, &tags, &notes, rating, &flag)
+}
+
+fn write_photo_metadata(
+    conn: &rusqlite::Connection,
+    photo_id: &str,
+    tags: &[String],
+    notes: &str,
+    rating: u8,
+    flag: &str,
+) -> Result<(), String> {
+    let tags_json = serde_json::to_string(tags).map_err(|e| e.to_string())?;
     let rating = rating.min(5);
-    let flag = match flag.as_str() {
+    let flag = match flag {
         "pick" | "reject" => flag,
-        _ => "none".to_string(),
+        _ => "none",
     };
     conn.execute(
         "INSERT INTO photo_metadata (photo_id, tags, notes, rating, flag) VALUES (?1, ?2, ?3, ?4, ?5)
-         ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes, rating=excluded.rating, flag=excluded.flag",
+         ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes, rating=excluded.rating, flag=excluded.flag,
+         xmp_cull_revision=CASE WHEN photo_metadata.rating=excluded.rating AND photo_metadata.flag=excluded.flag THEN photo_metadata.xmp_cull_revision ELSE NULL END",
         rusqlite::params![photo_id, tags_json, notes, rating, flag],
     )
     .map_err(|e| e.to_string())?;
@@ -1639,8 +1665,8 @@ fn read_photo_metadata(
 ) -> HashMap<String, PhotoMetadata> {
     let mut result = HashMap::new();
     for photo_id in photo_ids {
-        if let Ok((tags_json, notes, rating, flag)) = conn.query_row(
-            "SELECT tags, notes, rating, flag FROM photo_metadata WHERE photo_id = ?1",
+        if let Ok((tags_json, notes, rating, flag, xmp_cull_revision)) = conn.query_row(
+            "SELECT tags, notes, rating, flag, xmp_cull_revision FROM photo_metadata WHERE photo_id = ?1",
             rusqlite::params![photo_id],
             |row| {
                 Ok((
@@ -1648,6 +1674,7 @@ fn read_photo_metadata(
                     row.get::<_, String>(1)?,
                     row.get::<_, u8>(2)?,
                     row.get::<_, String>(3)?,
+                    row.get::<_, Option<String>>(4)?,
                 ))
             },
         ) {
@@ -1663,6 +1690,7 @@ fn read_photo_metadata(
                     notes,
                     rating: rating.min(5),
                     flag,
+                    xmp_cull_revision,
                 },
             );
         }
@@ -1691,9 +1719,9 @@ fn get_photo_metadata(
             for (photo_id, metadata) in &fallback_metadata {
                 let tags_json = serde_json::to_string(&metadata.tags).map_err(|e| e.to_string())?;
                 conn.execute(
-                    "INSERT INTO photo_metadata (photo_id, tags, notes, rating, flag) VALUES (?1, ?2, ?3, ?4, ?5)
-                     ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes, rating=excluded.rating, flag=excluded.flag",
-                    rusqlite::params![photo_id, tags_json, metadata.notes, metadata.rating.min(5), metadata.flag],
+                    "INSERT INTO photo_metadata (photo_id, tags, notes, rating, flag, xmp_cull_revision) VALUES (?1, ?2, ?3, ?4, ?5, ?6)
+                     ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes, rating=excluded.rating, flag=excluded.flag, xmp_cull_revision=excluded.xmp_cull_revision",
+                    rusqlite::params![photo_id, tags_json, metadata.notes, metadata.rating.min(5), metadata.flag, metadata.xmp_cull_revision],
                 )
                 .map_err(|e| e.to_string())?;
             }
@@ -1737,54 +1765,10 @@ async fn import_xmp_sidecars(
     app: AppHandle,
     photos: Vec<Photo>,
     folder_path: Option<String>,
-) -> Result<XmpSidecarResult, String> {
-    tokio::task::spawn_blocking(move || -> Result<XmpSidecarResult, String> {
-        let conn = open_db(&app, folder_path.as_deref())?;
-        let mut processed_count = 0usize;
-        let mut skipped_count = 0usize;
-
-        for photo in photos {
-            let sidecar_path = xmp_sidecar_path(Path::new(&photo.file_path));
-            if !sidecar_path.is_file() {
-                skipped_count += 1;
-                continue;
-            }
-            let contents = fs::read_to_string(&sidecar_path).map_err(|e| e.to_string())?;
-            let Some(patch) = parse_xmp_sidecar(&contents) else {
-                skipped_count += 1;
-                continue;
-            };
-
-            let existing = read_photo_metadata(&conn, &[photo.id.clone()])
-                .remove(&photo.id)
-                .unwrap_or(PhotoMetadata {
-                    tags: photo.tags.clone().unwrap_or_default(),
-                    notes: photo.notes.clone().unwrap_or_default(),
-                    rating: photo.rating.unwrap_or(0).min(5),
-                    flag: photo.flag.clone().unwrap_or_else(|| "none".to_string()),
-                });
-            let tags = patch.tags.unwrap_or(existing.tags);
-            let notes = patch.notes.unwrap_or(existing.notes);
-            let rating = patch.rating.unwrap_or(existing.rating).min(5);
-            let flag = patch.flag.unwrap_or(existing.flag);
-            let flag = match flag.as_str() {
-                "pick" | "reject" => flag,
-                _ => "none".to_string(),
-            };
-            let tags_json = serde_json::to_string(&tags).map_err(|e| e.to_string())?;
-            conn.execute(
-                "INSERT INTO photo_metadata (photo_id, tags, notes, rating, flag) VALUES (?1, ?2, ?3, ?4, ?5)
-                 ON CONFLICT(photo_id) DO UPDATE SET tags=excluded.tags, notes=excluded.notes, rating=excluded.rating, flag=excluded.flag",
-                rusqlite::params![photo.id, tags_json, notes, rating, flag],
-            )
-            .map_err(|e| e.to_string())?;
-            processed_count += 1;
-        }
-
-        Ok(XmpSidecarResult {
-            processed_count,
-            skipped_count,
-        })
+) -> Result<xmp_import::XmpImportResult, String> {
+    tokio::task::spawn_blocking(move || {
+        let mut conn = open_db(&app, folder_path.as_deref())?;
+        xmp_import::import(&mut conn, &photos)
     })
     .await
     .map_err(|e| format!("XMP import failed: {}", e))?
@@ -1968,133 +1952,10 @@ fn xml_escape(value: &str) -> String {
         .replace('\'', "&apos;")
 }
 
-fn xml_unescape(value: &str) -> String {
-    value
-        .replace("&apos;", "'")
-        .replace("&quot;", "\"")
-        .replace("&gt;", ">")
-        .replace("&lt;", "<")
-        .replace("&amp;", "&")
-}
-
 fn xmp_sidecar_path(path: &Path) -> PathBuf {
     match path.extension().and_then(|value| value.to_str()) {
         Some(extension) if !extension.is_empty() => path.with_extension(format!("{extension}.xmp")),
         _ => path.with_extension("xmp"),
-    }
-}
-
-fn xmp_attribute(contents: &str, name: &str) -> Option<String> {
-    for quote in ['"', '\''] {
-        let needle = format!("{name}={quote}");
-        if let Some(start) = contents.find(&needle) {
-            let value_start = start + needle.len();
-            let value_end = contents[value_start..].find(quote)? + value_start;
-            return Some(xml_unescape(&contents[value_start..value_end]));
-        }
-    }
-    None
-}
-
-fn xmp_block<'a>(contents: &'a str, tag: &str) -> Option<&'a str> {
-    let open = format!("<{tag}");
-    let close = format!("</{tag}>");
-    let start = contents.find(&open)?;
-    let after_open = contents[start..].find('>')? + start + 1;
-    let end = contents[after_open..].find(&close)? + after_open;
-    Some(&contents[after_open..end])
-}
-
-fn rdf_li_values(block: &str) -> Vec<String> {
-    let mut values = Vec::new();
-    let mut rest = block;
-    while let Some(start) = rest.find("<rdf:li") {
-        let candidate = &rest[start..];
-        let Some(open_end) = candidate.find('>') else {
-            break;
-        };
-        let content_start = open_end + 1;
-        let Some(close_start) = candidate[content_start..].find("</rdf:li>") else {
-            break;
-        };
-        let value = xml_unescape(candidate[content_start..content_start + close_start].trim());
-        if !value.is_empty() {
-            values.push(value);
-        }
-        rest = &candidate[content_start + close_start + "</rdf:li>".len()..];
-    }
-    values
-}
-
-fn parse_xmp_sidecar(contents: &str) -> Option<XmpMetadataPatch> {
-    let mut patch = XmpMetadataPatch::default();
-    let mut touched = false;
-
-    if let Some(rating) =
-        xmp_attribute(contents, "xmp:Rating").and_then(|value| value.parse::<u8>().ok())
-    {
-        patch.rating = Some(rating.min(5));
-        touched = true;
-    }
-
-    if let Some(label) = xmp_attribute(contents, "xmp:Label") {
-        patch.flag = Some(match label.trim().to_ascii_lowercase().as_str() {
-            "pick" | "select" | "selected" => "pick".to_string(),
-            "reject" | "rejected" => "reject".to_string(),
-            _ => "none".to_string(),
-        });
-        touched = true;
-    }
-
-    if let Some(subject) = xmp_block(contents, "dc:subject") {
-        patch.tags = Some(rdf_li_values(subject));
-        touched = true;
-    }
-
-    if let Some(description) = xmp_block(contents, "dc:description") {
-        if let Some(notes) = rdf_li_values(description).first() {
-            patch.notes = Some(notes.clone());
-            touched = true;
-        }
-    }
-
-    if touched {
-        Some(patch)
-    } else {
-        None
-    }
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[test]
-    fn parses_rating_label_tags_and_notes_from_xmp() {
-        let patch = parse_xmp_sidecar(
-            r#"<?xpacket begin=""?>
-<x:xmpmeta xmlns:x="adobe:ns:meta/">
-  <rdf:RDF xmlns:rdf="http://www.w3.org/1999/02/22-rdf-syntax-ns#">
-    <rdf:Description xmlns:xmp="http://ns.adobe.com/xap/1.0/" xmp:Rating="4" xmp:Label="Pick">
-      <dc:subject xmlns:dc="http://purl.org/dc/elements/1.1/">
-        <rdf:Bag><rdf:li>portfolio</rdf:li><rdf:li>client &amp; edit</rdf:li></rdf:Bag>
-      </dc:subject>
-      <dc:description xmlns:dc="http://purl.org/dc/elements/1.1/">
-        <rdf:Alt><rdf:li xml:lang="x-default">Hero frame</rdf:li></rdf:Alt>
-      </dc:description>
-    </rdf:Description>
-  </rdf:RDF>
-</x:xmpmeta>"#,
-        )
-        .expect("xmp patch");
-
-        assert_eq!(patch.rating, Some(4));
-        assert_eq!(patch.flag.as_deref(), Some("pick"));
-        assert_eq!(
-            patch.tags,
-            Some(vec!["portfolio".to_string(), "client & edit".to_string()])
-        );
-        assert_eq!(patch.notes.as_deref(), Some("Hero frame"));
     }
 }
 

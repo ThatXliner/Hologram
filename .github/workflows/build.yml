@@ -74,6 +74,9 @@ jobs:
       - name: Verify decision book file export
         run: cargo test --release --manifest-path src-tauri/Cargo.toml --lib decision_book::tests --locked
 
+      - name: Verify XMP import and persistence
+        run: cargo test --release --manifest-path src-tauri/Cargo.toml --lib xmp_import::tests --locked
+
       - name: Verify packaged native learner
         run: |
           cargo build --release --manifest-path tools/xgboost-eval/Cargo.toml --locked

@@ -13,6 +13,7 @@ import type {
   ScanResult,
   ThumbnailReady,
   XmpSidecarResult,
+  XmpImportResult,
 } from "./types.ts";
 
 export class HologramAPI {
@@ -193,10 +194,11 @@ export class HologramAPI {
     notes: string,
     rating = 0,
     flag: CullFlag = "none",
+    folderPath = HologramAPI.activeFolderPath,
   ): Promise<void> {
     await invoke("set_photo_metadata", {
       photoId,
-      folderPath: HologramAPI.activeFolderPath,
+      folderPath,
       tags,
       notes,
       rating,
@@ -204,10 +206,10 @@ export class HologramAPI {
     });
   }
 
-  static async getPhotoMetadata(photoIds: string[]): Promise<Record<string, PhotoMetadata>> {
+  static async getPhotoMetadata(photoIds: string[], folderPath = HologramAPI.activeFolderPath): Promise<Record<string, PhotoMetadata>> {
     return await invoke("get_photo_metadata", {
       photoIds,
-      folderPath: HologramAPI.activeFolderPath,
+      folderPath,
     });
   }
 
@@ -242,10 +244,10 @@ export class HologramAPI {
     });
   }
 
-  static async importXmpSidecars(photos: Photo[]): Promise<XmpSidecarResult> {
-    return await invoke<XmpSidecarResult>("import_xmp_sidecars", {
+  static async importXmpSidecars(photos: Photo[], folderPath = HologramAPI.activeFolderPath): Promise<XmpImportResult> {
+    return await invoke<XmpImportResult>("import_xmp_sidecars", {
       photos,
-      folderPath: HologramAPI.activeFolderPath,
+      folderPath,
     });
   }
 }

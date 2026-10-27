@@ -94,6 +94,7 @@
     import { loadAutoCullLearner, saveAutoCullLearner, nativeLearnerAvailable } from "../autocullNative.ts";
     import { HologramAPI } from "../api.ts";
     import { photoStore, viewMode } from "../stores/photoStore.ts";
+    import { xmpImportState } from "../xmpImport.ts";
     import PhotoPreviewCard from "./PhotoPreviewCard.svelte";
     import type { AutoCullLabel, AutoCullLearner, AutoCullSession, Photo, PhotoDecisionHandler, VisualIndexProgress } from "../types.ts";
 
@@ -156,10 +157,11 @@
     let lastAnalysisKey = "";
     let analysisRun = 0;
     let destroyed = false;
+    let lastImportRevision = 0;
 
     const actualLearner = $derived(session?.learner?.engine ?? "builtin");
     const learnerMismatch = $derived(Boolean(session && actualLearner !== requestedLearner));
-    const learnerBlocked = $derived(isAnalyzing || learnerMismatch || Boolean(learnerFailure) || analysisInterrupted);
+    const learnerBlocked = $derived(isAnalyzing || learnerMismatch || Boolean(learnerFailure) || analysisInterrupted || Boolean($xmpImportState.error) || $xmpImportState.syncing);
     const learnerName = (learner: AutoCullLearner) => learner === "xgboost-native" ? "XGBoost" : "built-in";
     const wide = $derived(innerWidth >= 1024);
     const photosById = $derived(new Map(photos.map((photo) => [photo.id, photo])));
@@ -280,6 +282,16 @@
         untrack(() => resetForFolder(folder));
     });
 
+    $effect(() => {
+        const { revision, error, syncing } = $xmpImportState;
+        if (revision === lastImportRevision) return;
+        lastImportRevision = revision;
+        untrack(() => {
+            resetForFolder(HologramAPI.getActiveFolderPath());
+            status = error ?? (syncing ? "Loading imported XMP decisions…" : "Imported XMP decisions loaded. Earlier Undo history was cleared.");
+        });
+    });
+
     function resetForFolder(folder: string | null) {
         invalidateDecisionBook();
         loadedFolder = folder;
@@ -320,7 +332,7 @@
     }
 
     $effect(() => {
-        if (!active) return;
+        if (!active || $xmpImportState.error || $xmpImportState.syncing) return;
         const key = analysisInputKey(photos, activePreferenceProfileId, folderPath, requestedLearner);
         if (!key || key === lastAnalysisKey) return;
         const timeout = window.setTimeout(() => void runAnalysis(), 350);
@@ -333,6 +345,7 @@
     });
 
     async function runAnalysis() {
+        if ($xmpImportState.error || $xmpImportState.syncing) return;
         invalidateDecisionBook();
         const input = photos;
         const library = allPhotos;
@@ -639,6 +652,7 @@
     }
 
     function commit(label: string, changes: DecisionChange[], options: CommitOptions = {}): CommitResult | null {
+        if ($xmpImportState.error || $xmpImportState.syncing) return null;
         const { resolveStack = null, confirmIds = [], automaticPass } = options;
         const folder = folderPath;
         const profileId = activePreferenceProfileId;
@@ -747,6 +761,7 @@
     }
 
     function undo() {
+        if ($xmpImportState.error || $xmpImportState.syncing) return;
         const entry = history.at(-1);
         if (!entry) {
             status = "Nothing to undo";

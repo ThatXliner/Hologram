@@ -66,6 +66,12 @@ export function saveAutomaticDecisions(storage: StorageLike | null, _folderPath:
   try { storage?.setItem(AUTOMATIC_KEY, JSON.stringify(automatic)); } catch {}
 }
 
+export function removeAutomaticDecisions(storage: AutomaticStorage, photoIds: ReadonlySet<string>): void {
+  const automatic = loadAutomaticDecisions(storage, null);
+  for (const id of photoIds) delete automatic[id];
+  storage.setItem(AUTOMATIC_KEY, JSON.stringify(automatic));
+}
+
 export function automaticPhotoIds(photos: Pick<Photo, "id" | "flag" | "rating">[], automatic: AutomaticDecisions): Set<string> {
   return new Set(photos.filter((photo) => {
     const decision = Object.hasOwn(automatic, photo.id) ? automatic[photo.id] : undefined;

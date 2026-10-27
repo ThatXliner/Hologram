@@ -2,8 +2,9 @@
     import { Archive, Check, Download, Loader2, Upload, XCircle } from "@lucide/svelte";
     import { HologramAPI } from "../api.ts";
     import { photoStore } from "../stores/photoStore.ts";
+    import { beginXmpImport, finishXmpImport, xmpImportState } from "../xmpImport.ts";
     import PhotoPreviewCard from "./PhotoPreviewCard.svelte";
-    import type { ExportOptions, ExportResult, Photo, XmpSidecarResult } from "../types.ts";
+    import type { ExportOptions, ExportResult, Photo, XmpSidecarResult, XmpImportResult } from "../types.ts";
 
     interface Props {
         photos: Photo[];
@@ -21,6 +22,7 @@
     let xmpBusy = $state<"export" | "import" | null>(null);
     let result = $state<ExportResult | null>(null);
     let xmpResult = $state<XmpSidecarResult | null>(null);
+    let importResult = $state<XmpImportResult | null>(null);
     let error = $state<string | null>(null);
     let xmpError = $state<string | null>(null);
 
@@ -43,6 +45,14 @@
         { value: "camera", label: "Camera folders" },
     ];
 
+    const importGroups = [
+        { status: "error", label: "Errors", color: "text-reject" },
+        { status: "skipped", label: "Skipped", color: "text-maybe" },
+        { status: "imported", label: "Imported", color: "text-pick" },
+        { status: "unchanged", label: "Unchanged", color: "text-muted-foreground" },
+    ];
+    const filename = (path: string) => path.split(/[\\/]/).at(-1) ?? path;
+
     function rowClass(active: boolean): string {
         return active
             ? "rounded-[5px] bg-secondary px-2 py-[6px] text-left text-[12px] font-medium text-foreground"
@@ -54,6 +64,7 @@
         if (!destination) return;
 
         isExporting = true;
+        importResult = null;
         result = null;
         error = null;
         try {
@@ -73,8 +84,10 @@
     }
 
     async function exportOriginalXmp() {
+        if ($xmpImportState.syncing) return;
         xmpBusy = "export";
         xmpResult = null;
+        importResult = null;
         xmpError = null;
         try {
             xmpResult = await HologramAPI.exportXmpSidecars(allPhotos);
@@ -86,15 +99,22 @@
     }
 
     async function importOriginalXmp() {
+        if ($xmpImportState.syncing) return;
+        const sourcePhotos = allPhotos;
+        const folder = HologramAPI.getActiveFolderPath();
         xmpBusy = "import";
         xmpResult = null;
+        importResult = null;
         xmpError = null;
+        beginXmpImport();
         try {
-            xmpResult = await HologramAPI.importXmpSidecars(allPhotos);
-            await photoStore.loadMetadata(allPhotos.map((photo) => photo.id));
+            await photoStore.flushMetadataWrites();
+            importResult = await HologramAPI.importXmpSidecars(sourcePhotos, folder);
+            await photoStore.refreshImportedMetadata(Object.keys(importResult.metadata), folder, sourcePhotos);
         } catch (err) {
             xmpError = String(err);
         } finally {
+            finishXmpImport();
             xmpBusy = null;
         }
     }
@@ -145,30 +165,38 @@
                 <input type="checkbox" bind:checked={includeMetadata} class="accent-primary" />
                 Write metadata sidecar
             </label>
+            <p class="mt-2 text-[11px] leading-relaxed text-muted-foreground">
+                Import from all {allPhotos.length} originals. Sidecar ratings replace stars and cull flags.
+                Present tags and notes replace existing values. RAW and JPEG import separately.
+                Imported decisions update the active taste profile and clear earlier AutoCull Undo history.
+            </p>
             <div class="mt-2 grid grid-cols-2 gap-2">
                 <button
                     class="flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2 font-sans text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-                    disabled={xmpBusy !== null || allPhotos.length === 0}
+                    disabled={xmpBusy !== null || $xmpImportState.syncing || allPhotos.length === 0}
                     onclick={exportOriginalXmp}
                     title="Write XMP sidecars beside originals"
                 >
                     {#if xmpBusy === "export"}<Loader2 size={12} class="animate-spin" />{:else}<Download size={12} />{/if}
-                    XMP out
+                    Write XMP
                 </button>
                 <button
                     class="flex h-8 items-center justify-center gap-1.5 rounded-md bg-secondary px-2 font-sans text-[11px] font-semibold text-muted-foreground transition-colors hover:bg-accent hover:text-foreground disabled:opacity-50"
-                    disabled={xmpBusy !== null || allPhotos.length === 0}
+                    disabled={xmpBusy !== null || $xmpImportState.syncing || allPhotos.length === 0}
                     onclick={importOriginalXmp}
                     title="Read XMP sidecars beside originals"
+                    data-xmp-import
                 >
                     {#if xmpBusy === "import"}<Loader2 size={12} class="animate-spin" />{:else}<Upload size={12} />{/if}
-                    XMP in
+                    Import XMP
                 </button>
             </div>
+            <p class="mt-2 text-[11px] leading-relaxed text-subtle">Import leaves originals and sidecars untouched. Colors and processing history are not imported. Sidecars may include darktable's default star rating.</p>
             {#if xmpResult}
-                <div class="mt-2 font-mono text-[10px] text-pick">✓ {xmpResult.processed_count} sidecars{#if xmpResult.skipped_count > 0} · {xmpResult.skipped_count} skipped{/if}</div>
-            {:else if xmpError}
-                <div class="mt-2 font-mono text-[10px] text-reject">{xmpError}</div>
+                <div class="mt-2 font-mono text-[10px] text-pick">{xmpResult.processed_count} written{#if xmpResult.skipped_count > 0} · {xmpResult.skipped_count} skipped{/if}</div>
+            {/if}
+            {#if xmpError || $xmpImportState.error}
+                <div role="alert" data-xmp-import-error class="mt-2 break-words font-mono text-[10px] text-reject">{xmpError ?? $xmpImportState.error}</div>
             {/if}
         </section>
 
@@ -194,7 +222,47 @@
             <span class="font-mono text-[11px] text-muted-foreground">{photos.length} visible photos · {mode}</span>
         </div>
 
-        {#if result}
+        {#if importResult}
+            <div class="min-h-0 flex-1 overflow-y-auto p-5" data-xmp-import-result
+                data-imported={importResult.imported_count} data-unchanged={importResult.unchanged_count}
+                data-skipped={importResult.skipped_count} data-errors={importResult.error_count}>
+                <div class="flex items-start justify-between gap-3">
+                    <div>
+                        <h2 class="text-lg font-semibold text-foreground">XMP import report</h2>
+                        <p class="mt-1 text-xs text-muted-foreground">Sidecar values replace existing decisions. Each entry names its physical file.</p>
+                    </div>
+                    <button class="rounded-md border border-border px-3 py-1.5 text-xs text-muted-foreground hover:bg-secondary" onclick={() => (importResult = null)}>Dismiss</button>
+                </div>
+                <div role="status" class="my-4 grid grid-cols-2 gap-2 font-mono text-xs sm:grid-cols-4">
+                    <div class="rounded-md border border-border bg-card p-3 text-pick">{importResult.imported_count} imported</div>
+                    <div class="rounded-md border border-border bg-card p-3 text-muted-foreground">{importResult.unchanged_count} unchanged</div>
+                    <div class="rounded-md border border-border bg-card p-3 text-maybe">{importResult.skipped_count} skipped</div>
+                    <div class="rounded-md border border-border bg-card p-3 text-reject">{importResult.error_count} errors</div>
+                </div>
+                <p class="mb-4 text-xs leading-relaxed text-muted-foreground">Ratings 0–5 set stars and clear the cull flag. Rating −1 sets Reject and zero stars. Only an explicit Pick label sets a pick.</p>
+                {#each importGroups as group (group.status)}
+                    {@const items = importResult.outcomes.filter((item) => item.status === group.status)}
+                    {#if items.length}
+                        <details open={group.status !== "unchanged"} class="mb-3 rounded-md border border-border bg-card">
+                            <summary class="cursor-pointer px-3 py-2 text-xs font-semibold {group.color}">{group.label} · {items.length}</summary>
+                            <ul class="divide-y divide-border border-t border-border">
+                                {#each items as item, index (`${item.photo_id}:${item.sidecar_path}:${index}`)}
+                                    <li class="px-3 py-2.5">
+                                        <div class="break-all font-mono text-xs text-foreground" title={item.file_path}>{filename(item.file_path)}</div>
+                                        {#if item.sidecar_path}<div class="mt-1 break-all font-mono text-[10px] text-subtle" title={item.sidecar_path}>{filename(item.sidecar_path)}</div>{/if}
+                                        <div class="mt-1 text-xs leading-relaxed text-muted-foreground">{item.message}</div>
+                                        {#if item.status === "imported" || item.status === "unchanged"}
+                                            {@const metadata = importResult.metadata[item.photo_id]}
+                                            {#if metadata}<div class="mt-1 font-mono text-[10px] text-subtle">{metadata.rating} stars · {metadata.flag === "none" ? "no cull flag" : metadata.flag}</div>{/if}
+                                        {/if}
+                                    </li>
+                                {/each}
+                            </ul>
+                        </details>
+                    {/if}
+                {/each}
+            </div>
+        {:else if result}
             <div class="grid flex-1 place-items-center p-8">
                 <div class="w-full max-w-md rounded-lg border border-pick/30 bg-card p-6 text-center">
                     <div class="mx-auto mb-3 grid h-12 w-12 place-items-center rounded-full bg-pick/15 text-pick"><Check size={24} /></div>

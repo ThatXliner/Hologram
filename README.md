@@ -19,7 +19,7 @@
 </p>
 
 <p align="center">
-  <a href="https://bryanhu.com/Hologram/">Website</a>
+  <a href="https://bryanhu.com/hologram/">Website</a>
   ·
   <a href="https://nightly.link/ThatXliner/Hologram/workflows/build/main">Download nightly</a>
   ·

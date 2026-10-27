@@ -58,6 +58,7 @@
     let gridDetailMode = $state<GridDetails>("metadata");
     let libraryView = $state<LibraryView>("grid");
     let railView = $state<RailView>("library");
+    let autoCullVisited = $state(false);
     let searchInput = $state<HTMLInputElement>();
     let savedSearches = $state<SavedSearch[]>([]);
     let activeSavedSearchId = $state<string | null>(null);
@@ -90,6 +91,11 @@
     );
     const reviewPct = $derived($photos.length ? Math.round((reviewedCount / $photos.length) * 100) : 0);
     const effectiveRail = $derived<RailView>(hasLibrary || railView === "settings" ? railView : "library");
+
+    $effect(() => {
+        if (!hasLibrary) autoCullVisited = false;
+        else if (effectiveRail === "autocull") autoCullVisited = true;
+    });
     const RATING_STEPS = [0, 1, 3, 5] as const;
 
     let previewScopeIds = $state<string[] | null>(null);
@@ -558,6 +564,12 @@
         {@render railBtn(Settings, effectiveRail === "settings", "Settings", () => (railView = "settings"))}
     </nav>
 
+    {#if autoCullVisited && hasLibrary}
+        <div class="min-w-0 flex-1 overflow-y-auto bg-background" hidden={effectiveRail !== "autocull"} inert={effectiveRail !== "autocull"}>
+            <AutoCullView photos={$displayPhotos} allPhotos={$photos} active={effectiveRail === "autocull"} onOpenPreview={openScopedPreview} />
+        </div>
+    {/if}
+
     {#if effectiveRail === "settings"}
         <SettingsPanel
             {gridZoomLevel}
@@ -570,15 +582,11 @@
             onSmartCollectionsChange={setSmartCollectionsEnabled}
             onResetGridPreferences={resetGridPreferences}
         />
-    {:else if effectiveRail === "autocull"}
-        <div class="min-w-0 flex-1 overflow-y-auto bg-background">
-            <AutoCullView photos={$displayPhotos} allPhotos={$photos} onOpenPreview={openScopedPreview} />
-        </div>
     {:else if effectiveRail === "export"}
         <div class="min-w-0 flex-1 overflow-y-auto bg-background">
             <ExportPanel photos={$displayPhotos} allPhotos={$photos} />
         </div>
-    {:else}
+    {:else if effectiveRail === "library"}
     <Sidebar
         photos={$displayPhotos}
         allPhotos={$photos}

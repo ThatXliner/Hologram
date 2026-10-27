@@ -213,11 +213,20 @@ try {
 
   await setFilter("all");
   await rows.last().click();
-  const resumedKey = await currentKey();
   await press("5");
+  const resumedKey = await currentKey();
   const beforeLeaving = await decisions(page, libraryIds);
+  await openAdvanced();
   const beforeProgress = await view.locator("[data-autocull-progress]").innerText();
-  await page.getByRole("button", { name: "Grid", exact: true }).click();
+  const beforeAnalysis = (await invokeCounts(page)).find_missing_photo_ids;
+  for (const tab of ["Settings", "Export", "Grid"]) {
+    await page.getByRole("button", { name: tab, exact: true }).click();
+    assert.ok(await view.isHidden(), "AutoCull is hidden on the other tabs");
+    if (tab !== "Grid") {
+      for (const key of ["p", "x", "u", "3", "Enter", "s", "Control+z", "Meta+z"]) await press(key);
+      assert.deepEqual(await decisions(page, libraryIds), beforeLeaving, "Hidden AutoCull shortcuts cannot change decisions or undo");
+    }
+  }
   await page.getByRole("button", { name: "AutoCull", exact: true }).click();
   await page.waitForFunction(() => {
     const view = document.querySelector("[data-autocull-view]");
@@ -226,6 +235,9 @@ try {
   assert.deepEqual(await decisions(page, libraryIds), beforeLeaving, "Photo decisions survive switching tabs");
   assert.equal(await view.getAttribute("data-autocull-mode"), "review", "Returning to AutoCull must resume review, not reset to overview");
   assert.equal(await currentKey(), resumedKey, "Returning to AutoCull keeps the selected stack");
+  assert.equal((await invokeCounts(page)).find_missing_photo_ids, beforeAnalysis, "Returning to AutoCull reuses its analysis");
+  assert.equal(await view.locator('[data-filter="all"]').getAttribute("aria-pressed"), "true", "Returning to AutoCull keeps its queue filter");
+  assert.ok(await view.locator("[data-autocull-advanced]").evaluate((element) => element instanceof HTMLDetailsElement && element.open), "Returning to AutoCull keeps its open inspector");
   assert.equal(await view.locator("[data-autocull-progress]").innerText(), beforeProgress, "Review progress survives switching tabs");
   assert.ok(await view.getByRole("button", { name: "Undo", exact: true }).isEnabled(), "Review undo survives switching tabs");
   await view.getByRole("button", { name: "Undo", exact: true }).click();
@@ -604,6 +616,19 @@ try {
     return [failed.stats.indexed, recovered.stats.indexed];
   });
   assert.deepEqual(retry, [0, 1], "Re-running analysis must retry failed image extraction");
+  await view.getByRole("button", { name: /Review manually instead|Browse all stacks|Review .*exception/ }).first().click();
+  await setFilter("all");
+  await view.locator('[data-stack-key="street"]').click();
+  await press("5");
+  await page.getByRole("button", { name: "Grid", exact: true }).click();
+  await page.evaluate(async () => {
+    const storePath = "/src/lib/stores/photoStore.ts";
+    const { photoStore } = await import(storePath) as typeof import("../src/lib/stores/photoStore.ts");
+    photoStore.setPhotoRating("street", 4);
+  });
+  await page.getByRole("button", { name: "AutoCull", exact: true }).click();
+  await view.getByRole("button", { name: "Undo", exact: true }).click();
+  assert.equal((await decisions(page, ["street"])).street.rating, 4, "Retained AutoCull undo must not overwrite a newer Grid decision");
   console.log(`Browser verification passed. Screenshots: ${output}`);
 } finally {
   await browser.close();

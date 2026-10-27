@@ -100,6 +100,7 @@
     interface Props {
         photos: Photo[];
         allPhotos: Photo[];
+        active: boolean;
         onOpenPreview: (
             photoIds: string[],
             selectedPhotoId: string,
@@ -109,7 +110,7 @@
         ) => void;
     }
 
-    let { photos, allPhotos, onOpenPreview }: Props = $props();
+    let { photos, allPhotos, active, onOpenPreview }: Props = $props();
 
     type Mode = "overview" | "review";
     const AUTO_LABEL = "AutoCull";
@@ -319,6 +320,7 @@
     }
 
     $effect(() => {
+        if (!active) return;
         const key = analysisInputKey(photos, activePreferenceProfileId, folderPath, requestedLearner);
         if (!key || key === lastAnalysisKey) return;
         const timeout = window.setTimeout(() => void runAnalysis(), 350);
@@ -496,6 +498,12 @@
     // ── Selection and navigation ─────────────────────────────────────────────
 
     $effect(() => {
+        if (active) untrack(() => {
+            if (selectedPhotoId) setSelected(selectedPhotoId, true);
+        });
+    });
+
+    $effect(() => {
         if (!session) return;
         if (selectedPhotoId && stackByPhotoId.has(selectedPhotoId)) return;
         untrack(() => {
@@ -506,14 +514,16 @@
 
     function setSelected(photoId: string | null, reveal = false) {
         selectedPhotoId = photoId;
-        if (!photoId) return;
+        if (!photoId || !active) return;
         const index = photos.findIndex((photo) => photo.id === photoId);
         if (index >= 0) photoStore.setSelectedIndex(index);
         if (reveal) revealSelection(photoId);
     }
 
     function revealSelection(photoId: string) {
+        if (!active) return;
         void tick().then(() => {
+            if (!active || destroyed || selectedPhotoId !== photoId) return;
             const stack = stackByPhotoId.get(photoId);
             for (const selector of [`[data-autocull-photo-id="${CSS.escape(photoId)}"]`, stack ? `[data-stack-key="${CSS.escape(stack.key)}"]` : ""]) {
                 if (selector) root?.querySelector<HTMLElement>(selector)?.scrollIntoView({ block: "nearest", inline: "nearest" });
@@ -742,6 +752,11 @@
             status = "Nothing to undo";
             return;
         }
+        if (entry.decisions.some((change) => !lookupById.has(change.id) || !sameDecision(decisionOf(change.id), change.after))) {
+            history = [];
+            status = "Undo cleared because these photos changed in another view. Your newer decisions are kept.";
+            return;
+        }
         if (Object.keys(entry.refinements).length || entry.pairwise.added.length || entry.pairwise.removed.length) {
             try {
                 savePreferenceFeedback(entry.profileId,
@@ -955,7 +970,7 @@
     }
 
     function handleKeydown(event: KeyboardEvent) {
-        if (event.defaultPrevented || isTypingTarget(event.target) || $viewMode === "viewer") return;
+        if (!active || event.defaultPrevented || isTypingTarget(event.target) || $viewMode === "viewer") return;
         const mod = event.metaKey || event.ctrlKey;
         if (mod && !event.shiftKey && !event.altKey && event.key.toLowerCase() === "z") {
             event.preventDefault();

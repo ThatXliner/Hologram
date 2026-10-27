@@ -210,6 +210,27 @@ try {
   await view.getByRole("button", { name: "Review manually instead" }).click();
   await view.locator("[data-autocull-queue]").waitFor();
   await view.locator("[data-autocull-reasons]").waitFor();
+
+  await setFilter("all");
+  await rows.last().click();
+  const resumedKey = await currentKey();
+  await press("5");
+  const beforeLeaving = await decisions(page, libraryIds);
+  const beforeProgress = await view.locator("[data-autocull-progress]").innerText();
+  await page.getByRole("button", { name: "Grid", exact: true }).click();
+  await page.getByRole("button", { name: "AutoCull", exact: true }).click();
+  await page.waitForFunction(() => {
+    const view = document.querySelector("[data-autocull-view]");
+    return view && view.getAttribute("data-autocull-mode") !== "loading";
+  });
+  assert.deepEqual(await decisions(page, libraryIds), beforeLeaving, "Photo decisions survive switching tabs");
+  assert.equal(await view.getAttribute("data-autocull-mode"), "review", "Returning to AutoCull must resume review, not reset to overview");
+  assert.equal(await currentKey(), resumedKey, "Returning to AutoCull keeps the selected stack");
+  assert.equal(await view.locator("[data-autocull-progress]").innerText(), beforeProgress, "Review progress survives switching tabs");
+  assert.ok(await view.getByRole("button", { name: "Undo", exact: true }).isEnabled(), "Review undo survives switching tabs");
+  await view.getByRole("button", { name: "Undo", exact: true }).click();
+  await setFilter("todo");
+  console.log("Tab-switch resume preserves review, decisions, selection, progress, and undo");
   const trainingBaseline = await trainingCount();
 
   // Every display photo (singles included) appears in exactly one stack, in capture order.

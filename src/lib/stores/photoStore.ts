@@ -33,7 +33,7 @@ function createPhotoStore() {
 
   const { subscribe, set, update } = writable<AppState>(initialState);
   let libraryGeneration = 0;
-  let metadataWriteGeneration = 0;
+  let metadataGeneration = 0;
   const metadataWrites = new Set<Promise<void>>();
   let metadataWriteError: unknown;
 
@@ -164,7 +164,7 @@ function createPhotoStore() {
     });
 
     if (found) {
-      metadataWriteGeneration++;
+      metadataGeneration++;
       const write = HologramAPI.setPhotoMetadata(photoId, tags, notes, rating, flag, folderPath);
       metadataWrites.add(write);
       void write.catch((error: unknown) => {
@@ -174,7 +174,10 @@ function createPhotoStore() {
     }
   }
 
-  function applyMetadata(metadataMap: Record<string, PhotoMetadata>) {
+  function applyMetadata(metadataMap: Record<string, PhotoMetadata>, sourcePhotos: Photo[], applyToCurrentLibrary = true) {
+    metadataGeneration++;
+    reconcileXmpImports(metadataMap, sourcePhotos);
+    if (!applyToCurrentLibrary) return;
     update((state) => {
       const photos = [...state.photos];
       const filteredPhotos = [...state.filteredPhotos];
@@ -199,8 +202,12 @@ function createPhotoStore() {
     return photos;
   }
 
-  async function flushMetadataWrites() {
+  async function waitForMetadataWrites() {
     while (metadataWrites.size) await Promise.allSettled([...metadataWrites]);
+  }
+
+  async function flushMetadataWrites() {
+    await waitForMetadataWrites();
     if (metadataWriteError !== undefined) {
       const error = metadataWriteError;
       metadataWriteError = undefined;
@@ -209,8 +216,7 @@ function createPhotoStore() {
   }
 
   function applyImportedMetadata(metadataMap: Record<string, PhotoMetadata>, folderPath: string | null, sourcePhotos = currentPhotos()) {
-    reconcileXmpImports(metadataMap, sourcePhotos);
-    if (folderPath === HologramAPI.getActiveFolderPath()) applyMetadata(metadataMap);
+    applyMetadata(metadataMap, sourcePhotos, folderPath === HologramAPI.getActiveFolderPath());
   }
 
   return {
@@ -289,13 +295,12 @@ function createPhotoStore() {
       try {
         while (true) {
           await flushMetadataWrites();
-          const writeGeneration = metadataWriteGeneration;
+          const readGeneration = metadataGeneration;
           const generation = libraryGeneration;
           const metadataMap = await HologramAPI.getPhotoMetadata(photoIds, folderPath);
-          if (writeGeneration !== metadataWriteGeneration) continue;
-          reconcileXmpImports(metadataMap, sourcePhotos);
+          if (readGeneration !== metadataGeneration) continue;
+          applyMetadata(metadataMap, sourcePhotos, generation === libraryGeneration && folderPath === HologramAPI.getActiveFolderPath());
           resolveXmpImportFailure(photoIds);
-          if (generation === libraryGeneration && folderPath === HologramAPI.getActiveFolderPath()) applyMetadata(metadataMap);
           return;
         }
       } catch (error) {
@@ -308,14 +313,20 @@ function createPhotoStore() {
       if (photoIds.length === 0) return;
       const folderPath = HologramAPI.getActiveFolderPath();
       const generation = libraryGeneration;
-      const writeGeneration = metadataWriteGeneration;
       const sourcePhotos = currentPhotos();
+      const isCurrent = () => generation === libraryGeneration && folderPath === HologramAPI.getActiveFolderPath();
       try {
-        const metadataMap = await HologramAPI.getPhotoMetadata(photoIds, folderPath);
-        if (generation !== libraryGeneration || writeGeneration !== metadataWriteGeneration || folderPath !== HologramAPI.getActiveFolderPath()) return;
-        reconcileXmpImports(metadataMap, sourcePhotos);
-        resolveXmpImportFailure(photoIds);
-        applyMetadata(metadataMap);
+        while (isCurrent()) {
+          await waitForMetadataWrites();
+          if (!isCurrent()) return;
+          const readGeneration = metadataGeneration;
+          const metadataMap = await HologramAPI.getPhotoMetadata(photoIds, folderPath);
+          if (!isCurrent()) return;
+          if (readGeneration !== metadataGeneration) continue;
+          applyMetadata(metadataMap, sourcePhotos);
+          resolveXmpImportFailure(photoIds);
+          return;
+        }
       } catch (e) {
         console.error("loadMetadata failed:", e);
       }

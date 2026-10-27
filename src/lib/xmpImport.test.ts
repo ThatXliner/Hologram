@@ -276,13 +276,17 @@ describe("XMP import ownership", () => {
   it("does not apply an old load after the library was replaced", async () => {
     const originalGet = HologramAPI.getPhotoMetadata;
     let complete: (() => void) | undefined;
+    let started: (() => void) | undefined;
+    const readStarted = new Promise<void>((resolve) => { started = resolve; });
     HologramAPI.getPhotoMetadata = async () => {
+      started?.();
       await new Promise<void>((resolve) => { complete = resolve; });
       return { a: imported(5, "none") };
     };
     try {
       photoStore.setPhotos([photo("a")]);
       const loaded = photoStore.loadMetadata(["a"]);
+      await readStarted;
       photoStore.setPhotos([{ ...photo("a"), rating: 2 }]);
       complete?.();
       await loaded;
@@ -290,6 +294,131 @@ describe("XMP import ownership", () => {
       assert.deepEqual(loadPreferenceRefinements(), []);
     } finally {
       HologramAPI.getPhotoMetadata = originalGet;
+    }
+  });
+
+  it("retries a racing catalog load to preserve an edit and reconcile another photo's saved import", async () => {
+    const originalGet = HologramAPI.getPhotoMetadata;
+    const originalSet = HologramAPI.setPhotoMetadata;
+    let releaseRead: (() => void) | undefined;
+    let releaseWrite: (() => void) | undefined;
+    let started: (() => void) | undefined;
+    const readStarted = new Promise<void>((resolve) => { started = resolve; });
+    let reads = 0;
+    const persisted: Record<string, PhotoMetadata> = {
+      a: { tags: [], notes: "", rating: 0, flag: "none", xmp_cull_revision: null },
+      b: { ...imported(4, "none", "pending-import-b"), tags: ["client"], notes: "Saved review" },
+    };
+    HologramAPI.getPhotoMetadata = async () => {
+      reads++;
+      const snapshot = { ...persisted };
+      if (reads === 1) {
+        started?.();
+        await new Promise<void>((resolve) => { releaseRead = resolve; });
+      }
+      return snapshot;
+    };
+    HologramAPI.setPhotoMetadata = async (id, tags, notes, rating, flag) => {
+      await new Promise<void>((resolve) => { releaseWrite = resolve; });
+      persisted[id] = { tags, notes, rating: rating ?? 0, flag: flag ?? "none", xmp_cull_revision: null };
+    };
+    try {
+      photoStore.setPhotos([photo("a"), photo("b")]);
+      saveAutomaticDecisions(storage, "/shoot", { b: { flag: "pick", rating: 0 } });
+      const loaded = photoStore.loadMetadata(["a", "b"]);
+      await readStarted;
+      photoStore.setPhotoRating("a", 5);
+      releaseRead?.();
+      await new Promise((resolve) => setTimeout(resolve, 0));
+      assert.equal(reads, 1);
+      releaseWrite?.();
+      await loaded;
+      assert.equal(reads, 2);
+      assert.equal(photoStore.photos.find((item) => item.id === "a")?.rating, 5);
+      const savedImport = photoStore.photos.find((item) => item.id === "b");
+      assert.equal(savedImport?.rating, 4);
+      assert.equal(savedImport?.flag, "none");
+      assert.deepEqual(savedImport?.tags, ["client"]);
+      assert.equal(savedImport?.notes, "Saved review");
+      assert.equal(get(photoStore).filteredPhotos.find((item) => item.id === "b")?.rating, 4);
+      assert.deepEqual(loadPreferenceRefinements().map((row) => [row.photo_id, row.rating]), [["b", 4]]);
+      assert.equal(Object.hasOwn(loadAutomaticDecisions(storage, "/shoot"), "b"), false);
+      assert.equal(get(xmpImportState).syncing, false);
+      assert.equal(reconcileXmpImports({ b: persisted.b }, photoStore.photos), false);
+    } finally {
+      HologramAPI.getPhotoMetadata = originalGet;
+      HologramAPI.setPhotoMetadata = originalSet;
+    }
+  });
+
+  const readKinds: ("catalog" | "refresh")[] = ["catalog", "refresh"];
+  const publicationKinds: ("refresh" | "direct")[] = ["refresh", "direct"];
+  for (const readKind of readKinds) {
+    for (const publicationKind of publicationKinds) {
+      it(`keeps a newer ${publicationKind} import when an older ${readKind} read completes`, async () => {
+        const originalGet = HologramAPI.getPhotoMetadata;
+        const source = photo("a");
+        const previous = imported(2, "none", "previous-import");
+        const current = imported(5, "none", "current-import");
+        let releaseRead: (() => void) | undefined;
+        let started: (() => void) | undefined;
+        const readStarted = new Promise<void>((resolve) => { started = resolve; });
+        HologramAPI.getPhotoMetadata = async () => {
+          started?.();
+          await new Promise<void>((resolve) => { releaseRead = resolve; });
+          return { a: previous };
+        };
+        try {
+          photoStore.setPhotos([source]);
+          const earlierRead = readKind === "catalog"
+            ? photoStore.loadMetadata(["a"])
+            : photoStore.refreshImportedMetadata(["a"], "/shoot", [source]);
+          await readStarted;
+          HologramAPI.getPhotoMetadata = async () => ({ a: current });
+          if (publicationKind === "refresh") await photoStore.refreshImportedMetadata(["a"], "/shoot", [source]);
+          else photoStore.applyImportedMetadata({ a: current }, "/shoot", [source]);
+          const reviews = loadPreferenceRefinements();
+          releaseRead?.();
+          await earlierRead;
+          assert.equal(photoStore.photos[0].rating, 5);
+          assert.equal(get(photoStore).filteredPhotos[0].rating, 5);
+          assert.deepEqual(loadPreferenceRefinements(), reviews);
+          assert.equal(reconcileXmpImports({ a: current }, [source]), false);
+        } finally {
+          HologramAPI.getPhotoMetadata = originalGet;
+        }
+      });
+    }
+  }
+
+  it("loads unrelated saved metadata after a failed edit without consuming the import flush error", async () => {
+    const originalGet = HologramAPI.getPhotoMetadata;
+    const originalSet = HologramAPI.setPhotoMetadata;
+    const originalError = console.error;
+    const errors: unknown[][] = [];
+    const persisted: Record<string, PhotoMetadata> = {
+      a: { tags: [], notes: "", rating: 0, flag: "none", xmp_cull_revision: null },
+      b: { ...imported(4, "none", "pending-import-b"), tags: ["client"], notes: "Saved review" },
+    };
+    HologramAPI.getPhotoMetadata = async () => persisted;
+    HologramAPI.setPhotoMetadata = async () => { throw new Error("Disk full"); };
+    console.error = (...args: unknown[]) => { errors.push(args); };
+    try {
+      photoStore.setPhotos([photo("a"), photo("b")]);
+      photoStore.setPhotoRating("a", 5);
+      await photoStore.loadMetadata(["a", "b"]);
+      const savedImport = photoStore.photos.find((item) => item.id === "b");
+      assert.equal(savedImport?.rating, 4);
+      assert.deepEqual(savedImport?.tags, ["client"]);
+      assert.equal(savedImport?.notes, "Saved review");
+      assert.deepEqual(loadPreferenceRefinements().map((row) => [row.photo_id, row.rating]), [["b", 4]]);
+      assert.equal(errors.length, 1);
+      assert.equal(errors[0][0], "setPhotoMetadata failed:");
+      await assert.rejects(photoStore.flushMetadataWrites(), /Disk full/);
+    } finally {
+      HologramAPI.getPhotoMetadata = originalGet;
+      HologramAPI.setPhotoMetadata = originalSet;
+      console.error = originalError;
     }
   });
 });

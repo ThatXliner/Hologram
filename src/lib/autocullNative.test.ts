@@ -2,11 +2,11 @@ import { beforeEach, describe, it } from "node:test";
 import assert from "node:assert/strict";
 import {
   buildAutoCullSession, capturePreferenceFeatures, loadPreferenceFeatureSnapshots,
-  rankAutoCullPhotos, rankAutoCullPhotosWithNative, PREFERENCE_FEATURE_VERSION,
+  rankAutoCullPhotos, rankAutoCullPhotosWithNative, rankAutoCullPhotosAutomatically, PREFERENCE_FEATURE_VERSION,
   type AutoCullPreferenceRefinement, type PixelFeatures,
 } from "./autocull.ts";
 import {
-  loadAutoCullLearner, saveAutoCullLearner, nativeRankerRequest, parseNativeRankerResponse,
+  nativeRankerRequest, parseNativeRankerResponse,
   scoreNativeRanker,
   NATIVE_RANKER_VERSION, type NativeRankerRequest, type NativeRankerResponse,
 } from "./autocullNative.ts";
@@ -42,23 +42,13 @@ describe("native learner boundary", () => {
   it("bounds combined training and prediction features before constructing native requests", () => {
     const predict = Array.from({ length: Math.floor(4_000_000 / 267) }, () => [1]);
     assert.equal(nativeRankerRequest([], [], predict).predict.length, predict.length);
-    assert.throws(() => nativeRankerRequest([], [{ winnerFeatures: [1], loserFeatures: [0], confidence: 1 }], predict), /smaller folder/);
+    assert.throws(() => nativeRankerRequest([], [{ winnerFeatures: [1], loserFeatures: [0], confidence: 1 }], predict), /too large/);
   });
 
   it("rejects oversized direct requests before native IPC", async () => {
     const request: NativeRankerRequest = { schema_version: 1, dimensions: 267, pointwise: [], pairs: [],
       predict: Array.from({ length: Math.floor(4_000_000 / 267) + 1 }, () => [1]) };
-    await assert.rejects(scoreNativeRanker(request), /smaller folder/);
-  });
-
-  it("defaults to built-in and keeps its device setting separate from feedback", () => {
-    localStorage.setItem("hologram.autocull.taste.v1.feedback.default", "sentinel");
-    assert.equal(loadAutoCullLearner(), "builtin");
-    saveAutoCullLearner("xgboost-native");
-    assert.equal(loadAutoCullLearner(), "xgboost-native");
-    saveAutoCullLearner("builtin");
-    assert.equal(loadAutoCullLearner(), "builtin");
-    assert.equal(localStorage.getItem("hologram.autocull.taste.v1.feedback.default"), "sentinel");
+    await assert.rejects(scoreNativeRanker(request), /too large/);
   });
 
   it("preserves clipping and relative comparison weight", () => {
@@ -141,5 +131,84 @@ describe("shared eligibility and score finalization", () => {
     const before = [...Array(localStorage.length)].map((_, index) => localStorage.key(index));
     await assert.rejects(buildAutoCullSession(photos, [], () => {}, [], true, null, new Set(), "default", "builtin", () => false), /superseded/);
     assert.deepEqual([...Array(localStorage.length)].map((_, index) => localStorage.key(index)), before);
+  });
+});
+
+
+describe("automatic native trainer", () => {
+  it("does not start builtin fallback after a superseded native failure", async () => {
+    const photos = [photo("stale-native")], features = pixels(photos);
+    let current = true;
+    await assert.rejects(rankAutoCullPhotosAutomatically(photos, features, [], [], false,
+      new Set(), new Map(), new Set(), async () => {
+        current = false;
+        features.get = () => { throw new Error("Superseded analysis must not rerank"); };
+        throw new Error("Native library unavailable");
+      }, true, () => current), /superseded by newer choices/);
+  });
+
+  it("does not return a completed native result after it is superseded", async () => {
+    const photos = [photo("stale-native-success")];
+    let current = true;
+    await assert.rejects(rankAutoCullPhotosAutomatically(photos, pixels(photos), [], [], false,
+      new Set(), new Map(), new Set(), async request => {
+        current = false;
+        return response(request);
+      }, true, () => current), /superseded by newer choices/);
+  });
+
+  it("uses native ranking without changing saved feedback or honoring the retired engine setting", async () => {
+    const photos = [photo("auto-native")];
+    const refinements = [refinement(photos[0].id)];
+    localStorage.setItem("hologram.autocull.learner.v1", "builtin");
+    localStorage.setItem("hologram.autocull.taste.v1.feedback.default", "sentinel");
+    let calls = 0;
+    const session = await rankAutoCullPhotosAutomatically(photos, pixels(photos), [], refinements, false,
+      new Set(), new Map(), new Set(), async request => {
+        calls++;
+        assert.equal(request.pointwise.length, 1);
+        return response(request);
+      }, true);
+    assert.equal(calls, 1);
+    assert.equal(session.learner?.engine, "xgboost-native");
+    assert.equal(session.ranker_version, NATIVE_RANKER_VERSION);
+    assert.equal(session.stats.training_examples, 1);
+    assert.equal(localStorage.getItem("hologram.autocull.taste.v1.feedback.default"), "sentinel");
+    assert.equal(refinements[0].flag, "pick");
+  });
+
+  it("uses the complete builtin result when native is absent in a browser", async () => {
+    const photos = [photo("browser")], features = pixels(photos);
+    let calls = 0;
+    const session = await rankAutoCullPhotosAutomatically(photos, features, [], [], false,
+      new Set(), new Map(), new Set(), async request => { calls++; return response(request); }, false);
+    const builtin = rankAutoCullPhotos(photos, features, [], [], false);
+    assert.equal(calls, 0);
+    assert.deepEqual(session.photos, builtin.photos);
+    assert.deepEqual(session.clusters, builtin.clusters);
+    assert.equal(session.ranker_version, builtin.ranker_version);
+    assert.equal(session.learner?.engine, "builtin");
+    if (session.learner?.engine === "builtin") assert.match(session.learner.fallback_reason ?? "", /outside the desktop app/);
+  });
+
+  it("falls back atomically after a later native backend fails", async () => {
+    const photos = [photo("native-first"), photo("native-second")], features = pixels(photos);
+    features.get(photos[1].id)!.backend = "other";
+    const refinements = photos.map(item => refinement(item.id));
+    let calls = 0;
+    const session = await rankAutoCullPhotosAutomatically(photos, features, [], refinements, false,
+      new Set(), new Map(), new Set(), async request => {
+        calls++;
+        if (calls === 2) throw new Error("XGBoost shared library unavailable");
+        return { ...response(request), scores: request.predict.map(() => 1) };
+      }, true);
+    const builtin = rankAutoCullPhotos(photos, features, [], refinements, false);
+    assert.equal(calls, 2);
+    assert.deepEqual(session.photos, builtin.photos);
+    assert.deepEqual(session.clusters, builtin.clusters);
+    assert.deepEqual(session.stats, builtin.stats);
+    assert.equal(session.ranker_version, builtin.ranker_version);
+    assert.deepEqual(session.learner, { engine: "builtin", fallback_reason: "XGBoost shared library unavailable" });
+    assert.deepEqual(refinements, photos.map(item => refinement(item.id)));
   });
 });

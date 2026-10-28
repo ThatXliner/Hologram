@@ -12,7 +12,8 @@ const page = await browser.newPage({viewport:{width:1440,height:1000}});
 try {
  await page.addInitScript(() => {
   const pending: (()=>void)[]=[];
-  let mode='fail';
+  let mode='success';
+  localStorage.setItem('hologram.autocull.learner.v1', 'builtin');
   Object.assign(window,{
    __HOLOGRAM_DISABLE_TRANSFORMER_EMBEDDINGS__:true,
    __nativeTest:{ setMode:(value:string)=>{mode=value;}, pending, calls:0 },
@@ -39,32 +40,33 @@ try {
   const ctx=canvas.getContext('2d')!;
   ctx.drawImage(image,0,0,160,160);
   const thumbnail=canvas.toDataURL('image/png').split(',')[1];
-  const {photoStore}=await import('/src/lib/stores/photoStore.ts');
+  const storePath='/src/lib/stores/photoStore.ts';
+  const {photoStore}=await import(storePath) as typeof import('../src/lib/stores/photoStore.ts');
   photoStore.setPhotos(Array.from({length:3},(_,i)=>({id:`race-${i}`,file_name:`race-${i}.jpg`,file_path:`/fixture/race-${i}.jpg`,file_size:100,file_type:'JPEG',created_at:'2026-01-01',modified_at:'2026-01-01',thumbnail,exif:{date_taken:new Date(Date.UTC(2026,0,i+1)).toISOString()}})));
  }, readFileSync(new URL('./fixtures/stock/portrait.jpg', import.meta.url)).toString('base64'));
  await page.getByRole('button',{name:'AutoCull',exact:true}).click();
  console.log('openedAutoCull');
  const view=page.locator('[data-autocull-view]');
- await page.waitForFunction(()=>document.querySelector('[data-autocull-view]')?.getAttribute('data-autocull-active-learner')==='builtin');
- console.log('initial builtin ready');
+ await page.waitForFunction(()=>document.querySelector('[data-autocull-view]')?.getAttribute('data-autocull-active-learner')==='xgboost-native');
+ assert.ok(await page.evaluate(()=>Reflect.get(window,'__nativeTest').calls)>0);
+ console.log('native default ignores retired builtin preference');
  await view.getByRole('button',{name:/Review manually instead|Browse all stacks|Review .*exception/}).first().click();
- await page.locator('[data-autocull-advanced]').evaluate(el=>{(el as HTMLDetailsElement).open=true;});
- const toggle=page.locator('[data-autocull-learner-toggle]');
- await toggle.check();
- await page.getByRole('alert').waitFor();
- console.log('native failure visible');
- assert.equal(await view.getAttribute('data-autocull-active-learner'),'builtin');
+ await page.locator('[data-autocull-advanced]').evaluate(el=>{if(el instanceof HTMLDetailsElement)el.open=true;});
+ assert.equal(await page.locator('[data-autocull-learner-toggle]').count(),0);
+ assert.doesNotMatch(await view.innerText(),/EXPERIMENTAL/);
+ await page.evaluate(()=>Reflect.get(window,'__nativeTest').setMode('fail'));
+ await view.getByRole('button',{name:'Refresh analysis',exact:true}).first().click();
+ await page.waitForFunction(()=>document.querySelector('[data-autocull-view]')?.getAttribute('data-autocull-active-learner')==='builtin');
+ assert.match(await view.innerText(),/built-in|fallback/i);
+ assert.equal(await page.locator('[data-autocull-learner-error]').count(),0);
  await page.locator('[data-autocull-show-overview]').click();
- assert.equal(await page.locator('[data-autocull-apply]').isDisabled(),true);
- await page.getByRole('button',{name:'Use built-in learner',exact:true}).click();
- await page.waitForFunction(()=>document.querySelector('[data-autocull-view]')?.getAttribute('data-autocull-active-learner')==='builtin'&&!document.querySelector('[data-autocull-view] .animate-spin'));
- await page.waitForFunction(()=>!(document.querySelector('[data-autocull-apply]') as HTMLButtonElement)?.disabled);
+ await page.waitForFunction(()=>{const button=document.querySelector('[data-autocull-apply]');return button instanceof HTMLButtonElement&&!button.disabled;});
  assert.equal(await page.locator('[data-autocull-apply]').isEnabled(),true);
- console.log('fallback recovered');
+ console.log('native failure automatically falls back with usable suggestions');
  await view.getByRole('button',{name:/Review manually instead/}).click();
- await page.locator('[data-autocull-advanced]').evaluate(el=>{(el as HTMLDetailsElement).open=true;});
+ await page.locator('[data-autocull-advanced]').evaluate(el=>{if(el instanceof HTMLDetailsElement)el.open=true;});
  await page.evaluate(()=>Reflect.get(window,'__nativeTest').setMode('delay'));
- await page.locator('[data-autocull-learner-toggle]').check();
+ await view.getByRole('button',{name:'Refresh analysis',exact:true}).first().click();
  await page.waitForFunction(()=>Reflect.get(window,'__nativeTest').pending.length===1);
  console.log('native delayed');
  await page.evaluate(()=>(document.activeElement as HTMLElement)?.blur());
@@ -72,7 +74,7 @@ try {
  await page.evaluate(()=>Reflect.get(window,'__nativeTest').pending.shift()());
  await page.waitForTimeout(200);
  assert.equal(await view.getAttribute('data-autocull-active-learner'),'builtin');
- assert.match(await view.innerText(),/Analysis changed/);
+ assert.match(await view.innerText(),/Refresh to include 1 newer decision/);
  const saved=await page.evaluate(()=>JSON.parse(localStorage.getItem('hologram.autocull.taste.v1.feedback.default')??'{}').refinements.length);
  assert.equal(saved,1);
  console.log('decision stale passed');
@@ -85,5 +87,5 @@ try {
  assert.equal(await view.getAttribute('data-autocull-active-learner'),'builtin');
  assert.equal(await page.evaluate(()=>JSON.parse(localStorage.getItem('hologram.autocull.taste.v1.feedback.default')??'{}').refinements.length),0);
  await page.screenshot({path:join(output, 'races.png'),fullPage:true});
- console.log('PASS native error recovery, apply gating, delayed result after decision and undo', output);
+ console.log('PASS automatic native default, retired preference ignored, no toggle, automatic fallback, usable apply, stale decision and undo protection', output);
 } catch(error) { console.log(await page.locator('body').innerText());await page.screenshot({path:join(output, 'failure.png'),fullPage:true});throw error; } finally {await browser.close();await server.close();}

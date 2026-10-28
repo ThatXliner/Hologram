@@ -193,9 +193,10 @@ export interface AutoCullPairwisePreference {
 }
 
 export type AutoCullLearner = "builtin" | "xgboost-native";
+export type AutoCullLearnerPolicy = AutoCullLearner | "auto";
 
 export type AutoCullLearnerRun =
-  | { engine: "builtin" }
+  | { engine: "builtin"; fallback_reason?: string }
   | { engine: "xgboost-native"; version: "3.1.1"; training_rows: number; train_ms: number; predict_ms: number };
 
 export interface AutoCullSession {

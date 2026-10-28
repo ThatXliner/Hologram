@@ -1,12 +1,12 @@
 # XGBoost evaluation and native integration
 
-Issue [#36](https://github.com/ThatXliner/Hologram/issues/36) evaluates replacing AutoCull's custom tree trainer. The desktop application now bundles an opt-in XGBoost learner. The built-in learner remains the default until held-out human choices establish whether replacement is justified.
+Issue [#36](https://github.com/ThatXliner/Hologram/issues/36) evaluates replacing AutoCull's custom tree trainer. The desktop application uses bundled XGBoost by default. The built-in learner remains available as an automatic fallback when native scoring is unavailable or fails.
 
 ## Feedback has one preparation path
 
 Both learners use the same eligible evidence and final scoring policy. TypeScript prepares pointwise and pairwise observations, partitions them by embedding backend, and applies the same nearest-neighbor contribution, technical blend, clustering, and conservative automatic-decision thresholds after prediction.
 
-Production feedback belongs to a global preference profile. IndexedDB snapshots let absent shoots contribute compatible features. Automatic guesses, incompatible snapshots, and feedback owned by other profiles remain excluded. Engine switches preserve the existing feature-version constants and do not migrate or delete feedback.
+Production feedback belongs to a global preference profile. IndexedDB snapshots let absent shoots contribute compatible features. Automatic guesses, incompatible snapshots, and feedback owned by other profiles remain excluded. Automatic trainer selection preserves the existing feature-version constants and does not migrate or delete feedback.
 
 Each pointwise observation contributes weighted logistic loss. Its target is the existing pick, reject, or rating signal clipped to 0.03 through 0.97. Confidence is clipped to 0.05 through 2. Each comparison contributes logistic loss on the winner's raw score minus the loser's raw score. Its weight is confidence times 0.9, clipped to 0.05 through 1.4. Comparison endpoints occupy separate rows, including when a photo also has pointwise feedback. A comparison does not make its loser an absolute reject.
 
@@ -16,7 +16,7 @@ The initial comparison fixes 48 trees, depth 3, learning rate 0.08, L2 penalty 1
 
 ## Native execution and persistence
 
-`crates/autocull-ranker` owns the C API binding and objective. The evaluation CLI and Tauri command call that same library. Tauri resolves only its bundled resource directory and runs native work on a blocking worker. A single permit rejects overlapping requests instead of queueing decoded evidence. Requests are limited to 4,000,000 feature cells in the frontend and at the native boundary. Larger folders can use the built-in learner. The application never searches the system for XGBoost or reads a user-supplied native-library path.
+`crates/autocull-ranker` owns the C API binding and objective. The evaluation CLI and Tauri command call that same library. Tauri resolves only its bundled resource directory and runs native work on a blocking worker. A single permit rejects overlapping requests instead of queueing decoded evidence. Requests are limited to 4,000,000 feature cells in the frontend and at the native boundary. Folders that exceed this limit automatically use the built-in learner. The application never searches the system for XGBoost or reads a user-supplied native-library path.
 
 Both a library and a sidecar could share the objective. Runtime loading avoids process supervision and a second executable to sign. This puts native execution in the application process. A sidecar would provide fault isolation, at the cost of another lifecycle and process protocol.
 
@@ -24,23 +24,23 @@ Each request trains an ephemeral model from a complete immutable evidence batch.
 
 The bundled XGBoost version is 3.1.1 at commit `5e806d1b858acbc4488f436111f3e4c34f6186ce`. Training and inference require no Python or user-installed runtime. Git, CMake, and a C++ compiler are build-time requirements. OpenMP and CUDA are disabled. Windows uses the static MSVC runtime. Signed macOS releases explicitly sign and verify the dylib with the application signing identity before Tauri copies it as a resource.
 
-Engine switches and successful decisions or undo invalidate pending analysis. Superseded analysis cannot import stale metadata feedback or publish old suggestions. Native work already running is not cancelled. Results are discarded when their analysis is obsolete.
+Successful decisions and undo invalidate pending analysis. Superseded analysis cannot import stale metadata feedback or publish old suggestions. Native work already running is not cancelled. Results are discarded when their analysis is obsolete.
 
-## Opt in
+## Automatic trainer selection
 
-Open a review stack and expand **Analysis & taste profile**. Select **Use XGBoost learner**. The checkbox is marked experimental, and the analysis displays the engine that actually produced its suggestions. The setting is local to the device and applies across profiles.
+AutoCull first attempts the bundled XGBoost learner. If native scoring is unavailable or fails, it reranks the complete session with the built-in learner. Partial native results are discarded. The retired device setting no longer selects the trainer.
 
-Switching engines never applies decisions. Apply stays disabled during analysis, after a native error, or while displayed suggestions belong to a different or interrupted analysis. Native failures offer Retry and Use built-in learner. There is no silent fallback. Manual decisions and undo remain available.
+Open **Analysis & taste profile** to see which trainer produced the current suggestions and why a fallback occurred. A successful fallback allows Apply. Apply remains disabled during analysis, after a failed analysis, during XMP synchronization, or when analysis was interrupted. Manual decisions and undo remain available.
 
 ## Human evaluation remains open
 
-The repository has zero held-out human choices. Synthetic tests prove objective plumbing and workflow correctness. They cannot establish better photographer preference quality. The custom trainer remains available until that quality gate passes.
+Synthetic tests prove objective plumbing and workflow correctness. Private cross-event experiments informed the default change, but their photo evidence is not committed to this repository. The change does not claim that XGBoost improves preference quality. The custom trainer remains the fallback.
 
 The comparison runner leaves out an entire shoot for each fold. Training excludes pointwise evidence from that shoot and every comparison with an endpoint in it. Test comparisons require both endpoints in the held-out shoot. Automatic observations never contribute to training or metrics. Scores within 0.000001 of neutral or each other count as ties and receive half credit. Coverage totals remain visible when sparse training produces no score.
 
 Assign all bursts and near-duplicates to one shoot before export. The runner cannot infer duplicate identity from vectors. Supply the latest effective human decisions after correction and undo, rather than an event history. Use one dataset per profile and backend with the current feature version. Export no originals or image paths. The evaluator uploads no data.
 
-The comparison evaluates the tree contribution alone. A replacement decision must also compare complete blended decisions on human choices. Follow-up promotion must retain feedback and snapshots, rerun the real native workflow, and remove the custom trainer only after the evaluation passes.
+The comparison evaluates the tree contribution alone. Complete blended decisions still require evaluation on human choices. Default selection retains feedback and snapshots, and the custom trainer remains available for fallback.
 
 ## Export a decision book
 

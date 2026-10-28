@@ -1,14 +1,12 @@
 import { invoke } from "@tauri-apps/api/core";
-import type { AutoCullLearner } from "./types.ts";
 import type { PairwiseExample, RankedExample } from "./autocull.ts";
 
 export const NATIVE_RANKER_VERSION = "xgboost-personal-ranker-v1";
-const LEARNER_KEY = "hologram.autocull.learner.v1";
 const MAX_NATIVE_FEATURE_CELLS = 4_000_000;
 
 function validateNativeSize(pointwiseRows: number, pairCount: number, predictionRows: number, dimensions: number): void {
   if ((pointwiseRows + pairCount * 2 + predictionRows) * dimensions > MAX_NATIVE_FEATURE_CELLS) {
-    throw new Error("Native analysis is too large. Use the built-in learner or analyze a smaller folder.");
+    throw new Error("Native analysis is too large for this folder.");
   }
 }
 
@@ -29,16 +27,6 @@ export interface NativeRankerResponse {
   training_rows: number;
   train_ms: number;
   predict_ms: number;
-}
-
-export function loadAutoCullLearner(): AutoCullLearner {
-  try {
-    return localStorage.getItem(LEARNER_KEY) === "xgboost-native" ? "xgboost-native" : "builtin";
-  } catch { return "builtin"; }
-}
-
-export function saveAutoCullLearner(learner: AutoCullLearner): void {
-  localStorage.setItem(LEARNER_KEY, learner);
 }
 
 export function nativeLearnerAvailable(): boolean {

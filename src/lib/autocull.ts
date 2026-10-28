@@ -1,7 +1,7 @@
 import type {
   AutoCullCluster,
   AutoCullLabel,
-  AutoCullLearner,
+  AutoCullLearnerPolicy,
   AutoCullLearnerRun,
   AutoCullPairwisePreference,
   AutoCullPhoto,
@@ -13,7 +13,7 @@ import type {
 import { invoke } from "@tauri-apps/api/core";
 import { photoPreviewSrc } from "./photoPreview.ts";
 import { heavyMediaConcurrency } from "./concurrency.ts";
-import { nativeRankerRequest, scoreNativeRanker, NATIVE_RANKER_VERSION } from "./autocullNative.ts";
+import { nativeLearnerAvailable, nativeRankerRequest, scoreNativeRanker, NATIVE_RANKER_VERSION } from "./autocullNative.ts";
 
 const DINO_MODEL_ID = "onnx-community/dinov2-small";
 const TRANSFORMER_EMBEDDING_BACKEND = "dinov2-small-transformersjs";
@@ -639,7 +639,7 @@ export async function buildAutoCullSession(
   folderPath: string | null = null,
   excludedTrainingIds: ReadonlySet<string> = new Set(),
   profileId = DEFAULT_PREFERENCE_PROFILE_ID,
-  learner: AutoCullLearner = "builtin",
+  learner: AutoCullLearnerPolicy = "auto",
   isCurrent: () => boolean = () => true,
 ): Promise<AutoCullSession> {
   if (!isCurrent()) throw new Error("Analysis was superseded by newer choices");
@@ -686,8 +686,12 @@ export async function buildAutoCullSession(
   await preferenceWrites;
   const snapshots = await loadPreferenceFeatureSnapshots([...referencedIds]);
   if (!isCurrent()) throw new Error("Analysis was superseded by newer choices");
-  const rank = learner === "xgboost-native" ? rankAutoCullPhotosWithNative : rankAutoCullPhotos;
-  const session = await rank(photos, featuresById, preferences, refinements, learnFromPhotoMetadata, excludedTrainingIds, snapshots, metadataExcludedIds);
+  const session = learner === "auto"
+    ? await rankAutoCullPhotosAutomatically(photos, featuresById, preferences, refinements, learnFromPhotoMetadata,
+      excludedTrainingIds, snapshots, metadataExcludedIds, scoreNativeRanker, nativeLearnerAvailable(), isCurrent)
+    : await (learner === "xgboost-native" ? rankAutoCullPhotosWithNative : rankAutoCullPhotos)(
+      photos, featuresById, preferences, refinements, learnFromPhotoMetadata, excludedTrainingIds, snapshots, metadataExcludedIds);
+  if (!isCurrent()) throw new Error("Analysis was superseded by newer choices");
   onProgress({ current: total, total });
   return session;
 }
@@ -765,6 +769,38 @@ export async function rankAutoCullPhotosWithNative(
     learner.predict_ms += response.predict_ms;
   }
   return finishAutoCullRanking(prepared, models, learner);
+}
+
+export async function rankAutoCullPhotosAutomatically(
+  photos: Photo[],
+  featuresById: Map<string, PixelFeatures | null>,
+  preferences: AutoCullPairwisePreference[] = [],
+  refinements: AutoCullPreferenceRefinement[] = [],
+  learnFromPhotoMetadata = true,
+  excludedTrainingIds: ReadonlySet<string> = new Set(),
+  snapshots: ReadonlyMap<string, PreferenceFeatureSnapshot> = new Map(),
+  metadataExcludedIds: ReadonlySet<string> = new Set(),
+  score = scoreNativeRanker,
+  nativeAvailable = nativeLearnerAvailable(),
+  isCurrent: () => boolean = () => true,
+): Promise<AutoCullSession> {
+  if (!isCurrent()) throw new Error("Analysis was superseded by newer choices");
+  let fallbackReason = "Native training is unavailable outside the desktop app.";
+  if (nativeAvailable) {
+    try {
+      const session = await rankAutoCullPhotosWithNative(photos, featuresById, preferences, refinements,
+        learnFromPhotoMetadata, excludedTrainingIds, snapshots, metadataExcludedIds, score);
+      if (!isCurrent()) throw new Error("Analysis was superseded by newer choices");
+      return session;
+    } catch (error) {
+      fallbackReason = error instanceof Error ? error.message : String(error);
+    }
+  }
+  if (!isCurrent()) throw new Error("Analysis was superseded by newer choices");
+  const session = rankAutoCullPhotos(photos, featuresById, preferences, refinements,
+    learnFromPhotoMetadata, excludedTrainingIds, snapshots, metadataExcludedIds);
+  session.learner = { engine: "builtin", fallback_reason: fallbackReason };
+  return session;
 }
 
 function finishAutoCullRanking(
